@@ -18,31 +18,42 @@ public sealed class PasswordPolicy
     public const int AbsoluteMinimum = 15;
     public const int Maximum = 256;
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (HashSet<string> Plain, HashSet<string> Sha1)> LocalLists = new();
+    private static readonly Lazy<HashSet<string>> Embedded = new(LoadEmbedded);
     private readonly HashSet<string> _common;
-    private readonly HashSet<string> _localPlain = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _localSha1 = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _localPlain;
+    private readonly HashSet<string> _localSha1;
 
     public int MinimumLength { get; }
 
     public PasswordPolicy(int minimumLength = AbsoluteMinimum, string? localBlocklistPath = null)
     {
         MinimumLength = Math.Clamp(minimumLength, AbsoluteMinimum, 128);
-        _common = LoadEmbedded();
-        if (localBlocklistPath is not null && File.Exists(localBlocklistPath))
+        _common = Embedded.Value;
+        (_localPlain, _localSha1) = localBlocklistPath is not null && File.Exists(localBlocklistPath)
+            ? LocalLists.GetOrAdd(Path.GetFullPath(localBlocklistPath), LoadLocal)
+            : (new HashSet<string>(), new HashSet<string>());
+    }
+
+    private static (HashSet<string>, HashSet<string>) LoadLocal(string localBlocklistPath)
+    {
+        var plain = new HashSet<string>(StringComparer.Ordinal);
+        var sha1 = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         {
             foreach (var line in File.ReadLines(localBlocklistPath).Take(5_000_000))
             {
                 var t = line.Trim();
                 if (t.Length == 40 && t.All(Uri.IsHexDigit))
                 {
-                    _localSha1.Add(t);
+                    sha1.Add(t);
                 }
                 else if (t.Length > 0)
                 {
-                    _localPlain.Add(t.ToLowerInvariant());
+                    plain.Add(t.ToLowerInvariant());
                 }
             }
         }
+        return (plain, sha1);
     }
 
     public PasswordCheck Check(string? password, string? userName)

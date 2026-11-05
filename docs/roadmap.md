@@ -1,0 +1,51 @@
+# Roadmap
+
+Each milestone is complete only when frontend, backend, authorization, audit, error handling, unit, integration,
+negative-authorization tests and the real-host procedures for its features pass.
+
+## Milestone 1 — foundation (this delivery)
+Done in code and automated tests: repository, installer scripts, gateway service, agent service, secure enrollment,
+SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit, inventory, VM power jobs, web UI.
+
+**Remaining to close M1**
+1. Run the [real-host test plan](verification/real-host-test-plan.md) on WS2025 Datacenter and Standard
+   (Hyper-V calls, service accounts, firewall, upgrade/rollback, uninstall).
+2. Confirm the restart/reset uptime heuristic and the `InstanceID` parsing of RASD on real VMs.
+3. Install scripts executed elevated end-to-end (not possible in the development environment used so far).
+4. Logical groups management UI (model + RBAC evaluation already implemented and tested).
+5. External audit forwarding (syslog/webhook) — currently export only.
+
+## Milestone 2
+- VM configuration: CPU, static/dynamic memory, limits/reserves, firmware, boot order, Secure Boot, vTPM,
+  disks/controllers/DVD/ISO with path and ownership validation; online vs offline matrix.
+- Checkpoints standard/production with fallback policy, apply/delete, merge monitoring.
+- Logical groups, tags, filters, bulk operations, start/stop order with dependencies, timeouts, cycle detection;
+  native Hyper-V VM groups shown separately.
+- Networks: switches (external/internal/private), vNICs, VLAN; management-cutting changes with pre-checks and
+  automatic rollback timer.
+- Entra ID: OIDC code + PKCE via Microsoft.Identity.Web, BFF, single-tenant default, tenant allow-list, issuer/
+  audience/nonce/state validation, encrypted rotating client credentials (prefer certificate), tid+oid identity,
+  explicit role mapping from app roles/groups, group overage via Graph, no email-based linking, Conditional Access
+  honored, break-glass policy.
+- PostgreSQL and SQL Server providers, provider-specific migrations, integration tests on all three, export/import
+  procedure with verification.
+- Named-pipe local transport (optional), WebAuthn/passkeys.
+
+## Milestone 3
+- Failover clusters (`root\MSCluster`): nodes, CSV, quorum, owner resolution per operation, drain/maintenance,
+  live and storage migration.
+- Templates (versioned, generalized images, unique identities, secure first-boot injection, no embedded secrets).
+- Notifications: email + webhooks with retry, de-duplication, SSRF protection (allow-list, no private ranges unless
+  allowed, DNS re-resolution checks).
+- Backup provider interface + first external provider; consistency reporting; restore to new VM; isolated restore
+  tests; product configuration/key backup automation.
+
+## Milestone 4
+- Browser console after the [study](console-study.md) and a validated prototype.
+- S2D monitoring → provisioning (separate, destructive operations gated).
+- Native backup engine (VSS, RCT, reference points) if the provider approach proves insufficient.
+- Hyper-V Replica.
+
+## Research items
+Console protocol feasibility · RCT-based incremental chains · immutability on supported storage only ·
+Server Core installation UX · TPM-bound agent keys.

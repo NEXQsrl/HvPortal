@@ -104,7 +104,7 @@ public static class AuthEndpoints
         {
             return ApiSupport.BadRequest("invalid_display_name");
         }
-        var policy = new PasswordPolicy((await settings.GetSecurityAsync(http.RequestAborted)).PasswordMinLength);
+        var policy = await ApiSupport.PasswordPolicyAsync(http);
         var check = policy.Check(req.Password, req.UserName);
         if (!check.IsValid)
         {
@@ -332,7 +332,7 @@ public static class AuthEndpoints
             await audit.WriteAsync(http.Audit("auth.password.change", AuditOutcome.Failure, "user", uid.ToString("D"), new { reason = "wrong current password" }));
             return ApiSupport.BadRequest("invalid_current_password");
         }
-        var policy = new PasswordPolicy((await settings.GetSecurityAsync(http.RequestAborted)).PasswordMinLength);
+        var policy = await ApiSupport.PasswordPolicyAsync(http);
         var check = policy.Check(req.NewPassword, user.UserName);
         if (!check.IsValid)
         {
@@ -415,7 +415,7 @@ public static class AuthEndpoints
             await audit.WriteAsync(http.Audit("auth.recover", AuditOutcome.Denied, details: new { reason = "invalid recovery token" }));
             return ApiSupport.BadRequest("invalid_recovery_token");
         }
-        var policy = new PasswordPolicy((await settings.GetSecurityAsync(http.RequestAborted)).PasswordMinLength);
+        var policy = await ApiSupport.PasswordPolicyAsync(http);
         var check = policy.Check(req.NewPassword, user.UserName);
         if (!check.IsValid)
         {

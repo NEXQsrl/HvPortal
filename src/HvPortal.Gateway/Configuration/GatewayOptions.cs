@@ -38,6 +38,8 @@ public sealed class SecurityOptions
     public int EnrollmentTokenMinutes { get; set; } = 15;
     public int AgentCertificateDays { get; set; } = 90;
     public int ReauthenticationWindowMinutes { get; set; } = 5;
+    /// <summary>Optional local password blocklist (one entry per line: plain text or SHA-1 hex), e.g. an offline breach corpus.</summary>
+    public string? BlocklistPath { get; set; }
 }
 
 public sealed class JobOptions

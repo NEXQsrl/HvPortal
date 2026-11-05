@@ -23,6 +23,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.EntityFrameworkCore;
 
+SecureFileSystem.ServiceName = "HvPortalGateway";
 if (args.Length > 0 && args[0].Equals("admin", StringComparison.OrdinalIgnoreCase))
 {
     return await AdminCli.RunAsync(args[1..]);
@@ -230,6 +231,11 @@ namespace HvPortal.Gateway
             app.MapGet("/healthz", () => Results.Text("ok")).AllowAnonymous().ExcludeFromDescription();
             app.MapHub<EventsHub>("/hubs/events");
             app.MapOpenApi("/openapi/{documentName}.json").RequireAuthorization(AuthPolicies.Full);
+            // Unknown API/agent/hub routes must be a 404 problem, never the SPA shell.
+            foreach (var prefix in new[] { "/api", "/agent", "/hubs", "/openapi" })
+            {
+                app.Map(prefix + "/{**rest}", () => ApiSupport.NotFound()).AllowAnonymous().ExcludeFromDescription();
+            }
             app.MapFallbackToFile("index.html").AllowAnonymous();
         }
 

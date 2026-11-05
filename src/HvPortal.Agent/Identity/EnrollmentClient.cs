@@ -28,11 +28,13 @@ public sealed class EnrollmentClient
         }
 
         X509Certificate2 ca;
+#pragma warning disable CA5359 // Intentional: only the public CA certificate is downloaded; it is accepted solely if its
+                               // SHA-256 matches the out-of-band pin. No secret is sent on this connection.
         using (var bootstrap = new HttpClient(new SocketsHttpHandler
                {
-                   // Only public data (the CA certificate) is fetched here; its content is verified by the pin below.
                    SslOptions = { RemoteCertificateValidationCallback = (_, _, _, _) => true },
                }) { Timeout = TimeSpan.FromSeconds(30) })
+#pragma warning restore CA5359
         {
             var pem = await bootstrap.GetStringAsync(new Uri(gatewayUrl, "/agent/v1/ca"), ct);
             ca = X509Certificate2.CreateFromPem(pem);

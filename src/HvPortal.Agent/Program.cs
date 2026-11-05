@@ -6,6 +6,7 @@ using HvPortal.Agent.Identity;
 using HvPortal.Contracts.Agent;
 using Microsoft.Extensions.Logging.Abstractions;
 
+HvPortal.Shared.SecureFileSystem.ServiceName = "HvPortalAgent";
 var verb = args.Length > 0 ? args[0].ToLowerInvariant() : "run";
 var store = new AgentIdentityStore(AgentIdentityStore.DefaultDataDirectory());
 

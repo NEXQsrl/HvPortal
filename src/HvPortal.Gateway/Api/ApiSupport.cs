@@ -65,6 +65,13 @@ public static partial class ApiSupport
         string? resourceType = null, string? resourceId = null, object? details = null) =>
         http.RequestServices.GetRequiredService<AuditLog>().WriteAsync(http.Audit(action, outcome, resourceType, resourceId, details));
 
+    public static async Task<PasswordPolicy> PasswordPolicyAsync(HttpContext http)
+    {
+        var min = (await http.RequestServices.GetRequiredService<SettingsStore>().GetSecurityAsync(http.RequestAborted)).PasswordMinLength;
+        var path = http.RequestServices.GetRequiredService<IOptions<GatewayOptions>>().Value.Security.BlocklistPath;
+        return new PasswordPolicy(min, path);
+    }
+
     /// <summary>Strong random temporary password (shown once, must be changed at first sign-in).</summary>
     public static string TemporaryPassword()
     {

@@ -85,9 +85,35 @@ internal static class SecureFileSystem
         return false;
     }
 
+    /// <summary>
+    /// Windows service name whose virtual account (NT SERVICE\&lt;name&gt;) must keep access, also when an
+    /// administrator runs a CLI command that rewrites the ACL. Set once at process start.
+    /// </summary>
+    public static string? ServiceName { get; set; }
+
+    private static SecurityIdentifier? ServiceSid()
+    {
+        if (string.IsNullOrEmpty(ServiceName))
+        {
+            return null;
+        }
+        try
+        {
+            return (SecurityIdentifier)new NTAccount("NT SERVICE", ServiceName).Translate(typeof(SecurityIdentifier));
+        }
+        catch (IdentityNotMappedException)
+        {
+            return null; // service not installed (development)
+        }
+    }
+
     private static IEnumerable<SecurityIdentifier> Principals(SecurityIdentifier[] additional)
     {
         var set = new HashSet<SecurityIdentifier> { LocalSystem, Administrators, CurrentUser() };
+        if (ServiceSid() is { } svc)
+        {
+            set.Add(svc);
+        }
         foreach (var s in additional)
         {
             set.Add(s);
