@@ -52,8 +52,19 @@ if ($Gateway -and $CaSha256 -and $EnrollmentToken) {
     $env:HVP_ENROLLMENT_TOKEN = $EnrollmentToken
     $enrollArgs = @('enroll', '--gateway', $Gateway, '--ca-sha256', $CaSha256)
     if ($ForceReenroll) { $enrollArgs += '--force' }
-    & $exe @enrollArgs
-    $code = $LASTEXITCODE
+    # A freshly copied unsigned executable can be briefly locked by antivirus scanning ("Access is denied"):
+    # retry the launch a few times. Enrollment itself is never retried after it has run (the token is single use).
+    $code = $null
+    for ($attempt = 1; $attempt -le 5 -and $null -eq $code; $attempt++) {
+        try {
+            & $exe @enrollArgs
+            $code = $LASTEXITCODE
+        } catch [System.Management.Automation.ApplicationFailedException] {
+            Write-Warning "Could not start the agent (attempt $attempt/5): $($_.Exception.Message). Retrying in 5 s..."
+            Start-Sleep -Seconds 5
+        }
+    }
+    if ($null -eq $code) { throw 'The agent executable could not be started. Check antivirus / application control policies.' }
     Remove-Item Env:\HVP_ENROLLMENT_TOKEN -ErrorAction SilentlyContinue
     if ($code -ne 0) { throw 'Enrollment failed (see message above). The service was installed but not started.' }
     Set-PrivateAcl -Path $DataPath -ExtraAccounts @("NT SERVICE\$service")
