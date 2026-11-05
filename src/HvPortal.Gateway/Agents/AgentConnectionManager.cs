@@ -133,6 +133,16 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         {
             throw new HostNotConnectedException(hostId);
         }
+        // Older agents cannot even parse newer command kinds (and would drop the channel): refuse locally, nothing is sent.
+        if (command.Kind is AgentCommandKind.HyperVOperation or AgentCommandKind.ConsoleFrame or AgentCommandKind.ConsoleInput && session.ProtocolVersion < 2)
+        {
+            return new AgentCommandResult
+            {
+                CommandId = command.CommandId,
+                Status = AgentCommandStatus.Rejected,
+                Message = "The agent on this host does not support this operation (agent protocol " + session.ProtocolVersion + "). Update the agent to 0.3 or later.",
+            };
+        }
         var pending = session.Register(command.CommandId, onProgress);
         try
         {
@@ -230,6 +240,7 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         switch (env.Type)
         {
             case AgentMessageType.Hello when env.Read<AgentHello>() is { } hello:
+                session.ProtocolVersion = hello.ProtocolVersion;
                 await TouchHostAsync(session.HostId, hello.AgentVersion);
                 break;
 
@@ -331,6 +342,8 @@ public sealed class AgentConnectionManager : IAgentDispatcher
 
         public Guid HostId { get; } = hostId;
         public string Thumbprint { get; } = thumbprint;
+        /// <summary>From the agent's Hello; 0 until it arrives.</summary>
+        public int ProtocolVersion { get; set; }
         public WebSocket Socket { get; } = socket;
 
         public TaskCompletionSource<AgentCommandResult> Register(Guid id, Action<AgentCommandProgress>? progress)

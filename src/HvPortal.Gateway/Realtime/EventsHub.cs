@@ -56,6 +56,8 @@ public interface IRealtimeNotifier
 {
     Task HostChangedAsync(Guid hostId);
     Task JobChangedAsync(Job job);
+    /// <summary>Group tree or membership changed (affects visibility): every client re-reads groups and inventory.</summary>
+    Task GroupsChangedAsync();
 }
 
 public sealed class RealtimeNotifier(IHubContext<EventsHub> hub, ConnectedUsers users, IServiceScopeFactory scopes, ILogger<RealtimeNotifier> logger)
@@ -83,6 +85,18 @@ public sealed class RealtimeNotifier(IHubContext<EventsHub> hub, ConnectedUsers 
         catch (Exception ex)
         {
             logger.LogDebug(ex, "Realtime host notification failed");
+        }
+    }
+
+    public async Task GroupsChangedAsync()
+    {
+        try
+        {
+            await hub.Clients.All.SendAsync("groupsChanged", new { });
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Realtime groups notification failed");
         }
     }
 

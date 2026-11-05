@@ -28,6 +28,15 @@ $service = 'HvPortalAgent'
 $exe = Join-Path $InstallPath 'HvPortal.Agent.exe'
 if (-not (Test-Path (Join-Path $Source 'HvPortal.Agent.exe'))) { throw "HvPortal.Agent.exe not found in $Source." }
 if (-not (Get-Service vmms -ErrorAction SilentlyContinue)) { Write-Warning 'The Hyper-V management service (vmms) is not installed on this machine.' }
+# VM configuration, creation, checkpoints and host resource views use the Hyper-V PowerShell module (fixed script Ops\HvPortal.Ops.ps1).
+if (-not (Get-Module -ListAvailable -Name Hyper-V)) {
+    Write-Warning 'The Hyper-V PowerShell module is not installed: inventory, power and console work, but configuration/creation/checkpoints will fail. Install it with: Install-WindowsFeature Hyper-V-PowerShell'
+}
+$policy = Get-ExecutionPolicy -Scope MachinePolicy
+if ($policy -eq 'AllSigned') {
+    Write-Warning 'Group Policy enforces AllSigned for PowerShell: the unsigned operations script will be refused unless this build is signed.'
+}
+if (-not (Test-Path (Join-Path $Source 'Ops\HvPortal.Ops.ps1'))) { throw "Ops\HvPortal.Ops.ps1 not found in $Source (incomplete package)." }
 
 if (Get-Service $service -ErrorAction SilentlyContinue) { Stop-Service $service -Force }
 $backup = Install-ServiceBinaries -Source $Source -InstallPath $InstallPath -ServiceName $service

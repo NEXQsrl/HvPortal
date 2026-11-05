@@ -72,19 +72,28 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
 - Built-in roles: platform administrator, infrastructure administrator, VM operator, backup operator, auditor,
   read only. Custom roles supported.
 - Scopes: Global, Host, Logical group, VM (Cluster, Network, Backup repository, Template are modeled for later).
-- **Evaluation**: default deny; effective scopes of a VM = VM + its host + each logical group containing it + Global;
+- **Evaluation**: default deny; effective scopes of a VM = VM + its host + each logical group containing it **and
+  that group's ancestors** + Global;
   any applicable **Deny wins** over any Allow regardless of level; platform permissions only from Global assignments;
   disabled users have no permissions. Evaluated fresh per request and **again at job execution**.
 - Unauthorized VMs return **404** (indistinguishable from nonexistent); denied actions return 403 and are audited.
 - **Anti-escalation**: no self-assignment; granting a role (or removing a deny) requires holding all of its
   permissions on that scope; custom-role permissions limited to those the editor holds globally; managing a
   privileged user requires all privileged permissions; the last platform administrator cannot be removed/disabled.
-- Native Hyper-V VM groups (M2) are inventory objects and never grant portal permissions.
+- **Group changes are access changes** (ADR-015): adding/removing VMs or moving a group requires `roles.manage`
+  plus all involved permissions whenever Allow assignments would newly apply or Deny assignments stop applying.
+- **Operations are re-validated at execution**: configuration/creation/checkpoint jobs re-check every permission
+  the change needs (`vm.config.compute`/`storage`/`network`), re-stamp server-controlled arguments (Hyper-V VM
+  id, ISO library roots) and validate again; the agent validates once more before running the fixed script (ADR-012).
+- **Console** (`vm.console`): one-time 30 s tickets bound to user, session and VM, sent in the first WebSocket
+  message; Origin required; permission and session re-checked every 60 s; idle 15 min, max 8 h; audited
+  ([console.md](console.md)).
+- Native Hyper-V VM groups are inventory objects and never grant portal permissions.
 
 ## Web protections
 
-HTTPS only (TLS 1.2/1.3), HSTS in production, CSP `default-src 'self'` without inline scripts, `frame-ancestors
-'none'`, `X-Content-Type-Options`, `Referrer-Policy: no-referrer`, COOP/CORP, `Cache-Control: no-store` on the API,
+HTTPS only (TLS 1.2/1.3), HSTS in production, CSP `default-src 'self'`, `script-src 'self'` (no inline scripts, no eval),
+`style-src 'self' 'nonce-…'` with a fresh nonce per response (ADR-014), `frame-ancestors 'none'`, `X-Content-Type-Options`, `Referrer-Policy: no-referrer`, COOP/CORP, `Cache-Control: no-store` on the API,
 anti-forgery header token + Origin check + SameSite=Strict cookies, request body limit 1 MB, strict input validation
 (regex allow-lists for names, GUID route constraints, enum parsing), parameterized EF Core queries, no server header.
 

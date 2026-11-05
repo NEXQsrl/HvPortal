@@ -51,6 +51,14 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         AllowAutoRedirect = false,
     });
 
+    /// <summary>Browser whose cookies are accessible (needed to authenticate WebSocket handshakes in tests).</summary>
+    public (HttpClient Client, System.Net.CookieContainer Cookies) CreateBrowserWithCookies()
+    {
+        var cookies = new System.Net.CookieContainer();
+        var client = CreateDefaultClient(new Uri("https://localhost"), new Microsoft.AspNetCore.Mvc.Testing.Handlers.CookieContainerHandler(cookies));
+        return (client, cookies);
+    }
+
     public JobRunner Runner => Services.GetRequiredService<JobRunner>();
 
     public async Task<T> WithDbAsync<T>(Func<PortalDbContext, Task<T>> action)
@@ -150,6 +158,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
                 LastInventoryAt = DateTimeOffset.UtcNow,
                 LastSeenAt = DateTimeOffset.UtcNow,
                 Access = HyperVAccessStatus.Ok,
+                HostFactsJson = JsonSerializer.Serialize(new HostFacts { ComputerName = name.ToUpperInvariant(), AgentVersion = "test", VirtualSwitches = ["vSwitch"] }),
             };
             db.Hosts.Add(host);
             foreach (var (vmName, state) in vms)

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using HvPortal.Contracts.Agent;
 using HvPortal.Contracts.HyperV;
 using HvPortal.Gateway.Agents;
@@ -146,13 +147,65 @@ public sealed class JobRunner : BackgroundService
     /// <summary>For tests: waits for in-flight job executions.</summary>
     internal Task DrainAsync() => Task.WhenAll(_running.Values);
 
+    /// <summary>VM operations are serialized per VM; VM creation is serialized per host (name uniqueness, disk file names).</summary>
+    internal static string LockKey(Job job) => job.TargetType == ScopeType.Host
+        ? "host-create:" + job.TargetId.ToString("N")
+        : "vm:" + job.TargetId.ToString("N");
+
+    private static JobService.OperationParameters? ReadParameters(Job job)
+    {
+        if (job.ParametersJson is null)
+        {
+            return null;
+        }
+        try
+        {
+            return JsonSerializer.Deserialize<JobService.OperationParameters>(job.ParametersJson, AgentProtocol.Json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the agent arguments at execution time: server-controlled fields (Hyper-V VM id, ISO library roots)
+    /// are re-stamped from current data and the whole request is validated again. Null = no longer valid.
+    /// </summary>
+    internal static JsonElement? PrepareArguments(HvOperation op, JsonElement args, VirtualMachine? vm, ManagedHost host)
+    {
+        var roots = OperationPolicy.IsoRoots(host);
+        switch (op)
+        {
+            case HvOperation.SetVmConfig when vm is not null && HvOperations.FromElement<VmConfigChange>(args) is { } c:
+                var change = c with { VmId = vm.HyperVId, IsoRoots = roots };
+                if (change.DvdIsoPath is { Length: > 0 } iso && !OperationPolicy.IsInsideLibrary(iso, roots))
+                {
+                    return null;
+                }
+                return OperationValidation.Validate(change) is null ? HvOperations.ToElement(change) : null;
+            case HvOperation.NewVm when HvOperations.FromElement<NewVmRequest>(args) is { } n:
+                var create = n with { IsoRoots = roots };
+                if (create.IsoPath is { Length: > 0 } iso2 && !OperationPolicy.IsInsideLibrary(iso2, roots))
+                {
+                    return null;
+                }
+                return OperationValidation.Validate(create) is null ? HvOperations.ToElement(create) : null;
+            case HvOperation.NewCheckpoint or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint
+                when vm is not null && HvOperations.FromElement<CheckpointRequest>(args) is { } cp:
+                return HvOperations.ToElement(cp with { VmId = vm.HyperVId });
+            default:
+                return null;
+        }
+    }
+
     private async Task RunJobAsync(Guid jobId, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
         var access = scope.ServiceProvider.GetRequiredService<AccessEvaluator>();
         var job = await db.Jobs.FirstAsync(j => j.Id == jobId, ct);
-        var lockKey = "vm:" + job.TargetId.ToString("N");
+        var lockKey = LockKey(job);
         var keepLock = false;
         try
         {
@@ -168,36 +221,109 @@ public sealed class JobRunner : BackgroundService
                 job.LeaseOwner = null;
                 job.NotBefore = _time.GetUtcNow().AddSeconds(2);
                 job.Attempt--;
-                job.ProgressMessage = "Waiting for another operation on the same VM.";
+                job.ProgressMessage = job.TargetType == ScopeType.Host
+                    ? "Waiting for another VM creation on the same host."
+                    : "Waiting for another operation on the same VM.";
                 await db.SaveChangesAsync(ct);
                 return;
             }
 
+            var hvOperation = JobService.HvOperationFor(job.Type, job.Operation);
+            var parameters = hvOperation is null ? null : ReadParameters(job);
+            if (hvOperation is not null && parameters is null)
+            {
+                await FinalizeAsync(db, job, JobStatus.Failed, "Invalid job parameters.", "invalid_job", null);
+                return;
+            }
+
+            // Re-validate authorization at execution time: user enabled, every permission the operation needs.
+            var resource = job.TargetType == ScopeType.Host ? ResourceRef.Host(job.TargetId) : ResourceRef.Vm(job.TargetId);
+            var required = new List<string> { job.RequiredPermission };
+            required.AddRange(parameters?.Permissions ?? []);
+            if (hvOperation == HvOperation.SetVmConfig && HvOperations.FromElement<VmConfigChange>(parameters!.Args) is { } requested)
+            {
+                required.AddRange(OperationPolicy.PermissionsFor(requested));
+            }
             var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == job.RequestedByUserId, ct);
-            if (user is null || !user.IsEnabled || !await access.HasAsync(job.RequestedByUserId, job.RequiredPermission, ResourceRef.Vm(job.TargetId), ct))
+            if (user is null || !user.IsEnabled || !await access.HoldsAllAsync(job.RequestedByUserId, required.Distinct(), resource, ct))
             {
                 await FinalizeAsync(db, job, JobStatus.Failed, "The requesting user is no longer authorized for this operation.", "authorization_revoked", null,
                     AuditOutcome.Denied);
                 return;
             }
 
-            var vm = await db.VirtualMachines.AsNoTracking().FirstOrDefaultAsync(v => v.Id == job.TargetId, ct);
-            if (vm is null || vm.IsMissing)
+            VirtualMachine? vm = null;
+            ManagedHost? host;
+            if (job.TargetType == ScopeType.Host)
             {
-                await FinalizeAsync(db, job, JobStatus.Failed, "The VM is not present in the current inventory.", "vm_not_found", null);
+                host = await db.Hosts.AsNoTracking().FirstOrDefaultAsync(h => h.Id == job.TargetId, ct);
+                if (host is null || host.Status != HostStatus.Active)
+                {
+                    await FinalizeAsync(db, job, JobStatus.Failed, "The host is not enrolled.", "host_not_found", null);
+                    return;
+                }
+            }
+            else
+            {
+                vm = await db.VirtualMachines.AsNoTracking().FirstOrDefaultAsync(v => v.Id == job.TargetId, ct);
+                if (vm is null || vm.IsMissing)
+                {
+                    await FinalizeAsync(db, job, JobStatus.Failed, "The VM is not present in the current inventory.", "vm_not_found", null);
+                    return;
+                }
+                var vmHostId = vm.HostId;
+                host = await db.Hosts.AsNoTracking().FirstOrDefaultAsync(h => h.Id == vmHostId, ct);
+                if (host is null)
+                {
+                    await FinalizeAsync(db, job, JobStatus.Failed, "The VM's host is no longer managed.", "host_not_found", null);
+                    return;
+                }
+            }
+            var hostId = host.Id;
+            job.HostId = hostId; // resolve the owner at execution time
+
+            AgentCommand command;
+            if (job.Type is JobService.PowerJobType or JobService.DeleteJobType)
+            {
+                var isDeleteJob = job.Type == JobService.DeleteJobType;
+                var powerOp = default(VmPowerOperation);
+                if (!isDeleteJob && !Enum.TryParse(job.Operation, out powerOp))
+                {
+                    await FinalizeAsync(db, job, JobStatus.Failed, "Unknown operation.", "invalid_job", null);
+                    return;
+                }
+                command = new AgentCommand
+                {
+                    // The job id is the command id: the agent deduplicates re-deliveries of the same id.
+                    CommandId = job.Id,
+                    Kind = isDeleteJob ? AgentCommandKind.DeleteVm : AgentCommandKind.VmPower,
+                    VmId = vm!.HyperVId,
+                    PowerOperation = isDeleteJob ? null : powerOp,
+                    TimeoutSeconds = job.TimeoutSeconds,
+                    Reason = "HvPortal job " + job.Id.ToString("N"),
+                };
+            }
+            else if (hvOperation is { } hv && PrepareArguments(hv, parameters!.Args, vm, host) is { } args)
+            {
+                command = new AgentCommand
+                {
+                    CommandId = job.Id,
+                    Kind = AgentCommandKind.HyperVOperation,
+                    Operation = hv,
+                    OperationArgs = args,
+                    VmId = vm?.HyperVId,
+                    TimeoutSeconds = job.TimeoutSeconds,
+                    Reason = "HvPortal job " + job.Id.ToString("N"),
+                };
+            }
+            else
+            {
+                await FinalizeAsync(db, job, JobStatus.Failed,
+                    "The operation is no longer valid (for example the ISO is outside the host's current ISO library).", "invalid_job", null);
                 return;
             }
-            job.HostId = vm.HostId; // resolve the owner at execution time
 
-            var isDelete = job.Type == JobService.DeleteJobType;
-            var op = default(VmPowerOperation);
-            if (!isDelete && !Enum.TryParse(job.Operation, out op))
-            {
-                await FinalizeAsync(db, job, JobStatus.Failed, "Unknown operation.", "invalid_job", null);
-                return;
-            }
-
-            if (!_dispatcher.IsConnected(vm.HostId))
+            if (!_dispatcher.IsConnected(hostId))
             {
                 await RetryOrFailUnreachableAsync(db, job, ct);
                 return;
@@ -206,7 +332,7 @@ public sealed class JobRunner : BackgroundService
             // Persist "dispatched" before sending, conditioned on no cancellation request (atomic with cancel).
             var now = _time.GetUtcNow();
             var marked = await db.Jobs.Where(j => j.Id == job.Id && !j.CancelRequested)
-                .ExecuteUpdateAsync(u => u.SetProperty(j => j.DispatchedAt, now).SetProperty(j => j.HostId, vm.HostId), ct);
+                .ExecuteUpdateAsync(u => u.SetProperty(j => j.DispatchedAt, now).SetProperty(j => j.HostId, hostId), ct);
             if (marked == 0)
             {
                 await db.Entry(job).ReloadAsync(ct);
@@ -214,27 +340,16 @@ public sealed class JobRunner : BackgroundService
                 return;
             }
             await db.Entry(job).ReloadAsync(ct);
-            AddEvent(db, job, "dispatched", $"Sent to host {vm.HostId}.");
+            AddEvent(db, job, "dispatched", $"Sent to host {host.DisplayName}.");
             await db.SaveChangesAsync(ct);
             await _notifier.JobChangedAsync(job);
-
-            var command = new AgentCommand
-            {
-                // The job id is the command id: the agent deduplicates re-deliveries of the same id.
-                CommandId = job.Id,
-                Kind = isDelete ? AgentCommandKind.DeleteVm : AgentCommandKind.VmPower,
-                VmId = vm.HyperVId,
-                PowerOperation = isDelete ? null : op,
-                TimeoutSeconds = job.TimeoutSeconds,
-                Reason = "HvPortal job " + job.Id.ToString("N"),
-            };
 
             using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var heartbeat = HeartbeatAsync(job.Id, heartbeatCts.Token);
             AgentCommandResult result;
             try
             {
-                result = await _dispatcher.SendAsync(vm.HostId, command, p => _ = ReportProgressAsync(job.Id, p),
+                result = await _dispatcher.SendAsync(hostId, command, p => _ = ReportProgressAsync(job.Id, p),
                     TimeSpan.FromSeconds(job.TimeoutSeconds + 30), ct);
             }
             finally
@@ -245,10 +360,28 @@ public sealed class JobRunner : BackgroundService
             await db.Entry(job).ReloadAsync(ct);
             var (status, code) = Map(result.Status);
             var message = result.Status == AgentCommandStatus.AlreadyInState ? "No change needed: " + result.Message : result.Message;
-            await FinalizeAsync(db, job, status, message, code, result.HyperVCode);
-            if (isDelete && status == JobStatus.Succeeded)
+            NewVmResult? created = null;
+            if (result.Operation is { } outcome)
             {
-                await InventoryCleanup.RemoveVmAsync(db, vm.Id, vm.HostId, "vm.deleted", _time.GetUtcNow(), CancellationToken.None);
+                job.ResultJson = outcome.Result is { } r && r.GetRawText() is { Length: <= 16000 } raw ? raw : null;
+                message = Describe(outcome);
+                if (outcome.Ok && hvOperation == HvOperation.NewVm)
+                {
+                    created = HvOperations.FromElement<NewVmResult>(outcome.Result);
+                    if (created?.Warning is { Length: > 0 } warning)
+                    {
+                        message = warning;
+                    }
+                }
+            }
+            await FinalizeAsync(db, job, status, message, code, result.HyperVCode);
+            if (job.Type == JobService.DeleteJobType && status == JobStatus.Succeeded)
+            {
+                await InventoryCleanup.RemoveVmAsync(db, vm!.Id, vm.HostId, "vm.deleted", _time.GetUtcNow(), CancellationToken.None);
+            }
+            if (created is not null && parameters?.GroupId is { } groupId)
+            {
+                await PlaceCreatedVmAsync(db, job, hostId, created, groupId);
             }
         }
         catch (HostNotConnectedException)
@@ -286,14 +419,88 @@ public sealed class JobRunner : BackgroundService
         }
     }
 
+    private static string? Describe(HvOperationOutcome outcome)
+    {
+        var applied = outcome.Applied.Count == 0 ? null : string.Join(", ", outcome.Applied.Take(20));
+        if (outcome.Ok)
+        {
+            return applied is null ? "Completed." : "Applied: " + applied + ".";
+        }
+        return applied is null
+            ? outcome.Error ?? "The operation failed."
+            : $"Partially applied ({applied}). Then failed: {outcome.Error}";
+    }
+
+    /// <summary>
+    /// After a VM was created with a target group: waits for the VM to appear in inventory (the agent pushes a snapshot
+    /// right after the operation) and adds it to the group, if the group still exists and the requester still manages groups.
+    /// </summary>
+    private async Task PlaceCreatedVmAsync(PortalDbContext db, Job job, Guid hostId, NewVmResult created, Guid groupId)
+    {
+        try
+        {
+            VirtualMachine? vm = null;
+            // The agent pushes a fresh inventory right after a mutating command; if it has not arrived after ~1.5 s,
+            // ask for one explicitly, then keep polling briefly.
+            for (var i = 0; i < 12 && vm is null; i++)
+            {
+                if (i == 3 && _dispatcher.IsConnected(hostId))
+                {
+                    var inv = await _dispatcher.SendAsync(hostId, new AgentCommand { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.CollectInventory },
+                        null, TimeSpan.FromSeconds(90), CancellationToken.None);
+                    if (inv.Inventory is { } snapshot)
+                    {
+                        using var s = _scopes.CreateScope();
+                        await s.ServiceProvider.GetRequiredService<InventoryIngestor>().ApplyAsync(hostId, snapshot, CancellationToken.None);
+                    }
+                }
+                vm = await db.VirtualMachines.AsNoTracking().FirstOrDefaultAsync(v => v.HostId == hostId && v.HyperVId == created.VmId);
+                if (vm is null)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(500), _time);
+                }
+            }
+            using var scope = _scopes.CreateScope();
+            var access = scope.ServiceProvider.GetRequiredService<AccessEvaluator>();
+            var placeDb = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
+            var check = vm is null ? "vm_not_in_inventory"
+                : await Api.GroupEndpoints.CheckNewVmPlacementAsync(placeDb, access, job.RequestedByUserId, groupId, hostId, CancellationToken.None);
+            if (check is null && !await placeDb.LogicalGroupMembers.AnyAsync(m => m.GroupId == groupId && m.VmId == vm!.Id))
+            {
+                placeDb.LogicalGroupMembers.Add(new LogicalGroupMember { GroupId = groupId, VmId = vm!.Id });
+                await placeDb.SaveChangesAsync();
+                AddEvent(placeDb, job, "group", "Added to the requested group.");
+                await placeDb.SaveChangesAsync();
+                await _notifier.GroupsChangedAsync();
+            }
+            else if (check is not null)
+            {
+                AddEvent(placeDb, job, "group", $"The VM was created but not added to the group ({check}).");
+                await placeDb.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex) when (ex is HostNotConnectedException or AgentChannelLostException or TimeoutException or DbUpdateException)
+        {
+            _logger.LogWarning(ex, "Could not place created VM for job {JobId} into group {GroupId}", job.Id, groupId);
+        }
+    }
+
     internal async Task ReconcileAsync(CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
-        var jobs = await db.Jobs.Where(j => j.Status == JobStatus.Reconciling).Take(50).ToListAsync(ct);
+        var jobs = await db.Jobs.Where(j => j.Status == JobStatus.Reconciling).OrderBy(j => j.ReconcileStartedAt).Take(50).ToListAsync(ct);
         foreach (var job in jobs)
         {
             var now = _time.GetUtcNow();
+            if (JobService.HvOperationFor(job.Type, job.Operation) is not null)
+            {
+                // Configuration changes cannot be verified generically from inventory state, and are never re-sent.
+                await FinalizeAsync(db, job, JobStatus.Unknown,
+                    "The command was sent but its result was not received. Check the VM on the host before retrying.", "outcome_unknown", null);
+                await ReleaseLockAsync(db, job);
+                continue;
+            }
             var giveUp = now - (job.ReconcileStartedAt ?? now) > TimeSpan.FromMinutes(_options.ReconciliationGiveUpMinutes);
             var vm = await db.VirtualMachines.AsNoTracking().FirstOrDefaultAsync(v => v.Id == job.TargetId, ct);
             var isDelete = job.Type == JobService.DeleteJobType;
@@ -468,7 +675,7 @@ public sealed class JobRunner : BackgroundService
             ActorUserId = job.RequestedByUserId,
             ActorName = user,
             AuthMethod = "job",
-            ResourceType = "vm",
+            ResourceType = job.TargetType == ScopeType.Host ? "host" : "vm",
             ResourceId = job.TargetId.ToString("D"),
             CorrelationId = job.CorrelationId,
             Details = new { jobId = job.Id, status = status.ToString(), errorCode, hyperVCode },

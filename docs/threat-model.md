@@ -1,4 +1,4 @@
-# Threat model (Milestone 1)
+# Threat model (v0.3)
 
 ## Assets
 A1 control of VMs and hosts · A2 portal credentials, sessions, MFA secrets · A3 agent identities and the internal CA ·
@@ -19,7 +19,7 @@ B3 gateway process ↔ its data directory · B4 agent ↔ Hyper-V WMI (local) ·
 | S4 | Rogue gateway (MITM) toward agents | CA pinned at enrollment by fingerprint, custom root trust, hostname check | operator skipping fingerprint verification |
 | T1 | Tampering with audit rows | HMAC chain verified on demand; external export | DB + key ring holder can rebuild the chain → export to SIEM/WORM storage |
 | T2 | Tampering with jobs in transit | TLS; typed commands; agent validation | — |
-| T3 | Path traversal / reparse point on data dirs | data dir refused if any component is a reparse point; private ACLs; no user-supplied paths in M1 | future disk/ISO features must reuse the same checks |
+| T3 | Path traversal / reparse point on data dirs, VHD/ISO paths | data dir refused if any component is a reparse point; private ACLs; **new VHDX only in the host default VHD folder with generated names; ISO only inside the host ISO library (gateway containment check + agent `GetFullPath` + no reparse point on any path component); expand only for disks attached to that VM** | a host administrator can place hostile files in the ISO library (trusted boundary B5) |
 | R1 | User denies an action | audit with actor, auth methods, IP, correlation id, outcome | — |
 | I1 | Inventory disclosure across tenants/teams | per-VM filtering, 404 for unauthorized, hub messages only to authorized users, ids-only payloads | timing side channels |
 | I2 | Secrets in logs | no request body logging, no secrets in audit details, tokens shown once | operator copying tokens into tickets |
@@ -29,8 +29,10 @@ B3 gateway process ↔ its data directory · B4 agent ↔ Hyper-V WMI (local) ·
 | E1 | Horizontal escalation (other VMs) | scope evaluation at request and job time; disks/networks/groups features will validate every referenced resource | — |
 | E2 | Vertical escalation via role management | anti-escalation rules (see security model), tests | — |
 | E3 | Gateway compromise → host takeover | gateway has no host credentials; agent only accepts typed operations; no arbitrary execution endpoint | attacker can still power off/on VMs the agent can manage |
-| E4 | Command injection in WMI/PowerShell | WQL built only from GUIDs formatted by the agent; no PowerShell in M1; sanitizer for free-text reason | — |
-| E5 | CSRF / clickjacking / XSS | anti-forgery token, Origin check, SameSite, CSP without inline scripts, frame-ancestors none, React escaping | — |
+| E4 | Command injection in WMI/PowerShell | WQL built only from GUIDs formatted by the agent; PowerShell only through one fixed script with a fixed command line, JSON on stdin, closed operation switch, typed named parameters, no `Invoke-Expression`/script blocks (unit test enforced), validation at API, job execution and agent; sanitizer for free-text reason | notes are free text passed as a typed `-Notes` value (never evaluated) |
+| E6 | Console hijacking (ticket theft, cross-site WebSocket, lingering access) | one-time 30 s ticket bound to user+session+VM, sent in the first message (not in URLs), Origin required, SameSite cookie, permission/session re-check every 60 s, idle/absolute timeouts, input validation, audit open/close | a user who may open the console can type into the VM like at a physical keyboard: grant `vm.console` accordingly |
+| E7 | Escalation through group membership/moves | access-change guard (ADR-015): gaining Allow or losing Deny via groups needs `roles.manage` + held permissions; tests | — |
+| E5 | CSRF / clickjacking / XSS | anti-forgery token, Origin check, SameSite, CSP without inline scripts (style nonce per response only for component `<style>` elements), frame-ancestors none, React escaping | — |
 
 ## Out of scope / accepted
 - Compromise of an OS administrator account on gateway or hosts.

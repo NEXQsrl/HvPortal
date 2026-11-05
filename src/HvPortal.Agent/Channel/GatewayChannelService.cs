@@ -256,7 +256,7 @@ public sealed class GatewayChannelService : BackgroundService
                         _ = sender.SendAsync(AgentEnvelope.Create(AgentMessageType.CommandProgress, env.CorrelationId, p), ct));
                     var result = await _executor.ExecuteAsync(cmd, progress, ct);
                     await sender.SendAsync(AgentEnvelope.Create(AgentMessageType.CommandResult, env.CorrelationId, result), ct);
-                    if (cmd.Kind == AgentCommandKind.VmPower)
+                    if (CommandExecutor.IsMutating(cmd))
                     {
                         // Push a fresh inventory so the portal reflects the change without waiting for the next cycle.
                         var inv = await _host.CollectInventoryAsync(ct);

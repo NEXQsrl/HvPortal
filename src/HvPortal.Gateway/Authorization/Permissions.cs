@@ -14,6 +14,8 @@ public static class Permissions
     public const string InventoryAnnotate = "inventory.annotate";
     public const string VmPower = "vm.power";
     public const string VmPowerForce = "vm.power.force";
+    public const string VmCreate = "vm.create";
+    public const string GroupsManage = "groups.manage";
     public const string VmConfigCompute = "vm.config.compute";
     public const string VmConfigStorage = "vm.config.storage";
     public const string VmConfigNetwork = "vm.config.network";
@@ -43,16 +45,18 @@ public static class Permissions
         new(InventoryAnnotate, "Edit portal descriptions of VMs", VmScopes, true),
         new(VmPower, "Start, guest shutdown/restart, pause, resume, save", VmScopes, true),
         new(VmPowerForce, "Turn off and hard reset (may lose guest data)", VmScopes, true),
-        new(VmConfigCompute, "Change CPU and memory", VmScopes, false),
-        new(VmConfigStorage, "Change disks, controllers, DVD/ISO", VmScopes, false),
-        new(VmConfigNetwork, "Change network adapters", VmScopes, false),
-        new(VmCheckpointCreate, "Create checkpoints", VmScopes, false),
-        new(VmCheckpointApply, "Apply or delete checkpoints", VmScopes, false),
+        new(VmCreate, "Create VMs on a host", [ScopeType.Global, ScopeType.Cluster, ScopeType.Host], true),
+        new(VmConfigCompute, "Change general settings, CPU, memory, firmware", VmScopes, true),
+        new(VmConfigStorage, "Change disks and DVD/ISO", VmScopes, true),
+        new(VmConfigNetwork, "Change network adapters", VmScopes, true),
+        new(VmCheckpointCreate, "Create checkpoints", VmScopes, true),
+        new(VmCheckpointApply, "Apply or delete checkpoints", VmScopes, true),
         new(VmDelete, "Delete VMs (configuration; disk files are kept)", VmScopes, true),
-        new(VmConsole, "Open VM console", VmScopes, false),
+        new(VmConsole, "Open VM console", VmScopes, true),
         new(VmMigrate, "Migrate VMs and storage", VmScopes, false),
         new(BackupRun, "Run backups", [.. VmScopes, ScopeType.BackupRepository], false),
         new(BackupRestore, "Restore backups", [.. VmScopes, ScopeType.BackupRepository], false),
+        new(GroupsManage, "Create, move and delete VM groups and their membership", GlobalOnly, true),
         new(JobsReadAll, "Read jobs of all users", GlobalOnly, true),
         new(JobsCancelAll, "Cancel jobs of all users", GlobalOnly, true),
         new(HostsManage, "Enroll and revoke hosts", GlobalOnly, true, Privileged: true),

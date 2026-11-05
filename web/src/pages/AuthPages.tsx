@@ -1,19 +1,41 @@
+import { KeyRound, Languages, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { ApiError, post, resetCsrf } from '../api/client';
-import { TopControls } from '../components/Layout';
-import { CopyButton, ErrorAlert } from '../components/ui';
-import { OtpInput } from '../components/widgets';
-import { useI18n } from '../i18n';
-import { useSession } from '../session';
+import { ApiError, post, resetCsrf } from '@/api/client';
+import { BrandLogo, CopyButton, ErrorAlert, Notice } from '@/components/common';
+import { Field } from '@/components/dialogs';
+import { OtpInput } from '@/components/OtpInput';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { useI18n } from '@/i18n';
+import { useSession } from '@/session';
+import { useTheme } from '@/theme';
 
-function AuthFrame({ title, children }: { title: string; children: ReactNode }) {
+/** Language and theme switches for the sign-in pages (no account menu there). */
+export function TopControls() {
+  const { t, lang, setLang } = useI18n();
+  const [, setTheme, dark] = useTheme();
   return (
-    <div className="auth-page">
-      <div className="card auth-card">
-        <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 8 }}><TopControls /></div>
-        <h1><img src="/favicon.svg" alt="" width={28} height={28} />{title}</h1>
-        {children}
+    <div className="flex items-center gap-1">
+      <Button type="button" variant="ghost" size="sm" onClick={() => setLang(lang === 'it' ? 'en' : 'it')}><Languages />{t('lang.toggle')}</Button>
+      <Button type="button" variant="ghost" size="icon-sm" onClick={() => setTheme(dark ? 'light' : 'dark')} aria-label={t('theme.toggle')} title={t('theme.toggle')}>{dark ? <Sun /> : <Moon />}</Button>
+    </div>
+  );
+}
+
+function AuthFrame({ title, children, icon }: { title: string; children: ReactNode; icon?: ReactNode }) {
+  return (
+    <div className="auth-page flex h-dvh flex-col overflow-auto bg-background">
+      <div className="flex items-center justify-end px-4 py-3">
+        <TopControls />
       </div>
+      <div className="flex flex-1 flex-col items-center justify-start gap-6 px-4 pt-[6vh] pb-10">
+        <BrandLogo className="h-11" />
+        <div className="auth-card w-full max-w-md rounded-xl border bg-card p-6 shadow-sm">
+          <h1 className="mb-4 flex items-center gap-2 text-lg font-semibold">{icon}{title}</h1>
+          {children}
+        </div>
+      </div>
+      <div className="pb-4 text-center text-[11px] text-muted-foreground">© NEXQ S.r.l. · <a className="hover:underline" href="https://www.nexq.it" target="_blank" rel="noopener noreferrer">www.nexq.it</a></div>
     </div>
   );
 }
@@ -24,16 +46,12 @@ function PasswordFields({ value, onChange, confirm, onConfirm, minLength, label 
   const { t } = useI18n();
   return (
     <>
-      <div className="field">
-        <label htmlFor="pw-new">{label}</label>
-        <input id="pw-new" type="password" autoComplete="new-password" value={value} maxLength={256} onChange={(e) => onChange(e.target.value)} />
-        <div className="hint">{t('pw.rules', { n: minLength })} {value.length > 0 && `(${[...value].length})`}</div>
-      </div>
-      <div className="field">
-        <label htmlFor="pw-confirm">{t('setup.confirm')}</label>
-        <input id="pw-confirm" type="password" autoComplete="new-password" value={confirm} maxLength={256} onChange={(e) => onConfirm(e.target.value)} />
-        {confirm && value !== confirm && <div className="hint" role="alert">{t('pw.mismatch')}</div>}
-      </div>
+      <Field label={label} htmlFor="pw-new" hint={<>{t('pw.rules', { n: minLength })} {value.length > 0 && `(${[...value].length})`}</>}>
+        <Input id="pw-new" type="password" autoComplete="new-password" value={value} maxLength={256} onChange={(e) => onChange(e.target.value)} />
+      </Field>
+      <Field label={t('setup.confirm')} htmlFor="pw-confirm" error={confirm && value !== confirm ? t('pw.mismatch') : undefined}>
+        <Input id="pw-confirm" type="password" autoComplete="new-password" value={confirm} maxLength={256} onChange={(e) => onConfirm(e.target.value)} />
+      </Field>
     </>
   );
 }
@@ -64,24 +82,15 @@ export function SetupPage() {
   };
 
   return (
-    <AuthFrame title={t('setup.title')}>
-      <p className="muted">{t('setup.help')}</p>
+    <AuthFrame title={t('setup.title')} icon={<KeyRound className="size-5 text-primary" />}>
+      <p className="mb-4 text-sm text-muted-foreground">{t('setup.help')}</p>
       <ErrorAlert error={error} />
-      <form onSubmit={submit}>
-        <div className="field">
-          <label htmlFor="setup-token">{t('setup.token')}</label>
-          <input id="setup-token" autoComplete="off" spellCheck={false} value={token} onChange={(e) => setToken(e.target.value)} />
-        </div>
-        <div className="field">
-          <label htmlFor="setup-user">{t('login.user')}</label>
-          <input id="setup-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label htmlFor="setup-dn">{t('setup.displayName')}</label>
-          <input id="setup-dn" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-        </div>
+      <form onSubmit={submit} className="space-y-3">
+        <Field label={t('setup.token')} htmlFor="setup-token"><Input id="setup-token" autoComplete="off" spellCheck={false} value={token} onChange={(e) => setToken(e.target.value)} className="font-mono" /></Field>
+        <Field label={t('login.user')} htmlFor="setup-user"><Input id="setup-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} /></Field>
+        <Field label={t('setup.displayName')} htmlFor="setup-dn"><Input id="setup-dn" value={displayName} onChange={(e) => setDisplayName(e.target.value)} /></Field>
         <PasswordFields value={password} onChange={setPassword} confirm={confirm} onConfirm={setConfirm} minLength={15} label={t('login.password')} />
-        <button className="primary" type="submit" disabled={busy || !token || !userName || password.length < 15 || password !== confirm}>{t('setup.submit')}</button>
+        <Button type="submit" className="w-full" disabled={busy || !token || !userName || password.length < 15 || password !== confirm}>{t('setup.submit')}</Button>
       </form>
     </AuthFrame>
   );
@@ -114,12 +123,8 @@ export function LoginPage() {
     setError(null);
     try {
       const r = await post<{ status: string; challenge?: string }>('/api/v1/auth/login', { userName, password });
-      if (r.status === 'mfa_required' && r.challenge) {
-        setChallenge(r.challenge);
-      } else {
-        resetCsrf();
-        await refresh();
-      }
+      if (r.status === 'mfa_required' && r.challenge) setChallenge(r.challenge);
+      else { resetCsrf(); await refresh(); }
     } catch (err) {
       setError(explain(err));
     } finally {
@@ -148,50 +153,34 @@ export function LoginPage() {
   if (mode === 'recover') return <RecoverPage onDone={() => setMode('login')} />;
 
   return (
-    <AuthFrame title={challenge ? t('login.mfaTitle') : t('login.title')}>
+    <AuthFrame title={challenge ? t('login.mfaTitle') : t('login.title')} icon={challenge ? <ShieldCheck className="size-5 text-primary" /> : undefined}>
       {!challenge && (
-        <div className="tabs" role="tablist">
-          <button type="button" role="tab" aria-selected className="active">{t('login.local')}</button>
-          <button type="button" role="tab" aria-selected={false} disabled title={t('login.entraLater')}>{t('login.entra')}</button>
+        <div className="mb-4 grid grid-cols-2 rounded-lg bg-muted p-1 text-sm" role="tablist">
+          <button type="button" role="tab" aria-selected className="rounded-md bg-card py-1.5 font-medium shadow-sm">{t('login.local')}</button>
+          <button type="button" role="tab" aria-selected={false} disabled title={t('login.entraLater')} className="py-1.5 text-muted-foreground opacity-60">{t('login.entra')}</button>
         </div>
       )}
-      {error && <div className="alert danger" role="alert">{error}</div>}
+      {error && <Notice kind="danger" className="mb-3">{error}</Notice>}
       {!challenge ? (
-        <form onSubmit={submitPassword}>
-          <div className="field">
-            <label htmlFor="login-user">{t('login.user')}</label>
-            <input id="login-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} autoFocus />
-          </div>
-          <div className="field">
-            <label htmlFor="login-pw">{t('login.password')}</label>
-            <input id="login-pw" type="password" autoComplete="current-password" value={password} maxLength={1024} onChange={(e) => setPassword(e.target.value)} />
-          </div>
-          <div className="row">
-            <button className="primary" type="submit" disabled={busy || !userName || !password}>{t('login.submit')}</button>
-            <span className="spacer" />
-            <button type="button" className="link" onClick={() => setMode('recover')}>{t('login.recover')}</button>
-          </div>
+        <form onSubmit={submitPassword} className="space-y-3">
+          <Field label={t('login.user')} htmlFor="login-user"><Input id="login-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} autoFocus /></Field>
+          <Field label={t('login.password')} htmlFor="login-pw"><Input id="login-pw" type="password" autoComplete="current-password" value={password} maxLength={1024} onChange={(e) => setPassword(e.target.value)} /></Field>
+          <Button type="submit" className="w-full" disabled={busy || !userName || !password}>{t('login.submit')}</Button>
+          <div className="text-center"><Button type="button" variant="link" size="sm" onClick={() => setMode('recover')}>{t('login.recover')}</Button></div>
         </form>
       ) : (
-        <form onSubmit={submitMfa}>
+        <form onSubmit={submitMfa} className="space-y-4">
           {useRecovery ? (
-            <div className="field">
-              <label htmlFor="login-code">{t('login.recoveryCode')}</label>
-              <input id="login-code" autoComplete="off" maxLength={20} value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
-            </div>
+            <Field label={t('login.recoveryCode')} htmlFor="login-code"><Input id="login-code" autoComplete="off" maxLength={20} value={code} onChange={(e) => setCode(e.target.value)} autoFocus className="font-mono" /></Field>
           ) : (
-            <div className="otp-center">
-              <p className="muted" style={{ textAlign: 'center' }}>{t('login.codeHelp')}</p>
-              <OtpInput label={t('login.code')} value={code} onChange={setCode} autoFocus idPrefix="login-otp"
-                onComplete={(v) => void submitMfa(undefined, v)} />
+            <div className="otp-center flex flex-col items-center gap-3">
+              <p className="text-center text-sm text-muted-foreground">{t('login.codeHelp')}</p>
+              <OtpInput label={t('login.code')} value={code} onChange={setCode} autoFocus idPrefix="login-otp" onComplete={(v) => void submitMfa(undefined, v)} />
             </div>
           )}
-          <div className="row">
-            <button className="primary" type="submit" disabled={busy || !code}>{t('login.verify')}</button>
-            <span className="spacer" />
-            <button type="button" className="link" onClick={() => { setUseRecovery(!useRecovery); setCode(''); }}>
-              {useRecovery ? t('login.useCode') : t('login.useRecovery')}
-            </button>
+          <Button type="submit" className="w-full" disabled={busy || !code}>{t('login.verify')}</Button>
+          <div className="text-center">
+            <Button type="button" variant="link" size="sm" onClick={() => { setUseRecovery(!useRecovery); setCode(''); }}>{useRecovery ? t('login.useCode') : t('login.useRecovery')}</Button>
           </div>
         </form>
       )}
@@ -221,27 +210,18 @@ function RecoverPage({ onDone }: { onDone: () => void }) {
 
   return (
     <AuthFrame title={t('recover.title')}>
-      <p className="muted small">{t('recover.help')}</p>
+      <p className="mb-4 text-xs text-muted-foreground">{t('recover.help')}</p>
       <ErrorAlert error={error} />
       {done ? (
-        <>
-          <div className="alert ok">{t('recover.done')}</div>
-          <button className="primary" type="button" onClick={onDone}>{t('login.title')}</button>
-        </>
+        <div className="space-y-3"><Notice kind="ok">{t('recover.done')}</Notice><Button type="button" className="w-full" onClick={onDone}>{t('login.title')}</Button></div>
       ) : (
-        <form onSubmit={submit}>
-          <div className="field">
-            <label htmlFor="rec-token">{t('recover.token')}</label>
-            <input id="rec-token" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="rec-user">{t('login.user')}</label>
-            <input id="rec-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} />
-          </div>
+        <form onSubmit={submit} className="space-y-3">
+          <Field label={t('recover.token')} htmlFor="rec-token"><Input id="rec-token" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} className="font-mono" /></Field>
+          <Field label={t('login.user')} htmlFor="rec-user"><Input id="rec-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} /></Field>
           <PasswordFields value={password} onChange={setPassword} confirm={confirm} onConfirm={setConfirm} minLength={15} label={t('recover.newPassword')} />
-          <div className="row">
-            <button className="primary" type="submit" disabled={!token || !userName || password !== confirm || password.length < 15}>{t('recover.submit')}</button>
-            <button type="button" onClick={onDone}>{t('common.cancel')}</button>
+          <div className="flex gap-2">
+            <Button type="submit" className="flex-1" disabled={!token || !userName || password !== confirm || password.length < 15}>{t('recover.submit')}</Button>
+            <Button type="button" variant="outline" onClick={onDone}>{t('common.cancel')}</Button>
           </div>
         </form>
       )}
@@ -275,16 +255,13 @@ export function ChangePasswordForm({ required, onChanged }: { required?: boolean
   };
 
   return (
-    <form onSubmit={submit}>
-      {required && <div className="alert warn">{t('pw.changeRequired')}</div>}
-      {ok && <div className="alert ok">{t('pw.changed')}</div>}
+    <form onSubmit={submit} className="space-y-3">
+      {required && <Notice kind="warn">{t('pw.changeRequired')}</Notice>}
+      {ok && <Notice kind="ok">{t('pw.changed')}</Notice>}
       <ErrorAlert error={error} />
-      <div className="field">
-        <label htmlFor="pw-current">{t('pw.current')}</label>
-        <input id="pw-current" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
-      </div>
+      <Field label={t('pw.current')} htmlFor="pw-current"><Input id="pw-current" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} /></Field>
       <PasswordFields value={password} onChange={setPassword} confirm={confirm} onConfirm={setConfirm} minLength={min} label={t('pw.new')} />
-      <button className="primary" type="submit" disabled={!current || password !== confirm || [...password].length < min}>{t('pw.changeTitle')}</button>
+      <Button type="submit" disabled={!current || password !== confirm || [...password].length < min}>{t('pw.changeTitle')}</Button>
     </form>
   );
 }
@@ -295,7 +272,7 @@ export function ForcedPasswordChangePage() {
   return (
     <AuthFrame title={t('pw.changeTitle')}>
       <ChangePasswordForm required />
-      <p><button type="button" className="link" onClick={() => void logout()}>{t('nav.logout')}</button></p>
+      <div className="mt-4 text-center"><Button type="button" variant="link" size="sm" onClick={() => void logout()}><LogOut />{t('nav.logout')}</Button></div>
     </AuthFrame>
   );
 }
@@ -325,37 +302,35 @@ export function MfaEnrollment({ required, onDone }: { required?: boolean; onDone
 
   if (codes) {
     return (
-      <div>
-        <h2>{t('mfa.recoveryTitle')}</h2>
-        <p className="muted">{t('mfa.recoveryHelp')}</p>
-        <div className="codes">{codes.map((c) => <span key={c}>{c}</span>)}</div>
-        <div className="row" style={{ marginTop: 12 }}>
+      <div className="space-y-3">
+        <h2 className="text-base font-semibold">{t('mfa.recoveryTitle')}</h2>
+        <p className="text-sm text-muted-foreground">{t('mfa.recoveryHelp')}</p>
+        <div className="codes grid grid-cols-2 gap-2 rounded-lg border bg-muted p-3 font-mono text-sm">{codes.map((c) => <span key={c}>{c}</span>)}</div>
+        <div className="flex gap-2">
           <CopyButton text={codes.join('\n')} />
-          <button className="primary" type="button" onClick={async () => { setCodes(null); await refresh(); onDone?.(); }}>{t('mfa.saved')}</button>
+          <Button type="button" onClick={async () => { setCodes(null); await refresh(); onDone?.(); }}>{t('mfa.saved')}</Button>
         </div>
       </div>
     );
   }
 
   return (
-    <div>
-      {required && <div className="alert warn">{t('mfa.enrollRequired')}</div>}
+    <div className="space-y-3">
+      {required && <Notice kind="warn">{t('mfa.enrollRequired')}</Notice>}
       <ErrorAlert error={error} />
       {!enroll ? (
-        <button className="primary" type="button" onClick={() => void start()}>{t('mfa.start')}</button>
+        <Button type="button" onClick={() => void start()}><ShieldCheck />{t('mfa.start')}</Button>
       ) : (
-        <form onSubmit={confirmCode}>
-          <p className="muted">{t('mfa.scan')}</p>
-          <img className="qr" src={enroll.qrSvgDataUri} alt="TOTP QR code" />
-          <div className="field">
-            <label>{t('mfa.key')}</label>
-            <div className="secret">{enroll.secret.replace(/(.{4})/g, '$1 ').trim()}</div>
-          </div>
-          <div className="field">
-            <label>{t('mfa.firstCode')}</label>
+        <form onSubmit={confirmCode} className="space-y-3">
+          <p className="text-sm text-muted-foreground">{t('mfa.scan')}</p>
+          <img className="qr mx-auto size-48 rounded-lg border bg-white p-2" src={enroll.qrSvgDataUri} alt="TOTP QR code" />
+          <Field label={t('mfa.key')}>
+            <code className="secret block rounded-md border bg-muted px-2 py-1.5 font-mono text-sm break-all">{enroll.secret.replace(/(.{4})/g, '$1 ').trim()}</code>
+          </Field>
+          <Field label={t('mfa.firstCode')}>
             <OtpInput label={t('mfa.firstCode')} value={code} onChange={setCode} idPrefix="mfa-otp" />
-          </div>
-          <button className="primary" type="submit" disabled={code.length !== 6}>{t('mfa.confirm')}</button>
+          </Field>
+          <Button type="submit" disabled={code.length !== 6}>{t('mfa.confirm')}</Button>
         </form>
       )}
     </div>
@@ -366,9 +341,9 @@ export function ForcedMfaPage() {
   const { t } = useI18n();
   const { logout } = useSession();
   return (
-    <AuthFrame title={t('mfa.enrollTitle')}>
+    <AuthFrame title={t('mfa.enrollTitle')} icon={<ShieldCheck className="size-5 text-primary" />}>
       <MfaEnrollment required />
-      <p><button type="button" className="link" onClick={() => void logout()}>{t('nav.logout')}</button></p>
+      <div className="mt-4 text-center"><Button type="button" variant="link" size="sm" onClick={() => void logout()}><LogOut />{t('nav.logout')}</Button></div>
     </AuthFrame>
   );
 }

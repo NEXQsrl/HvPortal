@@ -76,6 +76,7 @@ export async function api<T>(method: string, path: string, body?: unknown, retri
 export const get = <T>(path: string) => api<T>('GET', path);
 export const post = <T>(path: string, body?: unknown) => api<T>('POST', path, body ?? {});
 export const put = <T>(path: string, body?: unknown) => api<T>('PUT', path, body ?? {});
+export const patch = <T>(path: string, body?: unknown) => api<T>('PATCH', path, body ?? {});
 export const del = <T>(path: string) => api<T>('DELETE', path);
 
 /** Stable idempotency key per user action (prevents duplicate jobs on double click / retry). */

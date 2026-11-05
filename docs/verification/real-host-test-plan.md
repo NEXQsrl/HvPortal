@@ -45,6 +45,23 @@ Record results (date, build, edition, pass/fail, evidence) in a copy of the tabl
 | R24 | Account recovery via `admin recover-account --reset-mfa` | one-time token works once, sessions revoked, audit records OS identity |
 | R25 | Firewall: from a non-allowed subnet connect to 8443/8444 | blocked when `-UiRemoteAddress/-AgentRemoteAddress` set |
 
+## v0.3 operations (agent 0.3.0 on the host; use a test VM, never production workloads)
+
+| ID | Procedure | Expected |
+|---|---|---|
+| V1 | VM page → Settings on a running Gen2 VM | live values match Hyper-V Manager; vCPU/dynamic memory/Secure Boot disabled with "VM must be off" |
+| V2 | Off VM: change vCPU, memory startup/min/max, notes, auto start/stop, checkpoint type; Apply | job Succeeded, "Applied: …" lists every step; values visible in Hyper-V Manager |
+| V3 | Rename VM | name updated in Hyper-V and portal (inventory), job history keeps the old name |
+| V4 | Host → Settings → ISO library `D:\ISO`; VM → DVD → choose ISO; then eject | ISO mounted/unmounted; ISO outside the folder refused (400); junction inside the library refused by the agent |
+| V5 | Network: move a vNIC to another switch, set VLAN 10, back to untagged, add a vNIC | Get-VMNetworkAdapterVlan shows the values; management connectivity of the host unaffected |
+| V6 | Add a 10 GB dynamic disk; expand it to 20 GB (VM off and on, SCSI) | new `<vm>_<timestamp>.vhdx` in the host default folder attached; expand grows only; expand refused with checkpoints |
+| V7 | New VM wizard Gen2 + ISO + Secure Boot template + vTPM + start; Gen1 without disk | VM created, boots from ISO in the console; TPM enabled; job result shows VM id; placed in the chosen group |
+| V8 | Checkpoints: create (running), apply (off; typed name), delete with children | tree matches Hyper-V Manager; merge completes; apply on a running VM refused |
+| V9 | Console: Gen2 UEFI boot screen, Windows setup keyboard (IT layout), Ctrl+Alt+Del at logon, Type text password, mouse after integration services, full screen with Win key | screen updates within ~1 s; input correct; idle close after 15 min; audit open/close entries |
+| V10 | Console with a user who loses `vm.console` while connected | session closed within 60 s with "no longer authorized" |
+| V11 | Groups: VM in nested folder; VM operator assigned on the parent folder | operator sees and powers the VM; moving the subfolder out removes access; organizer without `roles.manage` cannot move VMs into the operator's folder |
+| V12 | Host with `Hyper-V-PowerShell` removed / GPO AllSigned | operations fail with the explicit error message; inventory/power/console unaffected |
+
 ## Result log template
 
 | ID | Date | Host build / edition | Result | Evidence (job id, audit id, screenshot) | Notes |

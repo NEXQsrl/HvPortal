@@ -25,3 +25,13 @@ Every API response carries `X-Correlation-Id`; the same id appears in audit entr
 | Gateway does not start: "reparse point" | data directory is a junction/symlink | use a real local directory. |
 | Gateway does not start after restore: `CryptographicException` key not in ring | keys not imported | `admin import-keys` before starting. |
 | `admin` commands: "Run this command from an elevated prompt" | CLI requires administrator | open PowerShell as administrator. |
+| VM settings / creation / checkpoints fail with "The term 'Get-VM' is not recognized" or "module 'Hyper-V' was not loaded" | Hyper-V PowerShell module missing on the host | `Install-WindowsFeature Hyper-V-PowerShell` (inventory, power and console keep working without it). |
+| Operations fail with "...is not digitally signed" / "running scripts is disabled" | Group Policy sets PowerShell execution policy (MachinePolicy) to AllSigned/Restricted, which overrides `-ExecutionPolicy Bypass` | sign the release (Authenticode) or allow the agent's `Ops\HvPortal.Ops.ps1` by policy. |
+| Operations fail with "Cannot create type. Only core types are supported in this language mode" | PowerShell Constrained Language Mode (WDAC/AppLocker script enforcement) | not supported yet: allow-list the signed script in the policy. |
+| 501 `agent_outdated` | agent older than 0.3 | update the agent package on the host (re-run `Install-Agent.ps1` without `-Gateway`; enrollment is kept). |
+| 409 `requires_off` | vCPU count, dynamic memory on/off or Secure Boot changed on a running VM | shut down the VM and apply again. |
+| 400 `iso_outside_library` | ISO path not inside the host ISO library | Host → Settings → ISO library: add the folder (local path such as `D:\ISO`). |
+| 403 `group_access_change_requires_roles_manage` / `permission_amplification` | the group move/membership change would grant or lift role assignments | ask an administrator with `roles.manage`, or use a group without role assignments. |
+| Console shows "The VM is not running" | expected while the VM is off/saved | start it from the console toolbar; BIOS/UEFI appears as soon as it powers on. |
+| Console mouse does nothing | synthetic mouse requires guest integration services | use the keyboard (Tab/arrows) until the guest has started its services. |
+| Console closes after a while | 15 minutes without input or 8 hours maximum; permission or session revoked | reopen the console. |

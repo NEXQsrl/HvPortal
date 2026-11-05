@@ -44,11 +44,39 @@ Availability by state (enforced in UI, API with fresh data, and agent):
 | Resume | Paused | no |
 | Save | Running, Paused | no |
 
+## v0.3 — configuration, creation, checkpoints, host resources, console, groups
+
+Operations marked *PS* run in the fixed script `Ops\HvPortal.Ops.ps1` (Hyper-V PowerShell module, ADR-012).
+"Unit" means gateway/agent automated tests with a test double for the host; the smoke test additionally verifies the
+real gateway → agent → PowerShell path on a machine without Hyper-V rights (the script returns the real error).
+
+| Function | API | Privilege | Online / offline | Impl | Unit | Host |
+|---|---|---|---|---|---|---|
+| Read VM configuration | *PS* `Get-VM`, `Get-VMProcessor`, `Get-VMMemory`, `Get-VMFirmware`, `Get-VMSecurity`, `Get-VMDvdDrive`, `Get-VMNetworkAdapter(+Vlan)`, `Get-VMHardDiskDrive` | Hyper-V Admins | both | ✅ | ✅ | pending |
+| Name, notes, auto start/stop, checkpoint type | *PS* `Set-VM`, `Rename-VM` | Hyper-V Admins | both | ✅ | ✅ | pending |
+| vCPU count | *PS* `Set-VMProcessor -Count` | Hyper-V Admins | **off only** (refused by API when the VM is not Off) | ✅ | ✅ | pending |
+| CPU reserve / limit / weight | *PS* `Set-VMProcessor` | Hyper-V Admins | both (Hyper-V decides) | ✅ | ✅ | pending |
+| Startup memory, dynamic memory min/max/buffer, weight | *PS* `Set-VMMemory` | Hyper-V Admins | toggling dynamic memory **off only**; runtime resize per Hyper-V rules | ✅ | ✅ | pending |
+| Secure Boot on/off, template | *PS* `Set-VMFirmware` (Gen2) | Hyper-V Admins | **off only** | ✅ | ✅ | pending |
+| DVD: mount ISO from host library / eject | *PS* `Set-VMDvdDrive`, `Add-VMDvdDrive` | Hyper-V Admins | both | ✅ | ✅ | pending |
+| vNIC: switch, disconnect, VLAN access/untagged, add vNIC | *PS* `Connect/Disconnect-VMNetworkAdapter`, `Set-VMNetworkAdapterVlan`, `Add-VMNetworkAdapter` | Hyper-V Admins | both (hot add per Hyper-V rules) | ✅ | ✅ | pending |
+| New VHDX attached to the VM | *PS* `New-VHD` in `Get-VMHost.VirtualHardDiskPath`, `Add-VMHardDiskDrive` (file removed if attach fails) | Hyper-V Admins | SCSI hot add per Hyper-V rules | ✅ | ✅ | pending |
+| Expand VHDX | *PS* `Resize-VHD` (grow only) | Hyper-V Admins | online for SCSI VHDX; not with checkpoints | ✅ | ✅ | pending |
+| Create VM (Gen1/Gen2, CPU, memory, disk, switch, ISO + first boot, Secure Boot template, vTPM, start) | *PS* `New-VM`, `Set-VMProcessor`, `Set-VMMemory`, `Set-VMFirmware`, `Set-VMKeyProtector -NewLocalKeyProtector`, `Enable-VMTPM`, `Start-VM` | Hyper-V Admins | — | ✅ | ✅ | pending |
+| Checkpoints: list (tree), create, apply, delete (+children) | *PS* `Get-VMSnapshot`, `Checkpoint-VM`, `Restore-VMSnapshot`, `Remove-VMSnapshot` | Hyper-V Admins | apply: API requires Off/Saved | ✅ | ✅ | pending |
+| Host defaults, switches, VM disks, ISO library listing | *PS* `Get-VMHost`, `Get-VMHostSupportedVersion`, `Get-VMSwitch`, `Get-VHD`, `Get-ChildItem *.iso` (library roots only, depth 2, no reparse points) | Hyper-V Admins | — | ✅ | ✅ | pending |
+| Console screen | `Msvm_VirtualSystemManagementService.GetVirtualSystemThumbnailImage` + `Msvm_VideoHead` | Hyper-V Admins | running VMs | ✅ | ✅ relay | pending |
+| Console keyboard / Ctrl+Alt+Del / type text | `Msvm_Keyboard.TypeScancodes`, `TypeCtrlAltDel`, `TypeText` | Hyper-V Admins | running VMs | ✅ | ✅ relay | pending |
+| Console mouse | `Msvm_SyntheticMouse.SetAbsolutePosition`, `SetButtonState` | Hyper-V Admins | integration services running | ✅ | ✅ relay | pending |
+| Portal groups (folders), nesting, membership, RBAC inheritance | portal database | `groups.manage` (+`roles.manage` for access changes) | — | ✅ | ✅ | n/a |
+
+Not in v0.3 (still research): boot order editing, TPM enable on existing VMs, controller management, VHD removal /
+detach, native Hyper-V VM groups, NAT/QoS/SR-IOV, migration, Replica, backup.
+
 ## Later milestones (research notes; not implemented)
 
 | Function | Planned API | Notes |
 |---|---|---|
-| CPU/RAM changes | `Msvm_VirtualSystemManagementService.ModifyResourceSettings` | running-VM limits: memory hot-add for static memory Gen2 + WS2016+, vCPU change only when off |
 | Disks / DVD | `AddResourceSettings` / `RemoveResourceSettings`, `Msvm_ImageManagementService` (Create/Resize/ValidateVirtualHardDisk) | path validation, reparse point checks, ownership of VHDX vs other VMs |
 | Checkpoints | `Msvm_VirtualSystemSnapshotService` (CreateSnapshot, ApplySnapshot, DestroySnapshot); `Msvm_VirtualSystemSettingData.UserSnapshotType` (production / production-only / standard) | merge monitoring through `OperationalStatus[1]=32772` |
 | Native VM groups | `Msvm_VirtualSystemCollection`, `Msvm_CollectionReferencePoint`… | `CollectionType` VM vs management collection |

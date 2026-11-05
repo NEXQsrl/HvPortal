@@ -263,6 +263,10 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(1024)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ParametersJson")
+                        .HasMaxLength(16000)
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Progress")
                         .HasColumnType("INTEGER");
 
@@ -279,6 +283,10 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.Property<string>("RequiredPermission")
                         .IsRequired()
                         .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ResultJson")
+                        .HasMaxLength(16000)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ResultMessage")
@@ -368,7 +376,7 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Description")
-                        .HasMaxLength(1024)
+                        .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Name")
@@ -376,9 +384,12 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(1024)
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("Name")
+                    b.HasIndex("ParentId", "Name")
                         .IsUnique();
 
                     b.ToTable("LogicalGroups");
@@ -465,6 +476,10 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
 
                     b.Property<string>("InventoryWarningsJson")
                         .HasMaxLength(16000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IsoLibraryPathsJson")
+                        .HasMaxLength(8000)
                         .HasColumnType("TEXT");
 
                     b.Property<long?>("LastInventoryAt")

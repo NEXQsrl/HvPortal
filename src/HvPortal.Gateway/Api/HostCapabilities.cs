@@ -33,15 +33,28 @@ public static class HostCapabilities
         };
         var ok = access == HyperVAccessStatus.Ok;
         var datacenter = edition.StartsWith("Datacenter", StringComparison.Ordinal);
+        // Typed operations (Hyper-V PowerShell module) and the console need agent 0.3 or later.
+        var ops = ok && AgentAtLeast(facts?.AgentVersion, 0, 3);
+        var opsNote = ok && !ops ? "Update the agent to 0.3 or later." : null;
         var caps = new List<Capability>
         {
             new("inventory", ok ? "available" : "unavailable", ok ? null : "Agent cannot access the Hyper-V WMI provider."),
             new("vm.power", ok ? "available" : "unavailable"),
             new("vm.guest-restart", ok && build >= 14393 ? "available" : "unavailable", "Msvm_ShutdownComponent.InitiateReboot requires WS2016+."),
+            new("vm.configure", ops ? "available" : "unavailable", opsNote ?? "CPU, memory, firmware, DVD/ISO, network adapters, new/expanded disks."),
+            new("vm.create", ops ? "available" : "unavailable", opsNote),
+            new("vm.checkpoints", ops ? "available" : "unavailable", opsNote ?? "Create, apply, delete. Checkpoints are not backups."),
+            new("vm.console", ops ? "available" : "unavailable", opsNote ?? "Hypervisor screen capture + keyboard/mouse (not RDP)."),
             new("cluster", facts?.ClusterServicePresent == true ? "detected (management in Milestone 3)" : "not detected"),
             new("storage-spaces-direct", datacenter ? "edition allows (Milestone 4)" : "not available in this edition"),
             new("shielded-vms", datacenter ? "edition allows (not managed)" : "not available in this edition"),
         };
         return new Evaluation(edition, platform, support, caps);
+    }
+
+    internal static bool AgentAtLeast(string? version, int major, int minor)
+    {
+        var core = version?.Split('+', '-')[0];
+        return Version.TryParse(core, out var v) && (v.Major > major || (v.Major == major && v.Minor >= minor));
     }
 }

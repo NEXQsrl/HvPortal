@@ -150,6 +150,8 @@ public sealed class RoleAssignment
 public sealed class LogicalGroup
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    /// <summary>Parent folder (null = root). Role assignments on a group apply to its whole subtree.</summary>
+    public Guid? ParentId { get; set; }
     public required string Name { get; set; }
     public string? Description { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -189,6 +191,8 @@ public sealed class ManagedHost
     public string? AccessMessage { get; set; }
     public bool InventoryPartial { get; set; }
     public string? InventoryWarningsJson { get; set; }
+    /// <summary>JSON array of folders on the host that may be used as ISO library (mount / list).</summary>
+    public string? IsoLibraryPathsJson { get; set; }
 }
 
 public sealed class AgentCertificate
@@ -311,6 +315,10 @@ public sealed class Job
     public string? ErrorCode { get; set; }
     public long? HyperVCode { get; set; }
     public DateTimeOffset? ReconcileStartedAt { get; set; }
+    /// <summary>Typed arguments of the operation (JSON), validated when the job is created.</summary>
+    public string? ParametersJson { get; set; }
+    /// <summary>Structured result returned by the host (JSON), e.g. the id of a created VM.</summary>
+    public string? ResultJson { get; set; }
     public long Version { get; set; }
 }
 

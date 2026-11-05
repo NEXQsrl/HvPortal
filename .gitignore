@@ -24,3 +24,6 @@ src/HvPortal.Gateway/wwwroot/
 setup-token.txt
 recovery-token.txt
 *.hvpx
+
+# TypeScript incremental build state
+*.tsbuildinfo

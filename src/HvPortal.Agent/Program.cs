@@ -56,6 +56,8 @@ builder.Services.AddWindowsService(o => o.ServiceName = "HvPortalAgent");
 builder.Services.Configure<AgentRuntimeOptions>(builder.Configuration.GetSection("Agent"));
 builder.Services.AddSingleton(store);
 builder.Services.AddSingleton<IHyperVHost, WmiHyperVHost>();
+builder.Services.AddSingleton<PowerShellOperationRunner>();
+builder.Services.AddSingleton<ConsoleService>();
 builder.Services.AddSingleton<CommandExecutor>();
 builder.Services.AddHostedService<GatewayChannelService>();
 var app = builder.Build();

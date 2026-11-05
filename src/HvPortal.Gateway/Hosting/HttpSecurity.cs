@@ -10,9 +10,17 @@ namespace HvPortal.Gateway.Hosting;
 
 public static class HttpSecurity
 {
-    public const string ContentSecurityPolicy =
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; " +
+    public const string NonceItem = "hvp-csp-nonce";
+
+    /// <summary>
+    /// Scripts: same origin only (no inline script, no eval). Styles: same origin plus a per-response nonce, used only
+    /// by UI components that insert a small &lt;style&gt; element at runtime (scroll locking in dialogs and menus).
+    /// </summary>
+    public static string ContentSecurityPolicy(string nonce) =>
+        "default-src 'self'; script-src 'self'; style-src 'self' 'nonce-" + nonce + "'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; " +
         "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
+
+    public static string CspNonce(this HttpContext ctx) => ctx.Items[NonceItem] as string ?? "";
 
     /// <summary>Port separation, correlation id, security headers.</summary>
     public static IApplicationBuilder UseGatewayBaseline(this IApplicationBuilder app, GatewayOptions options)
@@ -31,8 +39,10 @@ public static class HttpSecurity
             }
             var correlation = ctx.GetCorrelationId();
             ctx.Response.Headers["X-Correlation-Id"] = correlation.ToString("D");
+            var nonce = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
+            ctx.Items[NonceItem] = nonce;
             var h = ctx.Response.Headers;
-            h.ContentSecurityPolicy = ContentSecurityPolicy;
+            h.ContentSecurityPolicy = ContentSecurityPolicy(nonce);
             h.XContentTypeOptions = "nosniff";
             h.XFrameOptions = "DENY";
             h["Referrer-Policy"] = "no-referrer";
@@ -42,6 +52,11 @@ public static class HttpSecurity
             if (ctx.Request.Path.StartsWithSegments("/api"))
             {
                 h.CacheControl = "no-store";
+            }
+            // The SPA shell is always rendered by the index handler (it carries the nonce): never served as a static file.
+            if (ctx.Request.Path.Equals("/index.html", StringComparison.OrdinalIgnoreCase))
+            {
+                ctx.Request.Path = "/";
             }
             await next();
         });

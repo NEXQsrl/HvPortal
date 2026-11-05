@@ -1,11 +1,29 @@
-import { useState, type FormEvent } from 'react';
-import { del, get, post, put } from '../api/client';
-import type { Assignment, AuditEntry, Host, Role, SecuritySettings, UserRow, Vm } from '../api/types';
-import { CopyButton, Dialog, ErrorAlert, Loading, useLoad } from '../components/ui';
-import { Pager } from '../components/widgets';
-import { useI18n, type TKey } from '../i18n';
-import { useSession } from '../session';
+import { Download, KeyRound, Plus, ScrollText, Settings, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { del, get, post, put } from '@/api/client';
+import type { Assignment, AuditEntry, Role, SecuritySettings, UserRow } from '@/api/types';
+import { CopyButton, ErrorAlert, KeyValue, Loading, Notice, PageHeader, Section, StatusBadge } from '@/components/common';
+import { ActionDialog, Field } from '@/components/dialogs';
+import { useInventory } from '@/components/inventory/InventoryProvider';
+import { GroupPickerList } from '@/components/ops/GroupDialogs';
+import { Pager } from '@/components/OtpInput';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { useI18n, type TKey } from '@/i18n';
+import { useLoad } from '@/lib/hooks';
+import { useSession } from '@/session';
 import { ChangePasswordForm, MfaEnrollment } from './AuthPages';
+
+function Page({ icon, title, actions, children }: { icon: ReactNode; title: string; actions?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader icon={icon} title={title} actions={actions} />
+      <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">{children}</div>
+    </div>
+  );
+}
 
 export function UsersPage() {
   const { t, fmtDate } = useI18n();
@@ -16,7 +34,6 @@ export function UsersPage() {
   const [error, setError] = useState<unknown>(null);
   const [temp, setTemp] = useState<{ name: string; password: string } | null>(null);
   const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState('');
   const [assigning, setAssigning] = useState(false);
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -24,131 +41,131 @@ export function UsersPage() {
     try { await fn(); users.reload(); assignments.reload(); } catch (e) { setError(e); }
   };
 
-  const createUser = (e: FormEvent) => {
-    e.preventDefault();
-    void act(async () => {
-      const r = await post<{ userName: string; temporaryPassword: string }>('/api/v1/users', { userName: newName });
-      setTemp({ name: r.userName, password: r.temporaryPassword });
-      setAdding(false);
-      setNewName('');
-    });
-  };
-
   return (
-    <>
-      <h1>{t('nav.users')}</h1>
+    <Page icon={<Users className="size-5" />} title={t('nav.users')}>
       <ErrorAlert error={error ?? users.error} />
       {temp && (
-        <div className="alert warn">{t('users.temp', { name: temp.name })} <span className="secret">{temp.password}</span> <CopyButton text={temp.password} />
-          <button type="button" className="link" onClick={() => setTemp(null)}> {t('common.close')}</button></div>
+        <Notice kind="warn" title={t('users.temp', { name: temp.name })}>
+          <div className="mt-1 flex flex-wrap items-center gap-2"><code className="secret rounded border bg-muted px-2 py-1 font-mono text-foreground">{temp.password}</code>
+            <CopyButton text={temp.password} /><Button size="sm" variant="ghost" onClick={() => setTemp(null)}>{t('common.close')}</Button></div>
+        </Notice>
       )}
       {can('users.manage') && (
-        <>
-          <div className="row"><h2>{t('users.title')}</h2><span className="spacer" />
-            <button type="button" className="primary" onClick={() => setAdding(true)}>{t('users.add')}</button></div>
-          <p className="muted small">{t('users.noRole')}</p>
+        <Section title={t('users.title')} actions={<Button size="sm" onClick={() => setAdding(true)}><Plus />{t('users.add')}</Button>}>
+          <p className="px-3 pt-2 text-xs text-muted-foreground">{t('users.noRole')}</p>
           {users.loading && !users.data ? <Loading /> : (
-            <div className="table-card capped"><table>
-              <thead><tr><th>{t('login.user')}</th><th>{t('users.enabled')}</th><th>{t('users.mfa')}</th><th>{t('users.lastLogin')}</th><th /></tr></thead>
-              <tbody>
+            <Table containerClassName="max-h-[45vh]">
+              <TableHeader><TableRow><TableHead>{t('login.user')}</TableHead><TableHead>{t('users.enabled')}</TableHead><TableHead>{t('users.mfa')}</TableHead><TableHead>{t('users.lastLogin')}</TableHead><TableHead /></TableRow></TableHeader>
+              <TableBody>
                 {(users.data ?? []).map((u) => (
-                  <tr key={u.id}>
-                    <td>{u.userName}{u.displayName && <span className="muted"> · {u.displayName}</span>}{u.mustChangePassword && <span className="badge warn"> pw</span>}{u.isBreakGlass && <span className="badge danger"> break-glass</span>}</td>
-                    <td>{u.isEnabled ? t('common.yes') : <span className="badge danger">{t('common.no')}</span>}</td>
-                    <td>{u.mfaEnabled ? <span className="badge ok">TOTP</span> : '—'}</td>
-                    <td className="small">{u.lastLoginAt ? fmtDate(u.lastLoginAt) : t('common.never')}</td>
-                    <td>{u.id !== me?.id && (
-                      <div className="row">
-                        <button type="button" onClick={() => void act(() => post(`/api/v1/users/${u.id}/${u.isEnabled ? 'disable' : 'enable'}`))}>{u.isEnabled ? t('users.disable') : t('users.enable')}</button>
-                        <button type="button" onClick={() => void act(async () => {
+                  <TableRow key={u.id}>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-1"><span className="font-medium">{u.userName}</span>{u.displayName && <span className="text-muted-foreground">· {u.displayName}</span>}
+                        {u.mustChangePassword && <StatusBadge tone="warn">pw</StatusBadge>}{u.isBreakGlass && <StatusBadge tone="danger">break-glass</StatusBadge>}</div>
+                    </TableCell>
+                    <TableCell>{u.isEnabled ? t('common.yes') : <StatusBadge tone="danger">{t('common.no')}</StatusBadge>}</TableCell>
+                    <TableCell>{u.mfaEnabled ? <StatusBadge tone="ok">TOTP</StatusBadge> : '—'}</TableCell>
+                    <TableCell className="text-xs whitespace-nowrap tabular">{u.lastLoginAt ? fmtDate(u.lastLoginAt) : t('common.never')}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{u.id !== me?.id && (
+                      <div className="flex justify-end gap-1">
+                        <Button size="xs" variant="outline" onClick={() => void act(() => post(`/api/v1/users/${u.id}/${u.isEnabled ? 'disable' : 'enable'}`))}>{u.isEnabled ? t('users.disable') : t('users.enable')}</Button>
+                        <Button size="xs" variant="outline" onClick={() => void act(async () => {
                           const r = await post<{ temporaryPassword: string }>(`/api/v1/users/${u.id}/reset-password`);
                           setTemp({ name: u.userName, password: r.temporaryPassword });
-                        })}>{t('users.resetPassword')}</button>
-                        {u.mfaEnabled && <button type="button" onClick={() => void act(() => post(`/api/v1/users/${u.id}/reset-mfa`))}>{t('users.resetMfa')}</button>}
+                        })}>{t('users.resetPassword')}</Button>
+                        {u.mfaEnabled && <Button size="xs" variant="outline" onClick={() => void act(() => post(`/api/v1/users/${u.id}/reset-mfa`))}>{t('users.resetMfa')}</Button>}
                       </div>
-                    )}</td>
-                  </tr>
+                    )}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table></div>
+              </TableBody>
+            </Table>
           )}
-        </>
+        </Section>
       )}
 
       {can('roles.manage') && (
         <>
-          <div className="row"><h2>{t('roles.assignments')}</h2><span className="spacer" />
-            <button type="button" className="primary" onClick={() => setAssigning(true)}>{t('roles.assign')}</button></div>
-          <p className="muted small">{t('roles.denyHelp')}</p>
-          <div className="table-card capped"><table>
-            <thead><tr><th>{t('login.user')}</th><th>{t('roles.role')}</th><th>{t('roles.scope')}</th><th>{t('roles.effect')}</th><th /></tr></thead>
-            <tbody>
-              {(assignments.data ?? []).map((a) => (
-                <tr key={a.id}>
-                  <td>{a.userName}</td><td>{a.roleName}</td>
-                  <td>{a.scopeType}{a.scopeType !== 'Global' && `: ${a.scopeName ?? a.scopeId}`}</td>
-                  <td><span className={'badge ' + (a.effect === 'Deny' ? 'danger' : 'ok')}>{a.effect}</span></td>
-                  <td>{a.userId !== me?.id && <button type="button" onClick={() => void act(() => del(`/api/v1/role-assignments/${a.id}`))}>{t('roles.remove')}</button>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table></div>
-          <h2>{t('roles.catalog')}</h2>
-          <div className="table-card capped"><table><tbody>
-            {(roles.data ?? []).map((r) => <tr key={r.id}><td><strong>{r.name}</strong><div className="muted small">{r.description}</div></td><td className="mono small">{r.permissions.join(', ')}</td></tr>)}
-          </tbody></table></div>
-          <AssignDialog open={assigning} onClose={() => { setAssigning(false); assignments.reload(); }} users={users.data ?? []} roles={roles.data ?? []} />
+          <Section title={t('roles.assignments')} actions={<Button size="sm" onClick={() => setAssigning(true)}><Plus />{t('roles.assign')}</Button>}>
+            <p className="px-3 pt-2 text-xs text-muted-foreground">{t('roles.denyHelp')} {t('group.inheritHelp')}</p>
+            <Table containerClassName="max-h-[45vh]">
+              <TableHeader><TableRow><TableHead>{t('login.user')}</TableHead><TableHead>{t('roles.role')}</TableHead><TableHead>{t('roles.scope')}</TableHead><TableHead>{t('roles.effect')}</TableHead><TableHead /></TableRow></TableHeader>
+              <TableBody>
+                {(assignments.data ?? []).map((a) => (
+                  <TableRow key={a.id}>
+                    <TableCell className="font-medium">{a.userName}</TableCell>
+                    <TableCell>{a.roleName}</TableCell>
+                    <TableCell>{a.scopeType}{a.scopeType !== 'Global' && `: ${a.scopeName ?? a.scopeId}`}</TableCell>
+                    <TableCell><StatusBadge tone={a.effect === 'Deny' ? 'danger' : 'ok'}>{a.effect}</StatusBadge></TableCell>
+                    <TableCell className="text-right">{a.userId !== me?.id && <Button size="xs" variant="ghost" className="text-destructive" onClick={() => void act(() => del(`/api/v1/role-assignments/${a.id}`))}>{t('roles.remove')}</Button>}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Section>
+          <Section title={t('roles.catalog')}>
+            <Table containerClassName="max-h-[45vh]">
+              <TableBody>
+                {(roles.data ?? []).map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="w-64 align-top"><div className="font-medium">{r.name}</div><div className="text-xs text-muted-foreground">{r.description}</div></TableCell>
+                    <TableCell><div className="flex flex-wrap gap-1">{r.permissions.map((p) => <code key={p} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">{p}</code>)}</div></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Section>
+          {assigning && <AssignDialog onClose={() => { setAssigning(false); assignments.reload(); }} users={users.data ?? []} roles={roles.data ?? []} />}
         </>
       )}
-
-      <Dialog open={adding} title={t('users.add')} onClose={() => setAdding(false)}
-        actions={<><button type="button" onClick={() => setAdding(false)}>{t('common.cancel')}</button>
-          <button type="submit" form="add-user" className="primary" disabled={!newName}>{t('common.save')}</button></>}>
-        <form id="add-user" onSubmit={createUser}>
-          <div className="field"><label htmlFor="new-user">{t('login.user')}</label><input id="new-user" value={newName} onChange={(e) => setNewName(e.target.value)} /></div>
-        </form>
-      </Dialog>
-    </>
+      {adding && (
+        <AddUserDialog onClose={() => setAdding(false)} onCreated={(name, password) => { setTemp({ name, password }); users.reload(); }} />
+      )}
+    </Page>
   );
 }
 
-function AssignDialog({ open, onClose, users, roles }: { open: boolean; onClose: () => void; users: UserRow[]; roles: Role[] }) {
+function AddUserDialog({ onCreated, onClose }: { onCreated: (name: string, password: string) => void; onClose: () => void }) {
   const { t } = useI18n();
-  const hosts = useLoad(() => (open ? get<Host[]>('/api/v1/hosts') : Promise.resolve([] as Host[])), [open]);
-  const vms = useLoad(() => (open ? get<Vm[]>('/api/v1/vms') : Promise.resolve([] as Vm[])), [open]);
+  const [name, setName] = useState('');
+  return (
+    <ActionDialog title={t('users.add')} confirmLabel={t('common.save')} disabled={!name} onClose={onClose}
+      onConfirm={async () => { const r = await post<{ userName: string; temporaryPassword: string }>('/api/v1/users', { userName: name }); onCreated(r.userName, r.temporaryPassword); }}>
+      <Field label={t('login.user')} htmlFor="new-user"><Input id="new-user" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
+    </ActionDialog>
+  );
+}
+
+function AssignDialog({ onClose, users, roles }: { onClose: () => void; users: UserRow[]; roles: Role[] }) {
+  const { t } = useI18n();
+  const inv = useInventory();
   const [userId, setUserId] = useState('');
   const [roleId, setRoleId] = useState('');
   const [scopeType, setScopeType] = useState('Global');
   const [scopeId, setScopeId] = useState('');
   const [effect, setEffect] = useState('Allow');
-  const [error, setError] = useState<unknown>(null);
-
-  const submit = async () => {
-    setError(null);
-    try {
-      await post('/api/v1/role-assignments', { userId, roleId, scopeType, scopeId: scopeType === 'Global' ? '' : scopeId, effect });
-      onClose();
-    } catch (e) { setError(e); }
-  };
-
   return (
-    <Dialog open={open} title={t('roles.assign')} onClose={onClose}
-      actions={<><button type="button" onClick={onClose}>{t('common.cancel')}</button>
-        <button type="button" className="primary" disabled={!userId || !roleId || (scopeType !== 'Global' && !scopeId)} onClick={() => void submit()}>{t('common.save')}</button></>}>
-      <ErrorAlert error={error} />
-      <div className="field"><label htmlFor="as-user">{t('login.user')}</label>
-        <select id="as-user" value={userId} onChange={(e) => setUserId(e.target.value)}><option value="" />{users.map((u) => <option key={u.id} value={u.id}>{u.userName}</option>)}</select></div>
-      <div className="field"><label htmlFor="as-role">{t('roles.role')}</label>
-        <select id="as-role" value={roleId} onChange={(e) => setRoleId(e.target.value)}><option value="" />{roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
-      <div className="field"><label htmlFor="as-scope">{t('roles.scope')}</label>
-        <select id="as-scope" value={scopeType} onChange={(e) => { setScopeType(e.target.value); setScopeId(''); }}>
-          <option value="Global">Global</option><option value="Host">Host</option><option value="Vm">VM</option>
-        </select></div>
-      {scopeType === 'Host' && <div className="field"><select aria-label="Host" value={scopeId} onChange={(e) => setScopeId(e.target.value)}><option value="" />{(hosts.data ?? []).map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)}</select></div>}
-      {scopeType === 'Vm' && <div className="field"><select aria-label="VM" value={scopeId} onChange={(e) => setScopeId(e.target.value)}><option value="" />{(vms.data ?? []).map((v) => <option key={v.id} value={v.id}>{v.name} ({v.hostName})</option>)}</select></div>}
-      <div className="field"><label htmlFor="as-effect">{t('roles.effect')}</label>
-        <select id="as-effect" value={effect} onChange={(e) => setEffect(e.target.value)}><option>Allow</option><option>Deny</option></select></div>
-    </Dialog>
+    <ActionDialog title={t('roles.assign')} confirmLabel={t('common.save')} onClose={onClose}
+      disabled={!userId || !roleId || (scopeType !== 'Global' && !scopeId)}
+      onConfirm={async () => { await post('/api/v1/role-assignments', { userId, roleId, scopeType, scopeId: scopeType === 'Global' ? '' : scopeId, effect }); }}>
+      <Field label={t('login.user')} htmlFor="as-user">
+        <NativeSelect id="as-user" value={userId} onChange={(e) => setUserId(e.target.value)}><option value="" />{users.map((u) => <option key={u.id} value={u.id}>{u.userName}</option>)}</NativeSelect>
+      </Field>
+      <Field label={t('roles.role')} htmlFor="as-role">
+        <NativeSelect id="as-role" value={roleId} onChange={(e) => setRoleId(e.target.value)}><option value="" />{roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</NativeSelect>
+      </Field>
+      <Field label={t('roles.scope')} htmlFor="as-scope">
+        <NativeSelect id="as-scope" value={scopeType} onChange={(e) => { setScopeType(e.target.value); setScopeId(''); }}>
+          <option value="Global">Global</option><option value="Host">Host</option><option value="Group">{t('group.title')}</option><option value="Vm">VM</option>
+        </NativeSelect>
+      </Field>
+      {scopeType === 'Host' && <NativeSelect aria-label="Host" value={scopeId} onChange={(e) => setScopeId(e.target.value)}><option value="" />{inv.hosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)}</NativeSelect>}
+      {scopeType === 'Vm' && <NativeSelect aria-label="VM" value={scopeId} onChange={(e) => setScopeId(e.target.value)}><option value="" />{inv.vms.map((v) => <option key={v.id} value={v.id}>{v.name} ({v.hostName})</option>)}</NativeSelect>}
+      {scopeType === 'Group' && <GroupPickerList value={scopeId || null} onChange={(g) => setScopeId(g ?? '')} />}
+      <Field label={t('roles.effect')} htmlFor="as-effect">
+        <NativeSelect id="as-effect" value={effect} onChange={(e) => setEffect(e.target.value)}><option>Allow</option><option>Deny</option></NativeSelect>
+      </Field>
+    </ActionDialog>
   );
 }
 
@@ -164,43 +181,48 @@ export function AuditPage() {
   const [verify, setVerify] = useState<{ valid: boolean; entriesChecked: number; firstInvalidId: number | null; problem: string | null } | null>(null);
   const [error, setError] = useState<unknown>(null);
   return (
-    <div className="page-fill">
-      <div className="row"><h1>{t('nav.audit')}</h1><span className="spacer" />
-        <button type="button" onClick={async () => { setError(null); try { setVerify(await post('/api/v1/audit/verify')); } catch (e) { setError(e); } }}>{t('audit.verify')}</button>
-        <a className="button" href="/api/v1/audit/export">{t('audit.export')}</a>
+    <div className="flex h-full min-h-0 flex-col">
+      <PageHeader icon={<ScrollText className="size-5" />} title={t('nav.audit')}
+        actions={<>
+          <Button size="sm" variant="outline" onClick={async () => { setError(null); try { setVerify(await post('/api/v1/audit/verify')); } catch (e) { setError(e); } }}><ShieldCheck />{t('audit.verify')}</Button>
+          <Button size="sm" variant="outline" asChild><a href="/api/v1/audit/export"><Download />{t('audit.export')}</a></Button>
+        </>} />
+      <div className="space-y-2 px-4 empty:hidden">
+        <ErrorAlert error={error ?? data.error} />
+        {verify && (verify.valid
+          ? <Notice kind="ok" className="mt-3">{t('audit.valid', { n: verify.entriesChecked })}</Notice>
+          : <Notice kind="danger" className="mt-3">{t('audit.invalid', { id: verify.firstInvalidId ?? '?', problem: verify.problem ?? '' })}</Notice>)}
       </div>
-      <ErrorAlert error={error ?? data.error} />
-      {verify && (verify.valid
-        ? <div className="alert ok">{t('audit.valid', { n: verify.entriesChecked })}</div>
-        : <div className="alert danger">{t('audit.invalid', { id: verify.firstInvalidId ?? '?', problem: verify.problem ?? '' })}</div>)}
       <Pager total={data.data?.total ?? 0} skip={skip} take={take} onChange={(s, tk) => { setSkip(s); setTake(tk); }}>
-        <form className="row" onSubmit={(e) => { e.preventDefault(); setSkip(0); setQuery(action.trim()); }}>
-          <input aria-label={t('audit.action')} placeholder={t('audit.filterAction')} value={action} onChange={(e) => setAction(e.target.value)} style={{ width: 220 }} />
-          <select aria-label={t('audit.outcome')} value={outcome} onChange={(e) => { setSkip(0); setOutcome(e.target.value); }} style={{ width: 150 }}>
-            <option value="">{t('audit.allOutcomes')}</option><option>Success</option><option>Failure</option><option>Denied</option></select>
-          <button type="submit">{t('common.search')}</button>
+        <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); setSkip(0); setQuery(action.trim()); }}>
+          <Input aria-label={t('audit.action')} placeholder={t('audit.filterAction')} value={action} onChange={(e) => setAction(e.target.value)} className="w-56" />
+          <NativeSelect aria-label={t('audit.outcome')} value={outcome} onChange={(e) => { setSkip(0); setOutcome(e.target.value); }} className="w-40">
+            <option value="">{t('audit.allOutcomes')}</option><option>Success</option><option>Failure</option><option>Denied</option>
+          </NativeSelect>
+          <Button type="submit" size="sm" variant="outline">{t('common.search')}</Button>
         </form>
       </Pager>
       {data.loading && !data.data ? <Loading /> : (
-        <div className="table-card fill"><table>
-          <thead><tr><th>{t('audit.time')}</th><th>{t('audit.actor')}</th><th>{t('audit.action')}</th><th>{t('audit.resource')}</th><th>{t('audit.outcome')}</th><th>{t('audit.source')}</th></tr></thead>
-          <tbody>
+        <Table containerClassName="min-h-0 flex-1">
+          <TableHeader><TableRow><TableHead>{t('audit.time')}</TableHead><TableHead>{t('audit.actor')}</TableHead><TableHead>{t('audit.action')}</TableHead><TableHead>{t('audit.resource')}</TableHead><TableHead>{t('audit.outcome')}</TableHead><TableHead>{t('audit.source')}</TableHead></TableRow></TableHeader>
+          <TableBody>
             {(data.data?.items ?? []).map((e) => (
-              <tr key={e.id}>
-                <td className="small" style={{ whiteSpace: 'nowrap' }}>{fmtDate(e.timestampUtc)}</td>
-                <td>{e.actorName ?? '—'}<div className="muted small">{e.authMethod}</div></td>
-                <td className="mono small">{e.action}{e.detailsJson && <div className="muted" style={{ wordBreak: 'break-all' }}>{e.detailsJson}</div>}</td>
-                <td className="small">{e.resourceType}{e.resourceId && <div className="mono muted">{e.resourceId}</div>}</td>
-                <td><span className={'badge ' + (e.outcome === 'Success' ? 'ok' : 'danger')}>{e.outcome}</span></td>
-                <td className="small">{e.sourceIp}</td>
-              </tr>
+              <TableRow key={e.id}>
+                <TableCell className="text-xs whitespace-nowrap tabular">{fmtDate(e.timestampUtc)}</TableCell>
+                <TableCell>{e.actorName ?? '—'}<div className="text-xs text-muted-foreground">{e.authMethod}</div></TableCell>
+                <TableCell className="max-w-md"><code className="font-mono text-xs">{e.action}</code>{e.detailsJson && <div className="font-mono text-[11px] break-all text-muted-foreground">{e.detailsJson}</div>}</TableCell>
+                <TableCell className="text-xs">{e.resourceType}{e.resourceId && <div className="font-mono text-muted-foreground">{e.resourceId}</div>}</TableCell>
+                <TableCell><StatusBadge tone={e.outcome === 'Success' ? 'ok' : 'danger'}>{e.outcome}</StatusBadge></TableCell>
+                <TableCell className="text-xs">{e.sourceIp}</TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table></div>
+          </TableBody>
+        </Table>
       )}
     </div>
   );
 }
+
 export function SettingsPage() {
   const { t } = useI18n();
   const settings = useLoad(() => get<SecuritySettings>('/api/v1/settings/security'));
@@ -209,46 +231,48 @@ export function SettingsPage() {
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
   const s = draft ?? settings.data;
-  if (!s) return settings.error ? <ErrorAlert error={settings.error} /> : <Loading />;
-  const set = (patch: Partial<SecuritySettings>) => { setDraft({ ...s, ...patch }); setSaved(false); };
+  if (!s) return settings.error ? <div className="p-4"><ErrorAlert error={settings.error} /></div> : <Loading />;
+  const set = (p: Partial<SecuritySettings>) => { setDraft({ ...s, ...p }); setSaved(false); };
   const save = async () => {
     setError(null);
     try { await put('/api/v1/settings/security', s); setSaved(true); setDraft(null); settings.reload(); } catch (e) { setError(e); }
   };
   return (
-    <>
-      <h1>{t('nav.settings')}</h1>
+    <Page icon={<Settings className="size-5" />} title={t('nav.settings')}>
       <ErrorAlert error={error} />
-      {saved && <div className="alert ok">{t('settings.saved')}</div>}
-      <div className="grid cols-2">
-        <div className="card">
-          <h2 style={{ marginTop: 0 }}>{t('settings.security')}</h2>
-          <div className="field"><label htmlFor="s-mfa">{t('settings.mfaFor')}</label>
-            <select id="s-mfa" value={s.mfaRequiredFor} onChange={(e) => set({ mfaRequiredFor: e.target.value as SecuritySettings['mfaRequiredFor'] })}>
+      {saved && <Notice kind="ok">{t('settings.saved')}</Notice>}
+      <div className="grid gap-3 xl:grid-cols-2">
+        <Section title={t('settings.security')} bodyClassName="space-y-3 p-3">
+          <Field label={t('settings.mfaFor')} htmlFor="s-mfa">
+            <NativeSelect id="s-mfa" value={s.mfaRequiredFor} onChange={(e) => set({ mfaRequiredFor: e.target.value as SecuritySettings['mfaRequiredFor'] })}>
               {(['None', 'Privileged', 'All'] as const).map((v) => <option key={v} value={v}>{t(('settings.mfa.' + v) as TKey)}</option>)}
-            </select></div>
-          <div className="field"><label htmlFor="s-idle">{t('settings.idle')}</label><input id="s-idle" type="number" min={5} max={240} value={s.sessionIdleMinutes} onChange={(e) => set({ sessionIdleMinutes: Number(e.target.value) })} /></div>
-          <div className="field"><label htmlFor="s-abs">{t('settings.absolute')}</label><input id="s-abs" type="number" min={1} max={72} value={s.sessionAbsoluteHours} onChange={(e) => set({ sessionAbsoluteHours: Number(e.target.value) })} /></div>
-          <div className="field"><label htmlFor="s-pw">{t('settings.pwmin')}</label><input id="s-pw" type="number" min={15} max={128} value={s.passwordMinLength} onChange={(e) => set({ passwordMinLength: Number(e.target.value) })} /></div>
-          <div className="field"><label htmlFor="s-local">{t('settings.localSignIn')}</label>
-            <select id="s-local" value={s.localSignIn} onChange={(e) => set({ localSignIn: e.target.value as SecuritySettings['localSignIn'] })}>
-              <option value="allowed">allowed</option><option value="break-glass-only">break-glass-only</option></select></div>
-          <button type="button" className="primary" disabled={!draft} onClick={() => void save()}>{t('common.save')}</button>
-        </div>
-        <div className="card">
-          <h2 style={{ marginTop: 0 }}>{t('settings.system')}</h2>
+            </NativeSelect>
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label={t('settings.idle')} htmlFor="s-idle"><Input id="s-idle" type="number" min={5} max={240} value={s.sessionIdleMinutes} onChange={(e) => set({ sessionIdleMinutes: Number(e.target.value) })} /></Field>
+            <Field label={t('settings.absolute')} htmlFor="s-abs"><Input id="s-abs" type="number" min={1} max={72} value={s.sessionAbsoluteHours} onChange={(e) => set({ sessionAbsoluteHours: Number(e.target.value) })} /></Field>
+            <Field label={t('settings.pwmin')} htmlFor="s-pw"><Input id="s-pw" type="number" min={15} max={128} value={s.passwordMinLength} onChange={(e) => set({ passwordMinLength: Number(e.target.value) })} /></Field>
+          </div>
+          <Field label={t('settings.localSignIn')} htmlFor="s-local">
+            <NativeSelect id="s-local" value={s.localSignIn} onChange={(e) => set({ localSignIn: e.target.value as SecuritySettings['localSignIn'] })}>
+              <option value="allowed">allowed</option><option value="break-glass-only">break-glass-only</option>
+            </NativeSelect>
+          </Field>
+          <Button disabled={!draft} onClick={() => void save()}>{t('common.save')}</Button>
+        </Section>
+        <Section title={t('settings.system')} bodyClassName="p-3">
           {info.data && (
-            <dl className="kv">
-              <dt>Version</dt><dd>{info.data.version} ({info.data.milestone})</dd>
-              <dt>Database</dt><dd>{info.data.database}</dd>
-              <dt>{t('settings.telemetry')}</dt><dd>{info.data.telemetry}</dd>
-              <dt>{t('settings.offline')}</dt><dd>{info.data.internetRequired}</dd>
-              {info.data.dataDirectory && <><dt>Data</dt><dd className="mono small">{info.data.dataDirectory}</dd></>}
-            </dl>
+            <KeyValue items={[
+              ['Version', `${info.data.version} (${info.data.milestone})`],
+              ['Database', info.data.database],
+              [t('settings.telemetry'), info.data.telemetry],
+              [t('settings.offline'), info.data.internetRequired],
+              ...(info.data.dataDirectory ? [['Data', <code key="d" className="font-mono text-xs">{info.data.dataDirectory}</code>] as [ReactNode, ReactNode]] : []),
+            ]} />
           )}
-        </div>
+        </Section>
       </div>
-    </>
+    </Page>
   );
 }
 
@@ -260,53 +284,50 @@ export function AccountPage() {
   const [error, setError] = useState<unknown>(null);
   if (!me) return <Loading />;
   return (
-    <>
-      <h1>{t('nav.account')}</h1>
+    <Page icon={<UserRound className="size-5" />} title={t('nav.account')}>
       <ErrorAlert error={error} />
-      <div className="grid cols-2">
-        <div className="card">
-          <h2 style={{ marginTop: 0 }}>{t('login.mfaTitle')}</h2>
+      <div className="grid gap-3 xl:grid-cols-2">
+        <Section title={t('login.mfaTitle')} bodyClassName="space-y-3 p-3">
           {me.mfaEnabled ? (
             <>
-              <p className="alert ok">{t('mfa.enabled')} {t('mfa.remaining', { n: me.recoveryCodesRemaining })}</p>
-              {codes && <><div className="codes">{codes.map((c) => <span key={c}>{c}</span>)}</div><CopyButton text={codes.join('\n')} /></>}
-              <div className="row" style={{ marginTop: 8 }}>
-                <button type="button" onClick={async () => { setError(null); try { setCodes((await post<{ recoveryCodes: string[] }>('/api/v1/mfa/recovery-codes')).recoveryCodes); await refresh(); } catch (e) { setError(e); } }}>{t('mfa.regenerate')}</button>
-                {!me.mfaRequired && <button type="button" className="danger-outline" onClick={async () => { setError(null); try { await post('/api/v1/mfa/totp/disable'); await refresh(); } catch (e) { setError(e); } }}>{t('mfa.disable')}</button>}
+              <Notice kind="ok">{t('mfa.enabled')} {t('mfa.remaining', { n: me.recoveryCodesRemaining })}</Notice>
+              {codes && <><div className="codes grid grid-cols-2 gap-2 rounded-lg border bg-muted p-3 font-mono text-sm">{codes.map((c) => <span key={c}>{c}</span>)}</div><CopyButton text={codes.join('\n')} /></>}
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={async () => { setError(null); try { setCodes((await post<{ recoveryCodes: string[] }>('/api/v1/mfa/recovery-codes')).recoveryCodes); await refresh(); } catch (e) { setError(e); } }}><KeyRound />{t('mfa.regenerate')}</Button>
+                {!me.mfaRequired && <Button variant="destructive" size="sm" onClick={async () => { setError(null); try { await post('/api/v1/mfa/totp/disable'); await refresh(); } catch (e) { setError(e); } }}>{t('mfa.disable')}</Button>}
               </div>
             </>
           ) : (
-            <><p className="muted">{t('mfa.disabled')}</p><MfaEnrollment /></>
+            <><p className="text-sm text-muted-foreground">{t('mfa.disabled')}</p><MfaEnrollment /></>
           )}
-          <p className="muted small">{t('mfa.webauthn')}</p>
-        </div>
-        <div className="card">
-          <h2 style={{ marginTop: 0 }}>{t('pw.changeTitle')}</h2>
-          <ChangePasswordForm />
-        </div>
+          <p className="text-xs text-muted-foreground">{t('mfa.webauthn')}</p>
+        </Section>
+        <Section title={t('pw.changeTitle')} bodyClassName="p-3"><ChangePasswordForm /></Section>
       </div>
-      <h2>{t('account.sessions')}</h2>
-      <div className="table-card capped"><table><tbody>
-        {(sessions.data ?? []).map((s) => (
-          <tr key={s.id}>
-            <td className="small">{fmtDate(s.createdAt)} → {fmtDate(s.lastSeenAt)}</td>
-            <td className="small">{s.ipAddress}<div className="muted">{s.userAgent}</div></td>
-            <td><span className="badge">{s.authMethods}</span></td>
-            <td>{s.current ? <span className="badge info">{t('account.current')}</span>
-              : <button type="button" onClick={async () => { await del(`/api/v1/auth/sessions/${s.id}`); sessions.reload(); }}>{t('account.revoke')}</button>}</td>
-          </tr>
-        ))}
-      </tbody></table></div>
-    </>
+      <Section title={t('account.sessions')}>
+        <Table>
+          <TableBody>
+            {(sessions.data ?? []).map((s) => (
+              <TableRow key={s.id}>
+                <TableCell className="text-xs whitespace-nowrap tabular">{fmtDate(s.createdAt)} → {fmtDate(s.lastSeenAt)}</TableCell>
+                <TableCell className="text-xs">{s.ipAddress}<div className="max-w-md truncate text-muted-foreground">{s.userAgent}</div></TableCell>
+                <TableCell><StatusBadge tone="muted">{s.authMethods}</StatusBadge></TableCell>
+                <TableCell className="text-right">{s.current ? <StatusBadge tone="info">{t('account.current')}</StatusBadge>
+                  : <Button size="xs" variant="outline" onClick={async () => { await del(`/api/v1/auth/sessions/${s.id}`); sessions.reload(); }}>{t('account.revoke')}</Button>}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Section>
+    </Page>
   );
 }
 
 export function PlannedPage({ titleKey, milestone }: { titleKey: TKey; milestone: string }) {
   const { t } = useI18n();
   return (
-    <>
-      <h1>{t(titleKey)}</h1>
-      <div className="card"><h2 style={{ marginTop: 0 }}>{t('planned.title')}</h2><p>{t('planned.body', { m: milestone })}</p></div>
-    </>
+    <Page icon={<ScrollText className="size-5" />} title={t(titleKey)}>
+      <Section title={t('planned.title')} bodyClassName="p-3"><p className="text-sm">{t('planned.body', { m: milestone })}</p></Section>
+    </Page>
   );
 }

@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { enOps, itOps } from './i18n-ops';
 
-const en = {
+const enBase = {
   'app.name': 'HvPortal',
   'nav.dashboard': 'Dashboard',
   'nav.vms': 'Virtual machines',
@@ -9,7 +10,7 @@ const en = {
   'nav.storage': 'Storage',
   'nav.backup': 'Backup',
   'nav.templates': 'Templates',
-  'nav.jobs': 'Jobs',
+  'nav.jobs': 'Tasks',
   'nav.users': 'Users & roles',
   'nav.audit': 'Audit',
   'nav.settings': 'Settings',
@@ -361,9 +362,10 @@ const en = {
   'state.Unknown': 'Unknown',
 };
 
+const en = { ...enBase, ...enOps };
 type Key = keyof typeof en;
 
-const it: Record<Key, string> = {
+const itBase: Record<keyof typeof enBase, string> = {
   'app.name': 'HvPortal',
   'nav.dashboard': 'Dashboard',
   'nav.vms': 'Macchine virtuali',
@@ -372,7 +374,7 @@ const it: Record<Key, string> = {
   'nav.storage': 'Storage',
   'nav.backup': 'Backup',
   'nav.templates': 'Template',
-  'nav.jobs': 'Job',
+  'nav.jobs': 'Attività',
   'nav.users': 'Utenti e ruoli',
   'nav.audit': 'Audit',
   'nav.settings': 'Impostazioni',
@@ -723,6 +725,8 @@ const it: Record<Key, string> = {
   'state.Other': 'Altro',
   'state.Unknown': 'Sconosciuto',
 };
+
+const it: Record<Key, string> = { ...itBase, ...itOps };
 
 export type Lang = 'it' | 'en';
 const dictionaries: Record<Lang, Record<Key, string>> = { en, it };

@@ -731,6 +731,37 @@
             "description": "OK"
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
       }
     },
     "/api/v1/hosts/{id}/enrollment-token": {
@@ -802,6 +833,18 @@
         }
       }
     },
+    "/api/v1/hosts/connection-info": {
+      "get": {
+        "tags": [
+          "Hosts"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/v1/vms": {
       "get": {
         "tags": [
@@ -854,6 +897,37 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VmUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "OK"
@@ -996,11 +1070,684 @@
         }
       }
     },
+    "/api/v1/downloads": {
+      "get": {
+        "tags": [
+          "Downloads"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/downloads/agent": {
+      "get": {
+        "tags": [
+          "Downloads"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/hosts/{id}/delete": {
+      "post": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/vms/{id}/details": {
+      "get": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/vms/{id}/delete": {
+      "post": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/vms/{id}/forget": {
+      "post": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/vms/{id}/console/tickets": {
+      "post": {
+        "tags": [
+          "Console"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/console/sessions": {
+      "get": {
+        "tags": [
+          "Console"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/v1/system/info": {
       "get": {
         "tags": [
           "System"
         ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/groups": {
+      "get": {
+        "tags": [
+          "Groups"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Groups"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{id}": {
+      "patch": {
+        "tags": [
+          "Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{id}/members": {
+      "post": {
+        "tags": [
+          "Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{id}/members/remove": {
+      "post": {
+        "tags": [
+          "Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/vms/{id}/config": {
+      "get": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VmConfigChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/vms/{id}/checkpoints": {
+      "get": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckpointCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/vms/{id}/checkpoints/{checkpointId}/apply": {
+      "post": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "checkpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckpointApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/vms/{id}/checkpoints/{checkpointId}/delete": {
+      "post": {
+        "tags": [
+          "Virtual machines"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "checkpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckpointDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/hosts/{id}/defaults": {
+      "get": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/hosts/{id}/switches": {
+      "get": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/hosts/{id}/disks": {
+      "get": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/hosts/{id}/isos": {
+      "get": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/hosts/{id}/iso-library": {
+      "put": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IsoLibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/hosts/{id}/vms": {
+      "post": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVmRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "OK"
@@ -1064,6 +1811,66 @@
           }
         }
       },
+      "CheckpointApplyRequest": {
+        "required": [
+          "confirmName",
+          "idempotencyKey"
+        ],
+        "type": "object",
+        "properties": {
+          "confirmName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "idempotencyKey": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "CheckpointCreateRequest": {
+        "required": [
+          "name",
+          "idempotencyKey"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "idempotencyKey": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "CheckpointDeleteRequest": {
+        "required": [
+          "includeChildren",
+          "idempotencyKey"
+        ],
+        "type": "object",
+        "properties": {
+          "includeChildren": {
+            "type": "boolean"
+          },
+          "idempotencyKey": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "ConfirmRequest": {
         "required": [
           "code"
@@ -1072,6 +1879,32 @@
         "properties": {
           "code": {
             "type": "string"
+          }
+        }
+      },
+      "CreateGroupRequest": {
+        "required": [
+          "name",
+          "description",
+          "parentId"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "parentId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
           }
         }
       },
@@ -1104,6 +1937,87 @@
           }
         }
       },
+      "CreateVmRequest": {
+        "required": [
+          "vm",
+          "groupId",
+          "idempotencyKey"
+        ],
+        "type": "object",
+        "properties": {
+          "vm": {
+            "$ref": "#/components/schemas/NewVmRequest"
+          },
+          "groupId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "idempotencyKey": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ExpandDiskSpec": {
+        "required": [
+          "path",
+          "newSizeGb"
+        ],
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "newSizeGb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "HostUpdateRequest": {
+        "required": [
+          "displayName",
+          "description"
+        ],
+        "type": "object",
+        "properties": {
+          "displayName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "IsoLibraryRequest": {
+        "required": [
+          "paths"
+        ],
+        "type": "object",
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "LoginRequest": {
         "required": [
           "userName",
@@ -1116,6 +2030,21 @@
           },
           "password": {
             "type": "string"
+          }
+        }
+      },
+      "MembersRequest": {
+        "required": [
+          "vmIds"
+        ],
+        "type": "object",
+        "properties": {
+          "vmIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         }
       },
@@ -1150,6 +2079,169 @@
           "Privileged",
           "All"
         ]
+      },
+      "NetworkAdapterChange": {
+        "required": [
+          "adapterId",
+          "switchName",
+          "vlanId"
+        ],
+        "type": "object",
+        "properties": {
+          "adapterId": {
+            "type": "string"
+          },
+          "switchName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "vlanId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "NewDiskSpec": {
+        "required": [
+          "sizeGb",
+          "fixed"
+        ],
+        "type": "object",
+        "properties": {
+          "sizeGb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "fixed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "NewVmRequest": {
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "generation": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "processorCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "memoryStartupMb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "dynamicMemory": {
+            "type": "boolean"
+          },
+          "memoryMinimumMb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "memoryMaximumMb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "diskSizeGb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "diskFixed": {
+            "type": "boolean"
+          },
+          "switchName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isoPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "secureBootTemplate": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "enableTpm": {
+            "type": "boolean"
+          },
+          "checkpointType": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "automaticStartAction": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "startAfterCreate": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isoRoots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
       },
       "PowerRequest": {
         "required": [
@@ -1311,6 +2403,236 @@
           }
         }
       },
+      "UpdateGroupRequest": {
+        "required": [
+          "name",
+          "description",
+          "parentId",
+          "moveToRoot"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "parentId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "moveToRoot": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          }
+        }
+      },
+      "VmConfigChange": {
+        "type": "object",
+        "properties": {
+          "vmId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "newName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "notes": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "processorCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "processorReserve": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "processorLimit": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "processorWeight": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "memoryStartupMb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "dynamicMemoryEnabled": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "memoryMinimumMb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "memoryMaximumMb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "memoryBuffer": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "memoryPriority": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "automaticStartAction": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "automaticStartDelaySeconds": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "automaticStopAction": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "checkpointType": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "secureBootEnabled": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "secureBootTemplate": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "dvdIsoPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "networkAdapterChanges": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/NetworkAdapterChange"
+            }
+          },
+          "addNetworkAdapterSwitch": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "newDisk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NewDiskSpec"
+              }
+            ]
+          },
+          "expandDisk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExpandDiskSpec"
+              }
+            ]
+          },
+          "isoRoots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "VmPowerOperation": {
         "enum": [
           "Start",
@@ -1322,6 +2644,20 @@
           "Resume",
           "Save"
         ]
+      },
+      "VmUpdateRequest": {
+        "required": [
+          "description"
+        ],
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
       }
     }
   },
@@ -1354,7 +2690,16 @@
       "name": "Jobs"
     },
     {
+      "name": "Downloads"
+    },
+    {
+      "name": "Console"
+    },
+    {
       "name": "System"
+    },
+    {
+      "name": "Groups"
     }
   ]
 }

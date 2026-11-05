@@ -1,7 +1,8 @@
-# Browser console — feasibility study (Milestone 4, research)
+# Browser console — feasibility study (research)
 
-**Status: study only. No console is implemented in Milestone 1.** The `vm.console` permission exists so roles stay
-stable; no endpoint uses it.
+**Status: research notes.** A basic console based on documented WMI APIs is implemented since v0.3.0: see
+[console.md](console.md). This document keeps the study of the VMConnect/RDP-based approach (higher frame rate,
+enhanced session), which is not implemented.
 
 ## Three different things that must not be confused
 

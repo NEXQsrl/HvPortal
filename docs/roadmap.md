@@ -12,17 +12,26 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
    (Hyper-V calls, service accounts, firewall, upgrade/rollback, uninstall).
 2. Confirm the restart/reset uptime heuristic and the `InstanceID` parsing of RASD on real VMs.
 3. Install scripts executed elevated end-to-end (not possible in the development environment used so far).
-4. Logical groups management UI (model + RBAC evaluation already implemented and tested).
 5. External audit forwarding (syslog/webhook) — currently export only.
 
+## v0.3.0 — delivered (code + automated tests; real-host validation pending)
+- VM configuration (general, CPU, memory, Secure Boot, DVD/ISO from a per-host ISO library, vNIC switch/VLAN/add,
+  new and expanded VHDX) as jobs with per-section permissions and off-only rules.
+- VM creation wizard (Gen1/Gen2, CPU, memory, disk, switch, ISO + first boot, Secure Boot template, vTPM, start,
+  placement in a group).
+- Checkpoints: tree, create, apply (off/saved), delete with children.
+- Host resources: switches, VM virtual disks, ISO library.
+- Logical groups as nested folders with RBAC inheritance and access-change guard; inventory tree (hosts view and
+  groups view) with drag and drop.
+- Basic browser console (hypervisor screen capture, keyboard, synthetic mouse) — [console.md](console.md).
+- UI rebuilt with shadcn/ui: vCenter-like layout (navigator tree, object tabs, recent tasks, command palette).
+
 ## Milestone 2
-- VM configuration: CPU, static/dynamic memory, limits/reserves, firmware, boot order, Secure Boot, vTPM,
-  disks/controllers/DVD/ISO with path and ownership validation; online vs offline matrix.
-- Checkpoints standard/production with fallback policy, apply/delete, merge monitoring.
-- Logical groups, tags, filters, bulk operations, start/stop order with dependencies, timeouts, cycle detection;
-  native Hyper-V VM groups shown separately.
-- Networks: switches (external/internal/private), vNICs, VLAN; management-cutting changes with pre-checks and
-  automatic rollback timer.
+- Remaining VM configuration: boot order, TPM on existing VMs, controllers, disk detach/removal with ownership
+  checks, online/offline matrix validated on hosts.
+- Checkpoint fallback policy reporting and merge monitoring.
+- Tags, filters, bulk operations, start/stop order with dependencies; native Hyper-V VM groups shown separately.
+- Networks: switch creation/changes; management-cutting changes with pre-checks and automatic rollback timer.
 - Entra ID: OIDC code + PKCE via Microsoft.Identity.Web, BFF, single-tenant default, tenant allow-list, issuer/
   audience/nonce/state validation, encrypted rotating client credentials (prefer certificate), tid+oid identity,
   explicit role mapping from app roles/groups, group overage via Graph, no email-based linking, Conditional Access
@@ -41,7 +50,7 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
   tests; product configuration/key backup automation.
 
 ## Milestone 4
-- Browser console after the [study](console-study.md) and a validated prototype.
+- Console v2 (VMConnect/RDP on 2179, enhanced session) after the [study](console-study.md); basic console done in v0.3.
 - S2D monitoring → provisioning (separate, destructive operations gated).
 - Native backup engine (VSS, RCT, reference points) if the provider approach proves insufficient.
 - Hyper-V Replica.

@@ -3,11 +3,11 @@
 Browser-based management for Microsoft Hyper-V hosts — standalone or (later) clustered, in a domain or in a
 workgroup — with local accounts, MFA, fine-grained RBAC, persistent jobs and a tamper-evident audit log.
 
-> **Status: Milestone 1 (pre-release, private).** Not published; do not distribute.
+> **Status: v0.3.0 (pre-release, private).** Not published; do not distribute.
 > "Hyper-V", "Windows Server" and "Microsoft Entra" are trademarks of Microsoft. HvPortal is an independent
 > project and is not affiliated with or endorsed by Microsoft. The product name is provisional.
 
-## What works today (Milestone 1)
+## What works today (v0.3.0)
 
 | Area | State |
 |---|---|
@@ -22,9 +22,12 @@ workgroup — with local accounts, MFA, fine-grained RBAC, persistent jobs and a
 | VM power: start, guest shutdown/restart, turn off, reset, pause, resume, save — as persistent jobs | ✅ code; real-host validation pending |
 | Jobs: leases, per-VM locks, permission re-validation, restart reconciliation, safe cancellation | ✅ tested |
 | Audit log with HMAC hash chain, export, verification | ✅ tested |
-| Web UI (React/TypeScript): IT/EN, light/dark, responsive, live updates (SignalR) | ✅ tested with Edge |
+| VM configuration (CPU, memory, Secure Boot, DVD/ISO library, vNIC switch/VLAN, new/expanded disks), VM creation wizard, checkpoints — typed jobs via the Hyper-V PowerShell module | ✅ code + tests; real-host validation pending |
+| Browser console (hypervisor screen + keyboard/mouse, works before boot; not RDP) | ✅ code + tests; real-host validation pending |
+| VM groups as nested folders with RBAC inheritance and anti-escalation; inventory tree with drag and drop | ✅ tested |
+| Web UI (React/TypeScript, shadcn/ui): vCenter-like navigator, object tabs, recent tasks, command palette, IT/EN, light/dark, responsive, live updates | ✅ tested with Edge |
 | SQLite | ✅ — PostgreSQL / SQL Server: Milestone 2 |
-| Entra ID, VM configuration, checkpoints, networks, clusters, backup, console | ⏳ see [roadmap](docs/roadmap.md) |
+| Entra ID, PostgreSQL/SQL Server, switch management, templates, clusters/migration, backup, Replica, S2D | ⏳ see [roadmap](docs/roadmap.md) |
 
 See [what was tested and how](docs/testing.md) and the [compatibility matrix](docs/compatibility-matrix.md).
 
@@ -33,12 +36,12 @@ See [what was tested and how](docs/testing.md) and the [compatibility matrix](do
 ```
  Browser ──HTTPS(cookie, CSRF, CSP)──►  Gateway (NT SERVICE\HvPortalGateway)   ◄──mTLS WebSocket (agent-initiated)──  Agent (NT SERVICE\HvPortalAgent)
                                          ├─ REST API + OpenAPI, SignalR                                                 ├─ typed commands only
-                                         ├─ auth, MFA, RBAC, jobs, audit                                                ├─ WMI root\virtualization\v2
+                                         ├─ auth, MFA, RBAC, jobs, audit, console relay                                 ├─ WMI root\virtualization\v2 + fixed Ops script
                                          └─ SQLite + key ring (DPAPI, exportable)                                       └─ member of Hyper-V Administrators
 ```
 
 Details: [architecture](docs/architecture.md) · [decisions](docs/decisions.md) · [security model](docs/security-model.md) ·
-[threat model](docs/threat-model.md) · [capability matrix](docs/capability-matrix.md) · [API](docs/api.md)
+[threat model](docs/threat-model.md) · [capability matrix](docs/capability-matrix.md) · [API](docs/api.md) · [console](docs/console.md)
 
 ## Quick start (development, no administrator rights needed)
 
@@ -54,8 +57,8 @@ dotnet build HvPortal.slnx
 Automated checks:
 
 ```powershell
-dotnet test HvPortal.slnx                           # 126 unit + integration tests
-.\scripts\dev\Invoke-SmokeTest.ps1                  # 35 HTTP end-to-end checks against a fresh dev gateway
+dotnet test HvPortal.slnx                           # 178 unit + integration tests
+.\scripts\dev\Invoke-SmokeTest.ps1                  # 46 HTTP end-to-end checks against a fresh dev gateway
 cd web; npx vitest run; node e2e/ui-smoke.mjs ...   # UI e2e with the local Edge (see docs/testing.md)
 ```
 

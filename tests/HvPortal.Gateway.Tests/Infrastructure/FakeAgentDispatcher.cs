@@ -110,8 +110,122 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                     HyperVCode = 0,
                 });
 
+            case AgentCommandKind.HyperVOperation:
+                var outcome = OperationHandler?.Invoke(hostId, command) ?? DefaultOperation(hostId, command);
+                return Task.FromResult(new AgentCommandResult
+                {
+                    CommandId = command.CommandId,
+                    Status = outcome.Ok ? AgentCommandStatus.Succeeded : AgentCommandStatus.Failed,
+                    Message = outcome.Error,
+                    Operation = outcome,
+                });
+
+            case AgentCommandKind.CollectInventory:
+                return Task.FromResult(new AgentCommandResult
+                {
+                    CommandId = command.CommandId,
+                    Status = AgentCommandStatus.Succeeded,
+                    Inventory = new HostInventory
+                    {
+                        CollectedAtUtc = DateTimeOffset.UtcNow,
+                        Access = HyperVAccessStatus.Ok,
+                        Host = new HostFacts { ComputerName = "FAKEHOST", AgentVersion = "test", VirtualSwitches = ["vSwitch"] },
+                        Vms = _vms.Where(kv => kv.Value.HostId == hostId).Select(kv => Summary(kv.Key, kv.Value)).ToList(),
+                    },
+                });
+
+            case AgentCommandKind.ConsoleFrame:
+                var fr = command.FrameRequest!;
+                if (!_vms.TryGetValue(fr.VmId, out var cvm))
+                {
+                    return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.NotFound });
+                }
+                if (cvm.State != VmPowerState.Running)
+                {
+                    return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.InvalidState, Message = "The VM is not running." });
+                }
+                var first = _framesSent.TryAdd(fr.VmId, true);
+                return Task.FromResult(new AgentCommandResult
+                {
+                    CommandId = command.CommandId,
+                    Status = AgentCommandStatus.Succeeded,
+                    Frame = first || fr.ForceFull
+                        ? new ConsoleFrame { Width = 4, Height = 2, GuestWidth = 4, GuestHeight = 2, MouseAvailable = true, Data = Convert.ToBase64String(TinyFrame()) }
+                        : new ConsoleFrame { Width = 4, Height = 2, GuestWidth = 4, GuestHeight = 2, MouseAvailable = true, Unchanged = true },
+                });
+
+            case AgentCommandKind.ConsoleInput:
+                return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Succeeded });
+
             default:
                 return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Rejected });
+        }
+    }
+
+    private readonly ConcurrentDictionary<Guid, bool> _framesSent = new();
+
+    /// <summary>zlib-compressed 4x2 RGB565 frame.</summary>
+    private static byte[] TinyFrame()
+    {
+        using var ms = new MemoryStream();
+        using (var z = new System.IO.Compression.ZLibStream(ms, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+        {
+            z.Write(new byte[4 * 2 * 2]);
+        }
+        return ms.ToArray();
+    }
+
+    /// <summary>Optional override for typed Hyper-V operations.</summary>
+    public Func<Guid, AgentCommand, HvOperationOutcome>? OperationHandler { get; set; }
+
+    public IReadOnlyList<AgentCommand> OperationsReceived(HvOperation op) =>
+        Received.Where(c => c.Kind == AgentCommandKind.HyperVOperation && c.Operation == op).ToList();
+
+    public int InputsReceived => Received.Count(c => c.Kind == AgentCommandKind.ConsoleInput);
+
+    private HvOperationOutcome DefaultOperation(Guid hostId, AgentCommand command)
+    {
+        HvOperationOutcome Ok(object? result, params string[] applied) =>
+            new() { Ok = true, Result = result is null ? null : HvOperations.ToElement(result), Applied = applied };
+        switch (command.Operation)
+        {
+            case HvOperation.GetVmConfig:
+                var r = HvOperations.FromElement<VmRef>(command.OperationArgs)!;
+                if (!_vms.TryGetValue(r.VmId, out var v))
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "VM not found on this host." };
+                }
+                return Ok(new
+                {
+                    name = v.Name, notes = "", generation = 2, state = v.State.ToString(), version = "12.0", processorCount = 2,
+                    memoryStartupBytes = 4L << 30, dynamicMemoryEnabled = false, checkpointType = "Production", secureBootEnabled = true,
+                    secureBootTemplate = "MicrosoftWindows", tpmEnabled = false, dvdDrives = Array.Empty<object>(),
+                    networkAdapters = new[] { new { id = "Microsoft:NIC1", name = "Network Adapter", switchName = "vSwitch", vlanId = 0 } },
+                    hardDisks = new[] { new { controllerType = "SCSI", controllerNumber = 0, controllerLocation = 0, path = @"D:\VMs\disk.vhdx" } },
+                });
+            case HvOperation.SetVmConfig:
+                return Ok(new { applied = true }, "processor");
+            case HvOperation.NewVm:
+                var req = HvOperations.FromElement<NewVmRequest>(command.OperationArgs)!;
+                var newId = Guid.NewGuid();
+                _vms[newId] = (hostId, req.Name, req.StartAfterCreate ? VmPowerState.Running : VmPowerState.Off, 0);
+                return Ok(new NewVmResult(newId, req.Name, @"D:\VMs", @"D:\VHDs\" + req.Name + ".vhdx", null), "created");
+            case HvOperation.ListCheckpoints:
+                return Ok(new[] { new CheckpointInfo(Guid.NewGuid().ToString("D"), "Before update", null, DateTimeOffset.UtcNow, "Production", true) });
+            case HvOperation.NewCheckpoint or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint:
+                return Ok(new { id = Guid.NewGuid() }, "done");
+            case HvOperation.GetHostDefaults:
+                return Ok(new HostDefaults(@"D:\VHDs", @"D:\VMs", 12, 128L << 30, ["12.0"], "12.0"));
+            case HvOperation.ListSwitches:
+                return Ok(new[] { new SwitchInfo(Guid.NewGuid().ToString("D"), "vSwitch", "External", "NIC", true, false,
+                    _vms.Values.Where(x => x.HostId == hostId).Select(x => x.Name).ToList()) });
+            case HvOperation.ListHostDisks:
+                return Ok(_vms.Where(kv => kv.Value.HostId == hostId)
+                    .Select(kv => new HostDiskInfo(@"D:\VHDs\" + kv.Value.Name + ".vhdx", kv.Key, kv.Value.Name, "SCSI 0:0", "VHDX", "Dynamic", 64L << 30, 10L << 30, null)).ToList());
+            case HvOperation.ListIsos:
+                return Ok(new[] { new IsoFile(@"D:\ISO\win.iso", 5L << 30, DateTimeOffset.UtcNow) });
+            default:
+                return new HvOperationOutcome { Ok = false, Error = "Unsupported operation." };
         }
     }
 

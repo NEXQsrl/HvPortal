@@ -14,7 +14,8 @@ param(
     [string]$AgentDataDirectory = (Join-Path $env:LOCALAPPDATA 'HvPortal\dev-agent'),
     [int]$UiPort = 18443,
     [int]$AgentPort = 18444,
-    [int]$AgentSeconds = 20
+    [int]$AgentSeconds = 20,
+    [string]$AgentExe
 )
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
@@ -135,7 +136,7 @@ $enrollToken = $hostResp.Json.enrollment.token
 $fp = $hostResp.Json.enrollment.caFingerprintSha256
 
 # 8. agent enrollment (pinned CA) and token single use
-$agentExe = Join-Path $repo 'src\HvPortal.Agent\bin\Debug\net10.0-windows10.0.17763.0\HvPortal.Agent.exe'
+$agentExe = if ($AgentExe) { $AgentExe } else { Join-Path $repo 'src\HvPortal.Agent\bin\Debug\net10.0-windows10.0.17763.0\HvPortal.Agent.exe' }
 if (Test-Path -LiteralPath $AgentDataDirectory) { Remove-Item -LiteralPath $AgentDataDirectory -Recurse -Force }
 $env:HVP_AGENT_DATA_DIR = $AgentDataDirectory
 $env:HVP_ENROLLMENT_TOKEN = $enrollToken
@@ -155,6 +156,42 @@ $h = $hosts.Json | Where-Object { $_.displayName -eq 'local-dev-host' }
 Check 'agent connected over mTLS' ($h.connected -eq $true) "connected=$($h.connected)"
 Check 'inventory received from agent' ($null -ne $h.lastInventoryAt) "access=$($h.access) message=$($h.accessMessage)"
 Check 'Hyper-V access status reported truthfully' ($h.access -in @('Ok', 'AccessDenied', 'NotInstalled', 'ServiceStopped')) "$($h.access)"
+
+# 9b. typed operations travel gateway -> agent -> fixed PowerShell script and back (no Hyper-V rights needed to verify the path)
+$defaults = Call GET "/api/v1/hosts/$($h.id)/defaults"
+if ($h.access -eq 'Ok') {
+    Check 'host defaults read through the operations script' ($defaults.Status -eq 200 -and $defaults.Json.defaults.logicalProcessorCount -gt 0) "$($defaults.Status)"
+} else {
+    Check 'operations script reports Hyper-V errors (not a fake success)' ($defaults.Status -eq 502 -and $defaults.Json.code -eq 'host_operation_failed') "$($defaults.Status) $($defaults.Json.code) $($defaults.Json.detail)"
+}
+$noVm = Call POST "/api/v1/vms/$([guid]::NewGuid())/console/tickets" $null @{ 'X-CSRF-TOKEN' = (Csrf) }
+Check 'console ticket for unknown VM is 404' ($noVm.Status -eq 404) "$($noVm.Status)"
+$t = Csrf
+$unc = Call PUT "/api/v1/hosts/$($h.id)/iso-library" @{ paths = @('\\server\share') } @{ 'X-CSRF-TOKEN' = $t }
+Check 'ISO library refuses UNC paths' ($unc.Status -eq 400 -and $unc.Json.code -eq 'invalid_iso_library') "$($unc.Status)"
+$lib = Call PUT "/api/v1/hosts/$($h.id)/iso-library" @{ paths = @('D:\ISO') } @{ 'X-CSRF-TOKEN' = $t }
+Check 'ISO library accepts local folders' ($lib.Status -eq 200) "$($lib.Status)"
+
+# 9c. groups: tree rules
+$g1 = Call POST '/api/v1/groups' @{ name = 'Production' } @{ 'X-CSRF-TOKEN' = $t }
+$g2 = Call POST '/api/v1/groups' @{ name = 'Web'; parentId = $g1.Json.id } @{ 'X-CSRF-TOKEN' = $t }
+Check 'nested groups created' ($g1.Status -eq 200 -and $g2.Status -eq 200) "$($g1.Status) $($g2.Status)"
+$cycle = Call PATCH "/api/v1/groups/$($g1.Json.id)" @{ parentId = $g2.Json.id } @{ 'X-CSRF-TOKEN' = $t }
+Check 'moving a group below itself is refused' ($cycle.Status -eq 400 -and $cycle.Json.code -eq 'invalid_parent') "$($cycle.Status) $($cycle.Json.code)"
+$notEmpty = Call DELETE "/api/v1/groups/$($g1.Json.id)" $null @{ 'X-CSRF-TOKEN' = $t }
+Check 'group with subgroups cannot be deleted' ($notEmpty.Status -eq 409) "$($notEmpty.Status)"
+$list = Call GET '/api/v1/groups'
+Check 'group tree listed with parent links' (@($list.Json.groups | Where-Object { $_.parentId -eq $g1.Json.id }).Count -eq 1)
+$d2 = Call DELETE "/api/v1/groups/$($g2.Json.id)" $null @{ 'X-CSRF-TOKEN' = $t }
+$d1 = Call DELETE "/api/v1/groups/$($g1.Json.id)" $null @{ 'X-CSRF-TOKEN' = $t }
+Check 'empty groups deleted' ($d2.Status -eq 204 -and $d1.Status -eq 204) "$($d2.Status) $($d1.Status)"
+
+# 9d. SPA shell: per-response style nonce, scripts without nonce
+$shell = Invoke-WebRequest -Uri "$ui/" -SkipCertificateCheck -SkipHttpErrorCheck
+$csp = "$($shell.Headers['Content-Security-Policy'])"
+$nonce = if ($csp -match "'nonce-([^']+)'") { $Matches[1] } else { '' }
+Check 'CSP has script-src self only and a style nonce' ($csp -match "script-src 'self';" -and $nonce.Length -ge 16 -and $csp -notmatch 'unsafe') $csp
+Check 'SPA shell carries the same nonce' ($shell.Content -match [regex]::Escape("content=`"$nonce`"") -and $shell.Content -notmatch '__CSP_NONCE__')
 
 # 10. revocation disconnects the agent
 $t = Csrf

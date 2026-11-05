@@ -1,6 +1,9 @@
 import { HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr';
 
-type Listener = (payload: { hostId?: string; jobId?: string; status?: string; progress?: number; targetId?: string }) => void;
+export type RealtimeEvent = 'inventoryChanged' | 'jobChanged' | 'groupsChanged';
+type Payload = { hostId?: string; jobId?: string; status?: string; progress?: number; targetId?: string };
+type Listener = (payload: Payload) => void;
+const EVENTS: RealtimeEvent[] = ['inventoryChanged', 'jobChanged', 'groupsChanged'];
 
 /**
  * Live updates. The server only pushes identifiers/status; components re-read data via the REST API,
@@ -8,7 +11,7 @@ type Listener = (payload: { hostId?: string; jobId?: string; status?: string; pr
  */
 class Realtime {
   private connection: HubConnection | null = null;
-  private listeners = new Map<string, Set<Listener>>();
+  private listeners = new Map<RealtimeEvent, Set<Listener>>();
   state: 'disconnected' | 'connecting' | 'connected' = 'disconnected';
   private stateListeners = new Set<() => void>();
 
@@ -19,15 +22,14 @@ class Realtime {
       .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
       .configureLogging(LogLevel.None)
       .build();
-    for (const ev of ['inventoryChanged', 'jobChanged']) {
-      c.on(ev, (payload) => this.listeners.get(ev)?.forEach((l) => l(payload)));
+    for (const ev of EVENTS) {
+      c.on(ev, (payload: Payload) => this.emit(ev, payload ?? {}));
     }
     c.onreconnecting(() => this.setState('connecting'));
     c.onreconnected(() => {
       this.setState('connected');
       // After a gap we may have missed events: tell everyone to refresh.
-      this.listeners.get('inventoryChanged')?.forEach((l) => l({}));
-      this.listeners.get('jobChanged')?.forEach((l) => l({}));
+      EVENTS.forEach((e) => this.emit(e, {}));
     });
     c.onclose(() => this.setState('disconnected'));
     this.connection = c;
@@ -47,15 +49,20 @@ class Realtime {
     this.setState('disconnected');
   }
 
-  on(event: 'inventoryChanged' | 'jobChanged', listener: Listener): () => void {
+  /** Local notification (e.g. after the UI changed something itself). */
+  emit(event: RealtimeEvent, payload: Payload = {}) {
+    this.listeners.get(event)?.forEach((l) => l(payload));
+  }
+
+  on(event: RealtimeEvent, listener: Listener): () => void {
     if (!this.listeners.has(event)) this.listeners.set(event, new Set());
     this.listeners.get(event)!.add(listener);
-    return () => this.listeners.get(event)?.delete(listener);
+    return () => { this.listeners.get(event)?.delete(listener); };
   }
 
   onState(l: () => void): () => void {
     this.stateListeners.add(l);
-    return () => this.stateListeners.delete(l);
+    return () => { this.stateListeners.delete(l); };
   }
 
   private setState(s: Realtime['state']) {

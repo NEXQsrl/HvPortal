@@ -10,8 +10,10 @@ namespace HvPortal.Contracts.Agent;
 /// </summary>
 public static class AgentProtocol
 {
-    public const int Version = 1;
-    public const int MaxMessageBytes = 4 * 1024 * 1024;
+    /// <summary>2 = v0.3: HyperVOperation, ConsoleFrame and ConsoleInput commands.</summary>
+    public const int Version = 2;
+    /// <summary>Large enough for an uncompressible 1920x1200 console frame (RGB565, base64 in JSON).</summary>
+    public const int MaxMessageBytes = 8 * 1024 * 1024;
     public const string ChannelPath = "/agent/v1/channel";
     public const string EnrollPath = "/agent/v1/enroll";
 
@@ -68,6 +70,12 @@ public enum AgentCommandKind
     GetVmDetails,
     /// <summary>Msvm_VirtualSystemManagementService.DestroySystem. VM must be Off or Saved. Disk files are not deleted.</summary>
     DeleteVm,
+    /// <summary>Typed Hyper-V module operation (see HvOperation). Arguments in OperationArgs.</summary>
+    HyperVOperation,
+    /// <summary>Console: current screen via Msvm_VirtualSystemManagementService.GetVirtualSystemThumbnailImage.</summary>
+    ConsoleFrame,
+    /// <summary>Console: keyboard (Msvm_Keyboard) / mouse (Msvm_SyntheticMouse) input.</summary>
+    ConsoleInput,
 }
 
 public sealed record AgentCommand
@@ -80,6 +88,10 @@ public sealed record AgentCommand
     public int TimeoutSeconds { get; init; } = 300;
     /// <summary>Short, non-sensitive text passed to the guest as shutdown reason (e.g. job id).</summary>
     public string? Reason { get; init; }
+    public HvOperation? Operation { get; init; }
+    public JsonElement? OperationArgs { get; init; }
+    public ConsoleFrameRequest? FrameRequest { get; init; }
+    public ConsoleInput? Input { get; init; }
 }
 
 public enum AgentCommandStatus
@@ -107,6 +119,8 @@ public sealed record AgentCommandResult
     public VmSummary? Vm { get; init; }
     public HostInventory? Inventory { get; init; }
     public VmDetails? Details { get; init; }
+    public HvOperationOutcome? Operation { get; init; }
+    public ConsoleFrame? Frame { get; init; }
     /// <summary>True when the agent returned a cached result for a command id it already executed.</summary>
     public bool Replayed { get; init; }
 }

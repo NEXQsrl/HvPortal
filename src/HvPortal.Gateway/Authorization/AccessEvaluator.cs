@@ -16,7 +16,8 @@ public readonly record struct ResourceRef(ScopeType Type, string Id)
 /// RBAC evaluation. Rules (see docs/security-model.md#rbac):
 ///  1. Default deny.
 ///  2. The effective scopes of a resource are the resource itself plus its ancestors:
-///     VM -> Host -> Global, and VM -> each logical Group containing it -> Global. Host -> Global.
+///     VM -> Host -> Global, and VM -> each logical Group containing it -> that group's ancestor groups -> Global.
+///     Group -> ancestor groups -> Global. Host -> Global.
 ///  3. An assignment applies if its scope is one of the effective scopes and its role contains the permission.
 ///  4. Any applicable Deny wins over any Allow, regardless of level.
 ///  5. Platform permissions (Permissions.Definition.Scopes == [Global]) are only granted by Global assignments.
@@ -30,6 +31,10 @@ public sealed class AccessEvaluator
     private readonly Dictionary<Guid, List<EffectiveAssignment>> _cache = [];
     private Dictionary<Guid, Guid>? _vmHosts;
     private ILookup<Guid, Guid>? _vmGroups;
+    private Dictionary<Guid, Guid?>? _groupParents;
+
+    /// <summary>Maximum folder depth considered (defense against corrupt data; the API refuses deeper trees and cycles).</summary>
+    public const int MaxGroupDepth = 16;
 
     public AccessEvaluator(PortalDbContext db)
     {
@@ -135,6 +140,11 @@ public sealed class AccessEvaluator
             case ScopeType.Vm when Guid.TryParse(resource.Id, out var vmId):
                 await EnsureTopologyAsync(ct);
                 return VmScopes(vmId);
+            case ScopeType.Group when Guid.TryParse(resource.Id, out var groupId):
+                await EnsureTopologyAsync(ct);
+                var list = new List<ResourceRef> { ResourceRef.Global };
+                AddGroupChain(list, groupId);
+                return list;
             default:
                 // Host, Group, Network, BackupRepository, Template: the resource itself and Global.
                 // Cluster -> Host inheritance arrives with cluster support (Milestone 3).
@@ -151,9 +161,34 @@ public sealed class AccessEvaluator
         }
         foreach (var g in _vmGroups![vmId])
         {
-            scopes.Add(ResourceRef.Group(g));
+            AddGroupChain(scopes, g);
         }
         return scopes;
+    }
+
+    /// <summary>Adds the group and its ancestors (each once, cycle-safe).</summary>
+    private void AddGroupChain(List<ResourceRef> scopes, Guid groupId)
+    {
+        Guid? current = groupId;
+        for (var depth = 0; current is { } g && depth <= MaxGroupDepth; depth++)
+        {
+            var r = ResourceRef.Group(g);
+            if (scopes.Contains(r))
+            {
+                break;
+            }
+            scopes.Add(r);
+            current = _groupParents!.TryGetValue(g, out var parent) ? parent : null;
+        }
+    }
+
+    /// <summary>The group followed by its ancestors, nearest first.</summary>
+    public async Task<IReadOnlyList<Guid>> GroupChainAsync(Guid groupId, CancellationToken ct)
+    {
+        await EnsureTopologyAsync(ct);
+        var list = new List<ResourceRef>();
+        AddGroupChain(list, groupId);
+        return list.Select(r => Guid.Parse(r.Id)).ToList();
     }
 
     private static bool Evaluate(List<EffectiveAssignment> assignments, string permission, IReadOnlyList<ResourceRef> scopes)
@@ -220,5 +255,15 @@ public sealed class AccessEvaluator
         }
         _vmHosts = await _db.VirtualMachines.AsNoTracking().ToDictionaryAsync(v => v.Id, v => v.HostId, ct);
         _vmGroups = (await _db.LogicalGroupMembers.AsNoTracking().ToListAsync(ct)).ToLookup(m => m.VmId, m => m.GroupId);
+        _groupParents = await _db.LogicalGroups.AsNoTracking().ToDictionaryAsync(g => g.Id, g => g.ParentId, ct);
+    }
+
+    /// <summary>Drops cached topology and assignments (after membership or tree changes within the same request).</summary>
+    public void Invalidate()
+    {
+        _vmHosts = null;
+        _vmGroups = null;
+        _groupParents = null;
+        _cache.Clear();
     }
 }

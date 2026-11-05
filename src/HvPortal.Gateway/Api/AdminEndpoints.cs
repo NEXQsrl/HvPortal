@@ -318,6 +318,7 @@ public static class AdminEndpoints
         var userNames = await db.Users.AsNoTracking().ToDictionaryAsync(x => x.Id.ToString("D"), x => x.UserName, http.RequestAborted);
         var hostNames = await db.Hosts.AsNoTracking().ToDictionaryAsync(x => x.Id.ToString("D"), x => x.DisplayName, http.RequestAborted);
         var vmNames = await db.VirtualMachines.AsNoTracking().ToDictionaryAsync(x => x.Id.ToString("D"), x => x.Name, http.RequestAborted);
+        var groupNames = await db.LogicalGroups.AsNoTracking().ToDictionaryAsync(x => x.Id.ToString("D"), x => x.Name, http.RequestAborted);
         return Results.Ok(list.OrderBy(a => a.PrincipalId).Select(a => new
         {
             a.Id,
@@ -332,6 +333,7 @@ public static class AdminEndpoints
                 ScopeType.Global => "Global",
                 ScopeType.Host => hostNames.GetValueOrDefault(a.ScopeId),
                 ScopeType.Vm => vmNames.GetValueOrDefault(a.ScopeId),
+                ScopeType.Group => groupNames.GetValueOrDefault(a.ScopeId),
                 _ => a.ScopeId,
             },
             effect = a.Effect.ToString(),

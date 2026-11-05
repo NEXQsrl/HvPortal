@@ -18,19 +18,37 @@ public sealed class CommandExecutor
     private static readonly TimeSpan MaxTimeout = TimeSpan.FromMinutes(30);
 
     private readonly IHyperVHost _host;
+    private readonly PowerShellOperationRunner? _ops;
+    private readonly ConsoleService? _console;
     private readonly ILogger<CommandExecutor> _logger;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _vmLocks = new();
     private readonly ConcurrentDictionary<Guid, Lazy<Task<AgentCommandResult>>> _executions = new();
     private readonly ConcurrentQueue<Guid> _order = new();
 
-    public CommandExecutor(IHyperVHost host, ILogger<CommandExecutor> logger)
+    public CommandExecutor(IHyperVHost host, ILogger<CommandExecutor> logger, PowerShellOperationRunner? ops = null, ConsoleService? console = null)
     {
         _host = host;
         _logger = logger;
+        _ops = ops;
+        _console = console;
     }
+
+    /// <summary>Operations that change state on the host; only these are de-duplicated and serialized per VM.</summary>
+    public static bool IsMutating(AgentCommand c) => c.Kind switch
+    {
+        AgentCommandKind.VmPower or AgentCommandKind.DeleteVm => true,
+        AgentCommandKind.HyperVOperation => c.Operation is HvOperation.SetVmConfig or HvOperation.NewVm or HvOperation.NewCheckpoint
+            or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint,
+        _ => false,
+    };
 
     public async Task<AgentCommandResult> ExecuteAsync(AgentCommand command, IProgress<AgentCommandProgress> progress, CancellationToken ct)
     {
+        if (!IsMutating(command))
+        {
+            // Read-only and console commands: no result cache (frames are large and frequent).
+            return await RunAsync(command, progress, ct);
+        }
         var created = false;
         var lazy = _executions.GetOrAdd(command.CommandId, _ =>
         {
@@ -92,6 +110,15 @@ public sealed class CommandExecutor
                 case AgentCommandKind.DeleteVm when command.VmId is { } deleteId && deleteId != Guid.Empty:
                     return await RunDeleteAsync(command, deleteId, progress, ct);
 
+                case AgentCommandKind.HyperVOperation when command.Operation is { } op && Enum.IsDefined(op) && _ops is not null:
+                    return await RunOperationAsync(command, op, ct);
+
+                case AgentCommandKind.ConsoleFrame when command.FrameRequest is { } fr && fr.VmId != Guid.Empty && _console is not null:
+                    return await _console.FrameAsync(command.CommandId, fr, ct);
+
+                case AgentCommandKind.ConsoleInput when command.Input is { } input && input.VmId != Guid.Empty && Enum.IsDefined(input.Kind) && _console is not null:
+                    return await _console.InputAsync(command.CommandId, input, ct);
+
                 case AgentCommandKind.VmPower when command.VmId is { } vmId && vmId != Guid.Empty
                                                    && command.PowerOperation is { } op && Enum.IsDefined(op):
                     return await RunPowerAsync(command, vmId, op, progress, ct);
@@ -137,6 +164,33 @@ public sealed class CommandExecutor
         finally
         {
             gate.Release();
+        }
+    }
+
+    private async Task<AgentCommandResult> RunOperationAsync(AgentCommand command, HvOperation op, CancellationToken ct)
+    {
+        var timeout = TimeSpan.FromSeconds(Math.Clamp(command.TimeoutSeconds, 10, (int)MaxTimeout.TotalSeconds));
+        SemaphoreSlim? gate = null;
+        if (IsMutating(command) && command.VmId is { } vmId && vmId != Guid.Empty)
+        {
+            gate = _vmLocks.GetOrAdd(vmId, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(ct);
+        }
+        try
+        {
+            _logger.LogInformation("Hyper-V operation {Operation} (command {CommandId})", op, command.CommandId);
+            var outcome = await _ops!.RunAsync(op, command.OperationArgs, timeout, ct);
+            return new AgentCommandResult
+            {
+                CommandId = command.CommandId,
+                Status = outcome.Ok ? AgentCommandStatus.Succeeded : AgentCommandStatus.Failed,
+                Message = outcome.Error,
+                Operation = outcome,
+            };
+        }
+        finally
+        {
+            gate?.Release();
         }
     }
 

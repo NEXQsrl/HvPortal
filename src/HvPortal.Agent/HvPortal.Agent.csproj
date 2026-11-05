@@ -22,6 +22,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Fixed operations script, read-only for the service. Signed together with the binaries in release builds. -->
+    <None Include="Ops\HvPortal.Ops.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="HvPortal.Agent.Tests" />
   </ItemGroup>
 </Project>

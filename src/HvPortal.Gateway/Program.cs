@@ -16,6 +16,7 @@ using HvPortal.Gateway.Jobs;
 using HvPortal.Gateway.Pki;
 using HvPortal.Gateway.Realtime;
 using HvPortal.Gateway.Security;
+using HvPortal.Gateway.VmConsole;
 using HvPortal.Shared;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -72,6 +73,8 @@ namespace HvPortal.Gateway
             builder.Services.AddSingleton<AuditLog>();
             builder.Services.AddSingleton<JobSignal>();
             builder.Services.AddSingleton<ConnectedUsers>();
+            builder.Services.AddSingleton<ConsoleTicketStore>();
+            builder.Services.AddSingleton<ConsoleSessionRegistry>();
             builder.Services.AddSingleton<IRealtimeNotifier, RealtimeNotifier>();
             builder.Services.AddSingleton<AgentConnectionManager>();
             builder.Services.AddSingleton<IAgentDispatcher>(sp => sp.GetRequiredService<AgentConnectionManager>());
@@ -190,14 +193,14 @@ namespace HvPortal.Gateway
                 app.UseHsts();
             }
             app.UseGatewayBaseline(options);
-            app.UseDefaultFiles();
+            // No UseDefaultFiles: "/" and client routes are rendered by SpaShell (CSP nonce substitution).
             app.UseStaticFiles(new StaticFileOptions
             {
                 OnPrepareResponse = ctx =>
                 {
-                    var name = ctx.File.Name;
-                    ctx.Context.Response.Headers.CacheControl = name.Equals("index.html", StringComparison.OrdinalIgnoreCase)
-                        ? "no-cache" : "public, max-age=31536000, immutable";
+                    // Hashed asset names (Vite) can be cached forever; other files (favicon) briefly.
+                    ctx.Context.Response.Headers.CacheControl = ctx.Context.Request.Path.StartsWithSegments("/assets")
+                        ? "public, max-age=31536000, immutable" : "public, max-age=3600";
                 },
             });
             app.UseRouting();
@@ -215,6 +218,9 @@ namespace HvPortal.Gateway
             AgentEndpoints.Map(app);
             DownloadEndpoints.Map(app);
             InventoryManagementEndpoints.Map(app);
+            GroupEndpoints.Map(app);
+            VmOperationsEndpoints.Map(app);
+            ConsoleEndpoints.Map(app);
 
             app.MapGet("/api/v1/system/info", async (HttpContext http, AccessEvaluator access, AgentConnectionManager agents, GatewayPaths paths) =>
             {
@@ -222,7 +228,7 @@ namespace HvPortal.Gateway
                 return Results.Ok(new
                 {
                     version = typeof(GatewayHost).Assembly.GetName().Version?.ToString(),
-                    milestone = "M1",
+                    milestone = "M1+",
                     database = "SQLite",
                     connectedAgents = agents.ConnectedHosts.Count,
                     telemetry = "disabled (no telemetry is implemented)",
@@ -238,7 +244,7 @@ namespace HvPortal.Gateway
             {
                 app.Map(prefix + "/{**rest}", () => ApiSupport.NotFound()).AllowAnonymous().ExcludeFromDescription();
             }
-            app.MapFallbackToFile("index.html").AllowAnonymous();
+            app.MapSpaShell();
         }
 
         private static X509Certificate2? LoadUiCertificate(GatewayOptions options)

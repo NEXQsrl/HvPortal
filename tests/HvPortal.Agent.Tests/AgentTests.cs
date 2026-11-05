@@ -157,6 +157,65 @@ public class CommandExecutorTests
     [InlineData("$(Get-Process)", "Get-Process")]
     [InlineData(null, "HvPortal")]
     public void Shutdown_reason_is_sanitized(string? input, string expected) => Assert.Equal(expected, CommandExecutor.SanitizeReason(input));
+
+    [Fact]
+    public async Task Operations_are_rejected_when_the_runner_is_not_available()
+    {
+        var exec = new CommandExecutor(new CountingHost(), NullLogger<CommandExecutor>.Instance);
+        var r = await exec.ExecuteAsync(new AgentCommand
+        {
+            CommandId = Guid.NewGuid(),
+            Kind = AgentCommandKind.HyperVOperation,
+            Operation = HvOperation.SetVmConfig,
+            OperationArgs = HvOperations.ToElement(new VmConfigChange { VmId = Guid.NewGuid(), ProcessorCount = 2 }),
+        }, NoProgress, default);
+        Assert.Equal(AgentCommandStatus.Rejected, r.Status);
+    }
+
+    [Fact]
+    public void Only_state_changing_commands_are_deduplicated_and_serialized()
+    {
+        Assert.True(CommandExecutor.IsMutating(new AgentCommand { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.HyperVOperation, Operation = HvOperation.NewVm }));
+        Assert.True(CommandExecutor.IsMutating(new AgentCommand { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.HyperVOperation, Operation = HvOperation.RestoreCheckpoint }));
+        Assert.False(CommandExecutor.IsMutating(new AgentCommand { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.HyperVOperation, Operation = HvOperation.ListIsos }));
+        Assert.False(CommandExecutor.IsMutating(new AgentCommand { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.ConsoleFrame }));
+        Assert.False(CommandExecutor.IsMutating(new AgentCommand { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.ConsoleInput }));
+    }
+}
+
+public class OperationRunnerValidationTests
+{
+    [Fact]
+    public void Arguments_are_validated_before_powershell_runs()
+    {
+        var vm = Guid.NewGuid();
+        Assert.Null(PowerShellOperationRunner.Validate(HvOperation.GetVmConfig, HvOperations.ToElement(new VmRef(vm))));
+        Assert.Equal("invalid_vm", PowerShellOperationRunner.Validate(HvOperation.GetVmConfig, HvOperations.ToElement(new VmRef(Guid.Empty))));
+        Assert.Equal("invalid_processor_count", PowerShellOperationRunner.Validate(HvOperation.SetVmConfig,
+            HvOperations.ToElement(new VmConfigChange { VmId = vm, ProcessorCount = 5000 })));
+        Assert.Equal("invalid_vm_name", PowerShellOperationRunner.Validate(HvOperation.NewVm, HvOperations.ToElement(new NewVmRequest { Name = "x; Remove-VM *" })));
+        Assert.Equal("invalid_checkpoint", PowerShellOperationRunner.Validate(HvOperation.RestoreCheckpoint,
+            HvOperations.ToElement(new CheckpointRequest(vm, null, "not-a-guid", false))));
+        Assert.Equal("invalid_checkpoint_name", PowerShellOperationRunner.Validate(HvOperation.NewCheckpoint,
+            HvOperations.ToElement(new CheckpointRequest(vm, "$(whoami)", null, false))));
+        Assert.Equal("invalid_iso_roots", PowerShellOperationRunner.Validate(HvOperation.ListIsos,
+            HvOperations.ToElement(new IsoListRequest(Enumerable.Repeat(@"D:\ISO", 17).ToList()))));
+        Assert.Equal("unsupported_operation", PowerShellOperationRunner.Validate((HvOperation)999, null));
+    }
+
+    [Fact]
+    public void Operations_script_has_no_dynamic_code_execution()
+    {
+        var source = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Ops", "HvPortal.Ops.ps1"));
+        // Code only: the header comment documents these rules by naming the forbidden constructs.
+        var script = string.Join('\n', System.Text.RegularExpressions.Regex.Replace(source, "(?s)<#.*?#>", "")
+            .Split('\n').Where(l => !l.TrimStart().StartsWith('#')));
+        foreach (var forbidden in new[] { "Invoke-Expression", "iex ", "Start-Process", "[ScriptBlock]::Create", "Add-Type", "Invoke-Command", "-EncodedCommand" })
+        {
+            Assert.DoesNotContain(forbidden, script, StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.Contains("default { throw \"Unsupported operation.\" }", script);
+    }
 }
 
 public class GatewayTrustTests

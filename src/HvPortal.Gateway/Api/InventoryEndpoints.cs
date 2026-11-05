@@ -42,7 +42,7 @@ public static class InventoryEndpoints
 
     // ------------------------------------------------------------------ hosts
 
-    private static object HostDto(ManagedHost h, bool connected, int vmCount, DateTimeOffset now)
+    private static object HostDto(ManagedHost h, bool connected, int vmCount, DateTimeOffset now, bool canCreateVm = false)
     {
         var facts = h.HostFactsJson is null ? null : JsonSerializer.Deserialize<HostFacts>(h.HostFactsJson);
         var eval = HostCapabilities.Evaluate(facts, h.Access);
@@ -75,6 +75,8 @@ public static class InventoryEndpoints
             platform = eval.Platform,
             support = eval.Support,
             capabilities = eval.Capabilities,
+            canCreateVm = canCreateVm && connected && h.Status == HostStatus.Active && h.Access == HyperVAccessStatus.Ok,
+            isoLibrary = Jobs.OperationPolicy.IsoRoots(h),
         };
     }
 
@@ -91,7 +93,8 @@ public static class InventoryEndpoints
         {
             if (manageAll || await access.CanSeeHostAsync(uid, h.Id, http.RequestAborted))
             {
-                result.Add(HostDto(h, agents.IsConnected(h.Id), counts.GetValueOrDefault(h.Id), now));
+                result.Add(HostDto(h, agents.IsConnected(h.Id), counts.GetValueOrDefault(h.Id), now,
+                    await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(h.Id), http.RequestAborted)));
             }
         }
         return Results.Ok(result);
@@ -108,7 +111,8 @@ public static class InventoryEndpoints
         }
         var count = await db.VirtualMachines.CountAsync(v => v.HostId == id && !v.IsMissing, http.RequestAborted);
         var events = await db.InventoryEvents.AsNoTracking().Where(e => e.HostId == id).OrderByDescending(e => e.Id).Take(50).ToListAsync(http.RequestAborted);
-        return Results.Ok(new { host = HostDto(h, agents.IsConnected(id), count, time.GetUtcNow()), events });
+        return Results.Ok(new { host = HostDto(h, agents.IsConnected(id), count, time.GetUtcNow(),
+            await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted)), events });
     }
 
     /// <summary>Connection facts an agent needs: names valid in the gateway certificate, port, CA pin, reachability.</summary>
@@ -261,6 +265,12 @@ public static class InventoryEndpoints
         var canDelete = await access.HasAsync(uid, Permissions.VmDelete, ResourceRef.Vm(v.Id), ct);
         var canAnnotate = await access.HasAsync(uid, Permissions.InventoryAnnotate, ResourceRef.Vm(v.Id), ct);
         var canForce = await access.HasAsync(uid, Permissions.VmPowerForce, ResourceRef.Vm(v.Id), ct);
+        var r = ResourceRef.Vm(v.Id);
+        var canConsole = await access.HasAsync(uid, Permissions.VmConsole, r, ct);
+        var canConfigure = await access.HasAsync(uid, Permissions.VmConfigCompute, r, ct) || await access.HasAsync(uid, Permissions.VmConfigStorage, r, ct)
+                           || await access.HasAsync(uid, Permissions.VmConfigNetwork, r, ct);
+        var canCheckpoint = await access.HasAsync(uid, Permissions.VmCheckpointCreate, r, ct);
+        var canApplyCheckpoint = await access.HasAsync(uid, Permissions.VmCheckpointApply, r, ct);
         var allowed = Enum.GetValues<VmPowerOperation>()
             .Where(op => VmPowerRules.IsAllowed(op, v.PowerState) && (VmPowerRules.IsDestructive(op) ? canForce : canPower))
             .Where(op => op is not (VmPowerOperation.Shutdown or VmPowerOperation.Restart) || v.ShutdownServiceAvailable == true)
@@ -298,6 +308,10 @@ public static class InventoryEndpoints
             canAnnotate,
             canDelete = canDelete && connected && !v.IsMissing && v.PowerState is VmPowerState.Off or VmPowerState.Saved,
             canForget = canDelete && v.IsMissing,
+            canConsole = canConsole && !v.IsMissing,
+            canConfigure = canConfigure && !v.IsMissing,
+            canCheckpoint = canCheckpoint && !v.IsMissing,
+            canApplyCheckpoint = canApplyCheckpoint && !v.IsMissing,
             destructiveOperations = Enum.GetValues<VmPowerOperation>().Where(VmPowerRules.IsDestructive).Select(o => o.ToString()),
         };
     }

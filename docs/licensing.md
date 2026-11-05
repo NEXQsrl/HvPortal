@@ -7,13 +7,13 @@ until publication is authorized.
 - Permissive, widely accepted by enterprises that would deploy an infrastructure tool.
 - Explicit **patent grant** and patent-retaliation clause (MIT lacks one) — relevant for a project touching
   virtualization protocols.
-- Compatible with every current dependency (all MIT or Apache-2.0) and with likely future ones (FreeRDP, Guacamole
-  are Apache-2.0).
+- Compatible with every current dependency (MIT, ISC, Apache-2.0; fonts under SIL OFL 1.1) and with likely future
+  ones (FreeRDP, Guacamole are Apache-2.0).
 - Alternatives considered: MIT (simpler, no patent grant); GPL-3.0/AGPL-3.0 (copyleft would discourage corporate
   adoption and complicate bundling with Windows services); MPL-2.0 (file-level copyleft, a reasonable middle ground if
   the maintainers want modifications to stay open).
 
-## Dependency inventory (runtime, as of M1)
+## Dependency inventory (runtime, as of v0.3.0)
 
 | Component | Used in | License |
 |---|---|---|
@@ -22,9 +22,15 @@ until publication is authorized.
 | QRCoder | gateway (local QR) | MIT |
 | React, React DOM, React Router | web | MIT |
 | @microsoft/signalr | web | MIT |
+| shadcn/ui components (source vendored in `web/src/components/ui`), radix-ui 1.8, cmdk, react-resizable-panels, get-nonce, cn | web | MIT |
+| lucide-react (icons) | web | ISC |
+| class-variance-authority | web | Apache-2.0 |
+| Tailwind CSS 4, tw-animate-css (compiled into the CSS bundle) | web | MIT |
+| Geist / Geist Mono variable fonts (@fontsource-variable) | web (bundled font files) | SIL OFL 1.1 — keep the font license notice in `NOTICE` |
+| Hyper-V PowerShell module | host (Windows component, not redistributed) | Microsoft (part of Windows Server) |
 
 Build/test only: xUnit (Apache-2.0), Microsoft.NET.Test.Sdk (MIT), coverlet (MIT), Vite (MIT), Vitest (MIT),
-TypeScript (Apache-2.0), playwright-core (Apache-2.0).
+TypeScript (Apache-2.0), playwright-core (Apache-2.0), shadcn CLI (MIT, used only to add components), @tailwindcss/vite (MIT).
 
 The authoritative, complete lists (including transitive packages) are generated at release time in
 `artifacts/release/<version>/deps/` by `installer/Build-Release.ps1`. Before publication: run a license scanner over

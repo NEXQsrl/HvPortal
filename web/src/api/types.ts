@@ -91,6 +91,8 @@ export interface Host {
   platform: string;
   support: string;
   capabilities: Capability[];
+  canCreateVm: boolean;
+  isoLibrary: string[];
 }
 
 export interface InventoryEvent { id: number; hostId: string; vmId: string | null; kind: string; details: string | null; at: string }
@@ -128,6 +130,10 @@ export interface Vm {
   canAnnotate: boolean;
   canDelete: boolean;
   canForget: boolean;
+  canConsole: boolean;
+  canConfigure: boolean;
+  canCheckpoint: boolean;
+  canApplyCheckpoint: boolean;
 }
 
 export interface Job {
@@ -151,6 +157,7 @@ export interface Job {
   errorCode: string | null;
   hyperVCode: number | null;
   correlationId: string;
+  resultJson: string | null;
   cancellable: boolean;
 }
 

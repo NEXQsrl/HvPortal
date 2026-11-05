@@ -1,5 +1,18 @@
 # Testing
 
+## v0.3.0 run (2026-11-05, development machine: Windows 11 Business 26200, non-administrator)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Agent.Tests` | 44 | pass — adds operation argument validation before PowerShell, forbidden constructs absent from the operations script, mutating vs read-only command classification |
+| `tests/HvPortal.Gateway.Tests` | 134 | pass — adds nested group inheritance, cycle/duplicate/delete rules, **group membership and move escalation (Allow gained / Deny lifted)**, per-section configuration permissions, `requires_off`, **server re-stamping of VM id and ISO roots**, re-authorization at execution, ISO library containment, VM creation permission per host + group placement, checkpoint apply rules, **console ticket single use / session binding / foreign Origin rejection / frame streaming / input validation**, CSP nonce consistency |
+| `scripts/dev/Invoke-SmokeTest.ps1` (real Kestrel + real agent) | 46 | pass — adds **gateway → agent → PowerShell script path with the real Hyper-V error** (no rights on this machine: 502 `host_operation_failed`), console ticket 404, ISO library validation, group tree rules, CSP style nonce matching the SPA shell |
+| `web/e2e/ui-smoke.mjs` (Edge headless) | 31 | pass — new shell (header, sidebar, inventory tree, recent tasks), host tabs and ISO library editor, group creation from the tree + context menu, command palette, account menu radios, dark theme, **no CSP violations or page errors** |
+| `web` Vitest | 1 | pass |
+
+Not covered without a Hyper-V host where the agent has rights: real configuration changes, VM creation,
+checkpoints, console frames and input (see the real-host test plan, v0.3 section).
+
 ## What has been executed (Milestone 1, development machine: Windows 11 Business 26200, non-administrator)
 
 | Suite | Count | Result | What it proves |
@@ -37,8 +50,8 @@
 dotnet test HvPortal.slnx
 .\scripts\dev\Start-DevGateway.ps1 -Reset          # in a second terminal
 .\scripts\dev\Invoke-SmokeTest.ps1
-# UI e2e (fresh gateway): 
-cd web; node e2e/ui-smoke.mjs --url https://localhost:18443 --data $env:LOCALAPPDATA\HvPortal\dev-gateway `
+# UI e2e (fresh gateway; use separate ports if a dev gateway is already running): 
+cd web; node e2e/ui-smoke.mjs --url https://localhost:18443 --agent-port 18444 --data $env:LOCALAPPDATA\HvPortal\dev-gateway `
   --agent-data $env:LOCALAPPDATA\HvPortal\dev-agent --agent-exe ..\src\HvPortal.Agent\bin\Debug\net10.0-windows10.0.17763.0\HvPortal.Agent.exe --out e2e-out
 ```
 

@@ -1,0 +1,298 @@
+import { ChevronRight, ChevronsDownUp, FolderPlus, Layers, Search, Server, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import type { Group } from '@/api/ops-types';
+import type { Vm } from '@/api/types';
+import type { Action } from '@/components/actions';
+import { ContextActions } from '@/components/actions';
+import { GroupIcon, HostIcon, VmIcon } from '@/components/common';
+import { useOps } from '@/components/ops/OperationsProvider';
+import { Button } from '@/components/ui/button';
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu';
+import { Input } from '@/components/ui/input';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useI18n } from '@/i18n';
+import { useLocalStorage } from '@/lib/hooks';
+import { cn } from '@/lib/utils';
+import { useInventory } from './InventoryProvider';
+
+type View = 'hosts' | 'groups';
+
+interface Node {
+  key: string;
+  kind: 'root' | 'host' | 'group' | 'vm' | 'ungrouped';
+  label: string;
+  depth: number;
+  hasChildren: boolean;
+  path: string | null;
+  vm?: Vm;
+  group?: Group;
+  /** Group the VM node sits in (groups view). */
+  parentGroupId?: string;
+  badge?: ReactNode;
+  icon: ReactNode;
+  sub?: string;
+}
+
+const DND_VM = 'application/x-hvp-vm';
+const DND_GROUP = 'application/x-hvp-group';
+
+/**
+ * Inventory navigator (vCenter-like): "Hosts" view (host → VMs) and "Groups" view (folders → subfolders/VMs).
+ * Keyboard: ↑/↓ move, →/← expand/collapse, Enter opens. Right click opens the same actions as everywhere else.
+ * In the groups view VMs and groups can be dragged onto groups (move; Ctrl = add without removing).
+ */
+export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
+  const { t } = useI18n();
+  const inv = useInventory();
+  const ops = useOps();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [view, setView] = useLocalStorage<View>('hvp.tree.view', 'hosts');
+  const [expandedList, setExpandedList] = useLocalStorage<string[]>('hvp.tree.expanded', ['root']);
+  const expanded = useMemo(() => new Set(expandedList), [expandedList]);
+  const [filter, setFilter] = useState('');
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [menuNode, setMenuNode] = useState<Node | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const toggle = (key: string, open?: boolean) => {
+    const next = new Set(expanded);
+    const shouldOpen = open ?? !next.has(key);
+    if (shouldOpen) next.add(key); else next.delete(key);
+    setExpandedList([...next]);
+  };
+
+  const q = filter.trim().toLowerCase();
+  const matches = (s: string | null | undefined) => !q || (s ?? '').toLowerCase().includes(q);
+
+  // ---------------------------------------------------------------- build visible nodes
+  const nodes = useMemo(() => {
+    const out: Node[] = [];
+    const isOpen = (k: string) => !!q || expanded.has(k);
+    const vmNode = (vm: Vm, depth: number, parentGroupId?: string): Node => ({
+      key: parentGroupId ? `vm:${vm.id}@${parentGroupId}` : `vm:${vm.id}`, kind: 'vm', label: vm.name, depth, hasChildren: false,
+      path: `/vms/${vm.id}`, vm, parentGroupId, icon: <VmIcon state={vm.powerState} critical={vm.isCritical} />,
+      sub: vm.isMissing ? '⚠' : undefined,
+    });
+    if (view === 'hosts') {
+      out.push({ key: 'root', kind: 'root', label: t('tree.root'), depth: 0, hasChildren: inv.hosts.length > 0, path: '/hosts', icon: <Layers className="size-4 text-muted-foreground" /> });
+      if (isOpen('root')) {
+        for (const h of inv.hosts) {
+          const vms = inv.vms.filter((v) => v.hostId === h.id).sort((a, b) => a.name.localeCompare(b.name));
+          const visibleVms = vms.filter((v) => matches(v.name) || matches(v.description));
+          if (q && !matches(h.displayName) && visibleVms.length === 0) continue;
+          const key = `host:${h.id}`;
+          out.push({
+            key, kind: 'host', label: h.displayName, depth: 1, hasChildren: vms.length > 0, path: `/hosts/${h.id}`,
+            icon: <HostIcon connected={h.connected} access={h.access} />, badge: <span className="text-[10px] text-muted-foreground tabular">{vms.length}</span>,
+          });
+          if (isOpen(key)) for (const v of (q && !matches(h.displayName) ? visibleVms : vms)) out.push(vmNode(v, 2));
+        }
+      }
+    } else {
+      out.push({ key: 'groots', kind: 'root', label: t('tree.root'), depth: 0, hasChildren: true, path: '/inventory', icon: <Layers className="size-4 text-muted-foreground" /> });
+      // Does a group (or anything below) match the filter?
+      const subtreeMatches = (g: Group): boolean =>
+        matches(g.name) || g.vmIds.some((id) => matches(inv.vmById.get(id)?.name)) || inv.childrenOf(g.id).some(subtreeMatches);
+      const walk = (parent: string | null, depth: number) => {
+        for (const g of inv.childrenOf(parent)) {
+          if (q && !subtreeMatches(g)) continue;
+          const key = `group:${g.id}`;
+          const children = inv.childrenOf(g.id);
+          const vms = g.vmIds.map((id) => inv.vmById.get(id)).filter((v): v is Vm => !!v).sort((a, b) => a.name.localeCompare(b.name));
+          out.push({
+            key, kind: 'group', label: g.name, depth, hasChildren: children.length + vms.length > 0, path: `/groups/${g.id}`, group: g,
+            icon: <GroupIcon open={isOpen(key)} />, badge: <span className="text-[10px] text-muted-foreground tabular">{vms.length}</span>,
+          });
+          if (isOpen(key)) {
+            walk(g.id, depth + 1);
+            for (const v of vms) if (!q || matches(v.name) || matches(g.name)) out.push(vmNode(v, depth + 1, g.id));
+          }
+        }
+      };
+      if (isOpen('groots')) {
+        walk(null, 1);
+        const ungrouped = inv.vms.filter((v) => inv.groupsOfVm(v.id).length === 0 && matches(v.name)).sort((a, b) => a.name.localeCompare(b.name));
+        if (ungrouped.length > 0) {
+          out.push({ key: 'ungrouped', kind: 'ungrouped', label: t('tree.ungrouped'), depth: 1, hasChildren: true, path: null, icon: <GroupIcon className="text-muted-foreground" />, badge: <span className="text-[10px] text-muted-foreground tabular">{ungrouped.length}</span> });
+          if (isOpen('ungrouped')) for (const v of ungrouped) out.push(vmNode(v, 2));
+        }
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, inv, expanded, q, t]);
+
+  // Selection follows the route; reveal the selected object in the tree.
+  const selectedPath = location.pathname;
+  useEffect(() => {
+    const m = /^\/(vms|hosts|groups)\/([0-9a-f-]{36})/.exec(selectedPath);
+    if (!m) return;
+    const [, kind, id] = m;
+    const add: string[] = [];
+    if (view === 'hosts') {
+      add.push('root');
+      if (kind === 'vms') { const vm = inv.vmById.get(id!); if (vm) add.push(`host:${vm.hostId}`); }
+    } else {
+      add.push('groots');
+      const groupIds = kind === 'groups' ? inv.groupPath(id!).slice(0, -1).map((g) => g.id)
+        : kind === 'vms' ? (inv.groupsOfVm(id!)[0] ? inv.groupPath(inv.groupsOfVm(id!)[0]!.id).map((g) => g.id) : ['ungrouped']) : [];
+      add.push(...groupIds.map((g) => (g === 'ungrouped' ? g : `group:${g}`)));
+    }
+    if (add.some((k) => !expanded.has(k))) setExpandedList([...new Set([...expandedList, ...add])]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPath, view, inv.vms.length, inv.groups.length]);
+
+  const open = (n: Node) => {
+    if (n.path) { navigate(n.path); onNavigate?.(); } else if (n.hasChildren) toggle(n.key);
+  };
+
+  const actionsFor = (n: Node): Action[] =>
+    n.kind === 'vm' && n.vm ? ops.vmActions(n.vm, { groupId: n.parentGroupId })
+      : n.kind === 'host' ? (inv.hostById.get(n.key.slice(5)) ? ops.hostActions(inv.hostById.get(n.key.slice(5))!) : [])
+      : n.kind === 'group' && n.group ? ops.groupActions(n.group)
+      : n.kind === 'root' && view === 'groups' ? ops.groupActions(null)
+      : [];
+
+  // ---------------------------------------------------------------- keyboard
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = nodes.findIndex((n) => n.key === focusKey);
+    const cur = nodes[i];
+    const focus = (n?: Node) => {
+      if (!n) return;
+      setFocusKey(n.key);
+      listRef.current?.querySelector<HTMLElement>(`[data-key="${CSS.escape(n.key)}"]`)?.focus();
+    };
+    switch (e.key) {
+      case 'ArrowDown': e.preventDefault(); focus(nodes[Math.min(nodes.length - 1, i + 1)]); break;
+      case 'ArrowUp': e.preventDefault(); focus(nodes[Math.max(0, i - 1)]); break;
+      case 'Home': e.preventDefault(); focus(nodes[0]); break;
+      case 'End': e.preventDefault(); focus(nodes[nodes.length - 1]); break;
+      case 'ArrowRight':
+        if (cur?.hasChildren) { e.preventDefault(); if (!expanded.has(cur.key)) toggle(cur.key, true); else focus(nodes[i + 1]); }
+        break;
+      case 'ArrowLeft':
+        if (!cur) break;
+        e.preventDefault();
+        if (cur.hasChildren && expanded.has(cur.key)) toggle(cur.key, false);
+        else { for (let j = i - 1; j >= 0; j--) if (nodes[j]!.depth < cur.depth) { focus(nodes[j]); break; } }
+        break;
+      case 'Enter':
+        if (cur) { e.preventDefault(); open(cur); }
+        break;
+    }
+  };
+
+  // ---------------------------------------------------------------- drag and drop (groups view)
+  const canDnd = view === 'groups' && inv.canManageGroups;
+  const onDragStart = (e: DragEvent, n: Node) => {
+    if (!canDnd) return;
+    if (n.kind === 'vm' && n.vm) e.dataTransfer.setData(DND_VM, JSON.stringify({ vmId: n.vm.id, from: n.parentGroupId ?? null }));
+    else if (n.kind === 'group' && n.group) e.dataTransfer.setData(DND_GROUP, n.group.id);
+    else return;
+    e.dataTransfer.effectAllowed = 'copyMove';
+  };
+  const dropTarget = (n: Node) => canDnd && (n.kind === 'group' || n.kind === 'root');
+  const onDragOver = (e: DragEvent, n: Node) => {
+    if (!dropTarget(n)) return;
+    const types = e.dataTransfer.types;
+    if (!types.includes(DND_VM) && !types.includes(DND_GROUP)) return;
+    if (n.kind === 'root' && !types.includes(DND_GROUP)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+    setDropKey(n.key);
+  };
+  const onDrop = (e: DragEvent, n: Node) => {
+    setDropKey(null);
+    if (!dropTarget(n)) return;
+    e.preventDefault();
+    const vmData = e.dataTransfer.getData(DND_VM);
+    const groupData = e.dataTransfer.getData(DND_GROUP);
+    if (vmData && n.group) {
+      const { vmId, from } = JSON.parse(vmData) as { vmId: string; from: string | null };
+      if (from === n.group.id) return;
+      void ops.placeVms([vmId], n.group.id, e.ctrlKey ? undefined : from ?? undefined);
+    } else if (groupData) {
+      const target = n.kind === 'root' ? null : n.group!.id;
+      if (groupData === target) return;
+      // Refuse moving a group below itself (the server checks too).
+      if (target && inv.groupPath(target).some((g) => g.id === groupData)) return;
+      void ops.moveGroup(groupData, target);
+    }
+  };
+
+  const allCollapsed = expandedList.length <= 1;
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-panel [--tree-bg:var(--panel)]" aria-label={t('shell.inventoryPanel')}>
+      <div className="flex items-center gap-1 border-b px-2 py-1.5">
+        <ToggleGroup type="single" size="sm" variant="outline" value={view} onValueChange={(v) => v && setView(v as View)} aria-label={t('shell.inventoryPanel')}>
+          <ToggleGroupItem value="hosts" aria-label={t('tree.hostsView')} title={t('tree.hostsView')} className="px-2"><Server />{t('tree.hosts')}</ToggleGroupItem>
+          <ToggleGroupItem value="groups" aria-label={t('tree.groupsView')} title={t('tree.groupsView')} className="px-2"><GroupIcon />{t('tree.groups')}</ToggleGroupItem>
+        </ToggleGroup>
+        <span className="flex-1" />
+        {view === 'groups' && inv.canManageGroups && (
+          <Tooltip><TooltipTrigger asChild>
+            <Button variant="ghost" size="icon-sm" aria-label={t('group.new')} onClick={() => ops.openNewGroup(null)}><FolderPlus /></Button>
+          </TooltipTrigger><TooltipContent>{t('group.new')}</TooltipContent></Tooltip>
+        )}
+        <Tooltip><TooltipTrigger asChild>
+          <Button variant="ghost" size="icon-sm" aria-label={t('tree.collapseAll')} disabled={allCollapsed} onClick={() => setExpandedList(['root', 'groots'])}><ChevronsDownUp /></Button>
+        </TooltipTrigger><TooltipContent>{t('tree.collapseAll')}</TooltipContent></Tooltip>
+      </div>
+      <div className="relative border-b px-2 py-1.5">
+        <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t('tree.filter')} aria-label={t('tree.filter')} className="h-7 pr-7 pl-7 text-xs" />
+        {filter && <button type="button" className="absolute top-1/2 right-3.5 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setFilter('')} aria-label={t('common.cancel')}><X className="size-3.5" /></button>}
+      </div>
+      <ContextMenu modal={false} onOpenChange={(o) => { if (!o) setMenuNode(null); }}>
+        <ContextMenuTrigger asChild>
+          <div ref={listRef} role="tree" aria-label={view === 'hosts' ? t('tree.hostsView') : t('tree.groupsView')}
+            className="min-h-0 flex-1 overflow-auto py-1 text-sm select-none" onKeyDown={onKeyDown}
+            onContextMenu={(e) => { if (!(e.target as HTMLElement).closest('[role=treeitem]')) setMenuNode(nodes[0] ?? null); }}>
+            {nodes.length <= 1 && !nodes[0]?.hasChildren && <div className="px-3 py-4 text-xs text-muted-foreground">{q ? t('tree.noMatch') : t('tree.empty')}</div>}
+            {nodes.map((n) => {
+              const selected = !!n.path && (selectedPath === n.path || (n.kind === 'vm' && selectedPath.startsWith(n.path + '/')));
+              const isExpanded = n.hasChildren && (!!q || expanded.has(n.key));
+              return (
+                <div key={n.key} data-key={n.key} role="treeitem" aria-level={n.depth + 1} aria-selected={selected}
+                  aria-expanded={n.hasChildren ? isExpanded : undefined}
+                  tabIndex={(focusKey ?? nodes[0]?.key) === n.key ? 0 : -1}
+                  draggable={canDnd && (n.kind === 'vm' || n.kind === 'group')}
+                  onDragStart={(e) => onDragStart(e, n)} onDragOver={(e) => onDragOver(e, n)} onDragLeave={() => setDropKey(null)} onDrop={(e) => onDrop(e, n)}
+                  onFocus={() => setFocusKey(n.key)}
+                  onClick={() => { setFocusKey(n.key); open(n); }}
+                  onContextMenu={() => { setFocusKey(n.key); setMenuNode(n); }}
+                  className={cn('tree-node group/node mx-1 flex h-7 cursor-pointer items-center gap-1.5 rounded-md pr-2 outline-none',
+                    'hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60',
+                    selected && 'bg-primary/10 font-medium text-primary hover:bg-primary/15',
+                    dropKey === n.key && 'bg-primary/15 ring-2 ring-primary/50')}
+                  style={{ paddingLeft: 4 + n.depth * 14 }}>
+                  <span className="flex size-4 shrink-0 items-center justify-center">
+                    {n.hasChildren && (
+                      <button type="button" tabIndex={-1} aria-hidden="true" className="rounded text-muted-foreground hover:text-foreground"
+                        onClick={(e) => { e.stopPropagation(); toggle(n.key); }}>
+                        <ChevronRight className={cn('size-3.5 transition-transform', isExpanded && 'rotate-90')} />
+                      </button>
+                    )}
+                  </span>
+                  {n.icon}
+                  <span className={cn('min-w-0 flex-1 truncate', n.vm?.isMissing && 'text-muted-foreground line-through')}>{n.label}</span>
+                  {n.badge}
+                </div>
+              );
+            })}
+          </div>
+        </ContextMenuTrigger>
+        {menuNode && (
+          <ContextMenuContent className="min-w-56">
+            <ContextActions items={actionsFor(menuNode)} label={menuNode.label} />
+          </ContextMenuContent>
+        )}
+      </ContextMenu>
+      {canDnd && <p className="border-t px-3 py-1.5 text-[11px] leading-snug text-muted-foreground">{t('tree.dropHint')}</p>}
+    </div>
+  );
+}

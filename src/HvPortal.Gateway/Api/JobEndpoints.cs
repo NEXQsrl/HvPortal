@@ -31,6 +31,7 @@ public static class JobEndpoints
         j.ErrorCode,
         j.HyperVCode,
         j.CorrelationId,
+        j.ResultJson,
         cancellable = j.Status == JobStatus.Queued || (j.Status == JobStatus.Running && j.DispatchedAt == null),
     };
 

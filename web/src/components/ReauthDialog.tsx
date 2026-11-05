@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { onReauthRequired, post } from '../api/client';
-import { useI18n } from '../i18n';
-import { useSession } from '../session';
-import { Dialog, ErrorAlert } from './ui';
-import { OtpInput } from './widgets';
+import { onReauthRequired, post } from '@/api/client';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { useI18n } from '@/i18n';
+import { useSession } from '@/session';
+import { ErrorAlert } from './common';
+import { Field } from './dialogs';
+import { OtpInput } from './OtpInput';
 
 /** Global step-up dialog: opened by the API client when the server answers "reauthentication_required". */
 export function ReauthDialog() {
@@ -43,23 +47,28 @@ export function ReauthDialog() {
   };
 
   return (
-    <Dialog open={open} title={t('reauth.title')} onClose={() => finish(false)}
-      actions={<>
-        <button type="button" onClick={() => finish(false)}>{t('common.cancel')}</button>
-        <button type="button" className="primary" onClick={() => void submit()} disabled={!password}>{t('reauth.submit')}</button>
-      </>}>
-      <p className="muted">{t('reauth.help')}</p>
-      <ErrorAlert error={error} />
-      <div className="field">
-        <label htmlFor="reauth-pw">{t('login.password')}</label>
-        <input id="reauth-pw" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      </div>
-      {me?.mfaEnabled && (
-        <div className="field">
-          <label>{t('login.code')}</label>
-          <OtpInput label={t('login.code')} value={code} onChange={setCode} idPrefix="reauth-otp" />
-        </div>
-      )}
+    <Dialog open={open} onOpenChange={(o) => { if (!o) finish(false); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t('reauth.title')}</DialogTitle>
+          <DialogDescription>{t('reauth.help')}</DialogDescription>
+        </DialogHeader>
+        <form id="reauth-form" className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (password) void submit(); }}>
+          <ErrorAlert error={error} />
+          <Field label={t('login.password')} htmlFor="reauth-pw">
+            <Input id="reauth-pw" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+          </Field>
+          {me?.mfaEnabled && (
+            <Field label={t('login.code')}>
+              <OtpInput label={t('login.code')} value={code} onChange={setCode} idPrefix="reauth-otp" />
+            </Field>
+          )}
+        </form>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => finish(false)}>{t('common.cancel')}</Button>
+          <Button type="submit" form="reauth-form" disabled={!password}>{t('reauth.submit')}</Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   );
 }

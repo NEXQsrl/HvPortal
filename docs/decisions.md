@@ -56,9 +56,52 @@ Format: context → decision → consequences. Status of all records: **accepted
 
 ## ADR-010 SPA served by the gateway
 - Same origin, strict CSP (`script-src 'self'`), no inline scripts; static assets immutable-cached, `index.html`
-  no-cache. React + Vite chosen for maturity; no UI component library (smaller supply chain).
+  no-cache. React + Vite chosen for maturity.
+- **Revised in v0.3 (see ADR-014):** the UI now uses shadcn/ui (source components copied into the repo, built on
+  Radix UI primitives, Tailwind CSS, lucide icons; all MIT). They are vendored source files, so the supply chain is
+  the Radix/Tailwind packages pinned in `package-lock.json`.
 
 ## ADR-011 WMI via System.Management in the agent
-- Same documented classes used by Microsoft samples; synchronous calls run on dedicated threads. PowerShell is not
-  used in M1; when needed (e.g. cmdlets without WMI equivalents) it will be invoked in-process with parameter binding
-  and a fixed allow-list of cmdlets — never string-built scripts.
+- Same documented classes used by Microsoft samples; synchronous calls run on dedicated threads. Inventory, power,
+  delete and console stay on WMI. Configuration operations use PowerShell as described in ADR-012.
+
+## ADR-012 Typed VM operations through one fixed PowerShell script
+- **Context.** VM configuration, creation and checkpoints through raw WMI (`ModifyResourceSettings`, embedded CIM
+  instances, `Msvm_ImageManagementService`) are large, version-sensitive and easy to get subtly wrong; the Hyper-V
+  PowerShell module is Microsoft's supported, documented surface for the same operations ("Usa strumenti nativi").
+- **Decision.** The agent ships `Ops\HvPortal.Ops.ps1` (read-only in Program Files). For each typed operation it runs
+  `powershell.exe -NoProfile -NonInteractive -File <script>` with a fixed argument list and passes one JSON request on
+  stdin. The script contains a closed `switch` of operations; every value is cast to an explicit type and passed as a
+  named cmdlet parameter (splatting of fixed keys). There is no `Invoke-Expression`, no script block built from
+  input, no `Start-Process`; VMs are resolved by GUID; new disks are created only in the host default VHD folder;
+  ISO paths must be inside the host's ISO library roots and must not traverse reparse points. A unit test fails the
+  build if forbidden constructs appear in the script code.
+- **Validation in three places**: gateway API (`OperationValidation`, permissions per section, state rules), job
+  execution (re-authorization, re-stamping of server-controlled fields such as VM id and ISO roots), agent
+  (`PowerShellOperationRunner.Validate`) before PowerShell starts.
+- **Consequences.** Requires the `Hyper-V-PowerShell` feature on the host; GPO `AllSigned` blocks the unsigned script
+  (sign the release); PowerShell Constrained Language Mode (WDAC script enforcement) is not supported yet. A process
+  per operation costs ~0.5–2 s, acceptable for configuration changes (not used for the console or inventory).
+
+## ADR-013 Console through hypervisor screen capture and input injection
+- **Decision.** Basic console with documented WMI methods (`GetVirtualSystemThumbnailImage`, `Msvm_Keyboard`,
+  `Msvm_SyntheticMouse`) relayed over the existing agent channel; one-time tickets; see [console.md](console.md).
+- **Rejected for now.** Proxying VMConnect (RDP on 2179 with a pre-connection blob): undocumented exchange, needs a
+  Windows principal authenticated by vmms and a full RDP client in the agent; kept as research.
+- **Consequences.** Works before boot and without guest networking; low frame rate; no clipboard/audio.
+
+## ADR-014 CSP: per-response style nonce, scripts unchanged
+- Radix UI inserts a few `<style>` elements at runtime (scroll locking for modal dialogs, Select/ScrollArea
+  viewports). Instead of `'unsafe-inline'`, every response carries `style-src 'self' 'nonce-<random>'`; the SPA shell
+  (`/` and client routes) is rendered by `SpaShell` which writes the same nonce into
+  `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
+  `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
+
+## ADR-015 Nested logical groups and access-change guard
+- Groups are folders: `LogicalGroup.ParentId`, max depth 16, sibling names unique, cycles refused. Role assignments
+  on a group apply to its VMs and to every subgroup (`AccessEvaluator` adds the ancestor chain).
+- Because moving a VM or a group changes who can access the VM, membership and tree changes go through
+  `GroupTree.CheckAccessChangeAsync`: if the change makes **Allow** assignments newly apply or **Deny** assignments
+  stop applying, the actor needs `roles.manage` and must already hold every permission of those roles on each
+  affected VM (for a VM being created: on its host). Otherwise `groups.manage` is enough.
+- Deleting a group requires it to have no subgroups and no role assignments.

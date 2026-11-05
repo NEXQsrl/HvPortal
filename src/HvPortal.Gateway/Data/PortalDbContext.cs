@@ -95,7 +95,11 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.HasIndex(x => new { x.PrincipalType, x.PrincipalId, x.RoleId, x.ScopeType, x.ScopeId, x.Effect }).IsUnique();
             e.HasOne(x => x.Role).WithMany().HasForeignKey(x => x.RoleId).OnDelete(DeleteBehavior.Restrict);
         });
-        m.Entity<LogicalGroup>().HasIndex(x => x.Name).IsUnique();
+        m.Entity<LogicalGroup>(e =>
+        {
+            e.HasIndex(x => new { x.ParentId, x.Name }).IsUnique();
+            e.Property(x => x.Description).HasMaxLength(1000);
+        });
         m.Entity<LogicalGroupMember>(e =>
         {
             e.HasKey(x => new { x.GroupId, x.VmId });
@@ -109,6 +113,7 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.Property(x => x.Description).HasMaxLength(1000);
             e.Property(x => x.InventoryWarningsJson).HasMaxLength(16000);
             e.Property(x => x.AccessMessage).HasMaxLength(2000);
+            e.Property(x => x.IsoLibraryPathsJson).HasMaxLength(8000);
         });
         m.Entity<AgentCertificate>(e =>
         {
@@ -132,6 +137,8 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.HasIndex(x => new { x.TargetId, x.CreatedAt });
             e.HasIndex(x => new { x.RequestedByUserId, x.IdempotencyKey }).IsUnique().HasFilter("IdempotencyKey IS NOT NULL");
             e.Property(x => x.ResultMessage).HasMaxLength(2000);
+            e.Property(x => x.ParametersJson).HasMaxLength(16000);
+            e.Property(x => x.ResultJson).HasMaxLength(16000);
             e.Property(x => x.Version).IsConcurrencyToken();
         });
         m.Entity<JobEvent>().HasIndex(x => new { x.JobId, x.At });
