@@ -21,6 +21,8 @@ namespace HvPortal.Gateway.Agents;
 public sealed class AgentConnectionManager : IAgentDispatcher
 {
     private readonly ConcurrentDictionary<Guid, AgentSession> _sessions = new();
+    // Rejected agents retry about once a minute: audit each rejected certificate at most once per hour.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _deniedAudited = new();
     private readonly IServiceScopeFactory _scopes;
     private readonly InternalCertificateAuthority _ca;
     private readonly AuditLog _audit;
@@ -68,7 +70,11 @@ public sealed class AgentConnectionManager : IAgentDispatcher
             var host = row is null ? null : await db.Hosts.AsNoTracking().FirstOrDefaultAsync(h => h.Id == row.HostId, http.RequestAborted);
             if (row is null || host is null || row.RevokedAt is not null || row.NotAfter <= now || host.Status != HostStatus.Active)
             {
-                await _audit.WriteAsync(new AuditRecord
+                var last = _deniedAudited.GetValueOrDefault(thumbprint);
+                if (now - last > TimeSpan.FromHours(1))
+                {
+                    _deniedAudited[thumbprint] = now;
+                    await _audit.WriteAsync(new AuditRecord
                 {
                     Action = "agent.connect",
                     Outcome = AuditOutcome.Denied,
@@ -76,8 +82,9 @@ public sealed class AgentConnectionManager : IAgentDispatcher
                     SourceIp = http.Connection.RemoteIpAddress?.ToString(),
                     ResourceType = "host",
                     ResourceId = row?.HostId.ToString("D"),
-                    Details = new { reason = row is null ? "unknown certificate" : row.RevokedAt is not null ? "revoked certificate" : "inactive host or expired" },
+                    Details = new { reason = row is null ? "unknown certificate (host deleted?)" : row.RevokedAt is not null ? "revoked certificate" : "inactive host or expired", note = "further attempts with this certificate are audited at most hourly" },
                 });
+                }
                 http.Response.StatusCode = StatusCodes.Status403Forbidden;
                 return;
             }

@@ -38,7 +38,12 @@ public sealed class InventoryIngestor
         host.AccessMessage = Truncate(inv.AccessMessage, 2000);
         host.InventoryPartial = inv.Partial;
         host.InventoryWarningsJson = Truncate(JsonSerializer.Serialize(inv.Warnings.Take(50)), 16000);
-        host.HostFactsJson = Truncate(JsonSerializer.Serialize(inv.Host), 16000);
+        host.HostFactsJson = JsonSerializer.Serialize(inv.Host with
+        {
+            Volumes = inv.Host.Volumes.Take(64).ToList(),
+            NetworkAdapters = inv.Host.NetworkAdapters.Take(32).ToList(),
+            VirtualSwitches = inv.Host.VirtualSwitches.Take(64).ToList(),
+        });
         host.MachineName = Truncate(inv.Host.ComputerName, 63);
         host.DnsHostName = Truncate(inv.Host.DnsHostName, 255);
 
@@ -101,6 +106,7 @@ public sealed class InventoryIngestor
             vm.ProcessorLoadPercent = v.ProcessorLoadPercent;
             vm.GuestOperatingSystem = Truncate(v.GuestOperatingSystem, 256);
             vm.ShutdownServiceAvailable = v.ShutdownServiceAvailable;
+            vm.CheckpointCount = v.CheckpointCount ?? vm.CheckpointCount;
             vm.OperationalStatusJson = JsonSerializer.Serialize(v.OperationalStatus.Take(8));
             vm.LastSeenAt = now;
             vm.IsMissing = false;

@@ -54,6 +54,7 @@ public sealed class WmiHyperVHost : IHyperVHost
         var warnings = new List<string>();
         var facts = ReadHostFacts(warnings);
         var (access, message) = CheckAccess(facts);
+        facts = AddHostResources(facts, warnings, access == HyperVAccessStatus.Ok);
         if (access != HyperVAccessStatus.Ok)
         {
             return new HostInventory
@@ -234,6 +235,348 @@ public sealed class WmiHyperVHost : IHyperVHost
         };
     }
 
+    private HostFacts AddHostResources(HostFacts facts, List<string> warnings, bool hyperVAccessible)
+    {
+        string? cpuName = null;
+        int sockets = 0, cores = 0, loadSum = 0, loadCount = 0;
+        DateTimeOffset? lastBoot = null;
+        var volumes = new List<HostVolume>();
+        var adapters = new List<NetworkAdapterInfo>();
+        var switches = new List<string>();
+        try
+        {
+            var scope = Connect(CimV2Namespace);
+            foreach (var o in Query(scope, "SELECT Name, NumberOfCores, LoadPercentage FROM Win32_Processor"))
+            {
+                cpuName ??= (o["Name"] as string)?.Trim();
+                sockets++;
+                cores += o["NumberOfCores"] is uint c ? (int)c : 0;
+                if (o["LoadPercentage"] is ushort l)
+                {
+                    loadSum += l;
+                    loadCount++;
+                }
+            }
+            foreach (var o in Query(scope, "SELECT LastBootUpTime FROM Win32_OperatingSystem"))
+            {
+                lastBoot = ParseDmtf(o["LastBootUpTime"] as string);
+            }
+            foreach (var o in Query(scope, "SELECT DeviceID, VolumeName, FileSystem, Size, FreeSpace FROM Win32_LogicalDisk WHERE DriveType = 3"))
+            {
+                volumes.Add(new HostVolume(o["DeviceID"] as string ?? "?", o["VolumeName"] as string, o["FileSystem"] as string,
+                    o["Size"] is ulong sz ? (long)sz : null, o["FreeSpace"] is ulong fr ? (long)fr : null));
+            }
+            foreach (var o in Query(scope, "SELECT Description, MACAddress, IPAddress, IPSubnet, DefaultIPGateway, DNSServerSearchOrder, DHCPEnabled FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE"))
+            {
+                adapters.Add(new NetworkAdapterInfo
+                {
+                    Name = o["Description"] as string ?? "?",
+                    MacAddress = o["MACAddress"] as string,
+                    IpAddresses = o["IPAddress"] as string[] ?? [],
+                    Subnets = o["IPSubnet"] as string[] ?? [],
+                    Gateways = o["DefaultIPGateway"] as string[] ?? [],
+                    DnsServers = o["DNSServerSearchOrder"] as string[] ?? [],
+                    DhcpEnabled = o["DHCPEnabled"] as bool?,
+                });
+            }
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+        {
+            warnings.Add($"Could not read host resources: {ex.Message}");
+        }
+        if (hyperVAccessible)
+        {
+            try
+            {
+                var v2 = Connect(VirtualizationNamespace);
+                foreach (var o in Query(v2, "SELECT ElementName FROM Msvm_VirtualEthernetSwitch"))
+                {
+                    switches.Add(o["ElementName"] as string ?? "?");
+                }
+            }
+            catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException)
+            {
+                warnings.Add($"Could not read virtual switches: {ex.Message}");
+            }
+        }
+        return facts with
+        {
+            CpuName = cpuName,
+            CpuSockets = sockets > 0 ? sockets : null,
+            CpuCores = cores > 0 ? cores : null,
+            CpuLoadPercent = loadCount > 0 ? loadSum / loadCount : null,
+            LastBootUtc = lastBoot,
+            Volumes = volumes.OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase).ToList(),
+            NetworkAdapters = adapters,
+            VirtualSwitches = switches.Order(StringComparer.OrdinalIgnoreCase).ToList(),
+        };
+    }
+
+    /// <summary>Runs a WQL query and materializes the results (small result sets).</summary>
+    private static List<ManagementBaseObject> Query(ManagementScope scope, string wql)
+    {
+        using var s = new ManagementObjectSearcher(scope, new ObjectQuery(wql), Enumeration());
+        using var r = s.Get();
+        return Materialize(r);
+    }
+
+    /// <summary>
+    /// Enumerates a WMI collection exactly once with foreach. Do NOT use LINQ (Cast/ToList/FirstOrDefault) on
+    /// ManagementObjectCollection: recent .NET LINQ reads ICollection.Count first, which consumes a forward-only
+    /// (Rewindable = false) enumeration and leaves the collection empty.
+    /// </summary>
+    internal static List<ManagementBaseObject> Materialize(ManagementObjectCollection collection)
+    {
+        var list = new List<ManagementBaseObject>();
+        foreach (ManagementBaseObject o in collection)
+        {
+            list.Add(o);
+        }
+        return list;
+    }
+
+    private static ManagementObject? FirstObject(ManagementObjectCollection collection)
+    {
+        foreach (ManagementBaseObject o in collection)
+        {
+            return o as ManagementObject;
+        }
+        return null;
+    }
+
+    // ---------------------------------------------------------------- VM details (on demand)
+
+    private static readonly System.Text.RegularExpressions.Regex SafePath = new(@"^[^\x00-\x1f""<>|]{1,1024}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    public Task<VmDetails?> GetVmDetailsAsync(Guid vmId, CancellationToken ct) =>
+        Task.Factory.StartNew(() => ReadVmDetails(vmId), ct, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+    private VmDetails? ReadVmDetails(Guid vmId)
+    {
+        var scope = Connect(VirtualizationNamespace);
+        var vssd = Query(scope, $"SELECT * FROM Msvm_VirtualSystemSettingData WHERE VirtualSystemIdentifier = '{vmId:D}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'")
+            .OfType<ManagementObject>().FirstOrDefault();
+        if (vssd is null)
+        {
+            return null;
+        }
+        var warnings = new List<string>();
+        var disks = new List<VmDisk>();
+        var nics = new List<NetworkAdapterInfo>();
+        ManagementObject? imageService = null;
+        try
+        {
+            imageService = Query(scope, "SELECT * FROM Msvm_ImageManagementService").OfType<ManagementObject>().FirstOrDefault();
+            foreach (ManagementObject sasd in vssd.GetRelated("Msvm_StorageAllocationSettingData"))
+            {
+                var resourceType = sasd["ResourceType"] is ushort rt ? rt : (ushort)0;
+                var path = (sasd["HostResource"] as string[])?.FirstOrDefault();
+                var (controller, location) = DescribeLocation(scope, sasd["Parent"] as string);
+                var disk = new VmDisk
+                {
+                    Kind = resourceType switch { 31 => "VirtualHardDisk", 16 => "DvdIso", _ => "Other" },
+                    Path = path,
+                    Controller = controller,
+                    Location = location,
+                };
+                if (resourceType == 31 && path is not null && SafePath.IsMatch(path))
+                {
+                    disk = EnrichDisk(imageService, disk, path, warnings);
+                }
+                disks.Add(disk);
+            }
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException)
+        {
+            warnings.Add("Could not read disks: " + ex.Message);
+        }
+        finally
+        {
+            imageService?.Dispose();
+        }
+
+        try
+        {
+            foreach (var cls in new[] { "Msvm_SyntheticEthernetPortSettingData", "Msvm_EmulatedEthernetPortSettingData" })
+            {
+                foreach (ManagementObject port in vssd.GetRelated(cls))
+                {
+                    string? switchName = null;
+                    foreach (ManagementObject alloc in port.GetRelated("Msvm_EthernetPortAllocationSettingData"))
+                    {
+                        var sw = (alloc["HostResource"] as string[])?.FirstOrDefault();
+                        var disabled = alloc["EnabledState"] is ushort es && es == 3; // 3 = connection disabled
+                        if (sw is not null && !disabled)
+                        {
+                            try
+                            {
+                                using var swObj = new ManagementObject(scope, new ManagementPath(sw), null);
+                                swObj.Get();
+                                switchName = swObj["ElementName"] as string;
+                            }
+                            catch (ManagementException)
+                            {
+                                switchName = "?";
+                            }
+                        }
+                    }
+                    using var guestCollection = port.GetRelated("Msvm_GuestNetworkAdapterConfiguration");
+                    var guest = FirstObject(guestCollection);
+                    nics.Add(new NetworkAdapterInfo
+                    {
+                        Name = port["ElementName"] as string ?? (cls.Contains("Emulated", StringComparison.Ordinal) ? "Legacy adapter" : "Network adapter"),
+                        MacAddress = FormatMac(port["Address"] as string),
+                        SwitchName = switchName,
+                        IpAddresses = guest?["IPAddresses"] as string[] ?? [],
+                        Subnets = guest?["Subnets"] as string[] ?? [],
+                        Gateways = guest?["DefaultGateways"] as string[] ?? [],
+                        DnsServers = guest?["DNSServers"] as string[] ?? [],
+                        DhcpEnabled = guest?["DHCPEnabled"] as bool?,
+                    });
+                }
+            }
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException)
+        {
+            warnings.Add("Could not read network adapters: " + ex.Message);
+        }
+        return new VmDetails { VmId = vmId, CollectedAtUtc = DateTimeOffset.UtcNow, Disks = disks, NetworkAdapters = nics, Warnings = warnings };
+    }
+
+    private static (string? Controller, string? Location) DescribeLocation(ManagementScope scope, string? drivePath)
+    {
+        if (drivePath is null)
+        {
+            return (null, null);
+        }
+        try
+        {
+            using var drive = new ManagementObject(scope, new ManagementPath(drivePath), null);
+            drive.Get();
+            var location = drive["AddressOnParent"] as string;
+            string? controller = null;
+            if (drive["Parent"] is string ctrlPath)
+            {
+                using var ctrl = new ManagementObject(scope, new ManagementPath(ctrlPath), null);
+                ctrl.Get();
+                controller = (ctrl["ResourceSubType"] as string) switch
+                {
+                    "Microsoft:Hyper-V:Synthetic SCSI Controller" => "SCSI",
+                    "Microsoft:Hyper-V:Emulated IDE Controller" => "IDE",
+                    var other => other,
+                } + (ctrl["Address"] is string a && a.Length > 0 ? " " + a : "");
+            }
+            return (controller, location);
+        }
+        catch (ManagementException)
+        {
+            return (null, null);
+        }
+    }
+
+    private static VmDisk EnrichDisk(ManagementObject? imageService, VmDisk disk, string path, List<string> warnings)
+    {
+        long? fileSize = null;
+        try
+        {
+            var fi = new FileInfo(path);
+            if (fi.Exists)
+            {
+                fileSize = fi.Length;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+        }
+        disk = disk with { FileSizeBytes = fileSize };
+        if (imageService is null)
+        {
+            return disk;
+        }
+        try
+        {
+            using var inParams = imageService.GetMethodParameters("GetVirtualHardDiskSettingData");
+            inParams["Path"] = path;
+            using var outParams = imageService.InvokeMethod("GetVirtualHardDiskSettingData", inParams, null);
+            if (ToUInt(outParams["ReturnValue"]) == ReturnCompleted && outParams["SettingData"] is string xml)
+            {
+                var props = ParseEmbeddedInstance(xml);
+                return disk with
+                {
+                    MaxSizeBytes = props.TryGetValue("MaxInternalSize", out var max) && long.TryParse(max, out var m) ? m : null,
+                    Format = props.GetValueOrDefault("Format") switch { "2" => "VHD", "3" => "VHDX", "4" => "VHDSet", var f => f },
+                    DiskType = props.GetValueOrDefault("Type") switch { "2" => "Fixed", "3" => "Dynamic", "4" => "Differencing", var t => t },
+                    ParentPath = props.GetValueOrDefault("ParentPath") is { Length: > 0 } p ? p : null,
+                };
+            }
+        }
+        catch (ManagementException ex)
+        {
+            warnings.Add($"Disk {Path.GetFileName(path)}: {ex.Message}");
+        }
+        return disk;
+    }
+
+    /// <summary>Parses a CIM-XML embedded instance (DTD 2.0) into property name -> value. DTD processing disabled.</summary>
+    internal static Dictionary<string, string> ParseEmbeddedInstance(string xml)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var settings = new System.Xml.XmlReaderSettings { DtdProcessing = System.Xml.DtdProcessing.Ignore, XmlResolver = null, MaxCharactersInDocument = 1_000_000 };
+        using var reader = System.Xml.XmlReader.Create(new StringReader(xml), settings);
+        var doc = System.Xml.Linq.XDocument.Load(reader);
+        foreach (var p in doc.Descendants("PROPERTY"))
+        {
+            if (p.Attribute("NAME")?.Value is { } name && p.Element("VALUE")?.Value is { } value)
+            {
+                result[name] = value;
+            }
+        }
+        return result;
+    }
+
+    private static string? FormatMac(string? raw) =>
+        raw is { Length: 12 } ? string.Join('-', Enumerable.Range(0, 6).Select(i => raw.Substring(i * 2, 2))) : raw;
+
+    // ---------------------------------------------------------------- VM delete
+
+    public Task<PowerOutcome> DeleteVmAsync(Guid vmId, TimeSpan timeout, IProgress<(int Percent, string Message)> progress, CancellationToken ct) =>
+        Task.Factory.StartNew(() =>
+        {
+            var elapsed = Stopwatch.StartNew();
+            var scope = Connect(VirtualizationNamespace);
+            using var vm = FindVmObject(scope, vmId);
+            if (vm is null)
+            {
+                return new PowerOutcome(AgentCommandStatus.AlreadyInState, "VM not present on the host (already deleted).", null, null);
+            }
+            var state = FromComputerSystem(vm, vmId).PowerState;
+            if (state is not (VmPowerState.Off or VmPowerState.Saved))
+            {
+                return new PowerOutcome(AgentCommandStatus.InvalidState, $"The VM must be Off or Saved to be deleted (it is {state}).", null, null);
+            }
+            using var vsms = GetSingleton(scope, "Msvm_VirtualSystemManagementService");
+            using var inParams = vsms.GetMethodParameters("DestroySystem");
+            inParams["AffectedSystem"] = vm.Path.Path;
+            using var outParams = vsms.InvokeMethod("DestroySystem", inParams, null);
+            var rv = ToUInt(outParams["ReturnValue"]) ?? uint.MaxValue;
+            if (rv == ReturnJobStarted && outParams["Job"] is string job)
+            {
+                if (WaitForJob(scope, job, elapsed, timeout, progress, ct) is { } failed)
+                {
+                    return failed;
+                }
+            }
+            else if (rv != ReturnCompleted)
+            {
+                // DestroySystem uses the CIM generic codes: 1 not supported, 2 failed, 3 timeout, 4 invalid parameter, 5 invalid state.
+                var status = rv switch { 1 => AgentCommandStatus.NotSupported, 5 => AgentCommandStatus.InvalidState, 3 => AgentCommandStatus.TimedOut, _ => AgentCommandStatus.Failed };
+                return new PowerOutcome(status, $"DestroySystem returned {rv}.", rv, null);
+            }
+            return ReadComputerSystems(scope, vmId).Count == 0
+                ? new PowerOutcome(AgentCommandStatus.Succeeded, "VM configuration deleted. Disk files were not deleted.", 0, null)
+                : new PowerOutcome(AgentCommandStatus.Unverified, "DestroySystem completed but the VM is still listed.", rv, null);
+        }, ct, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
     private static List<VmSummary> ReadComputerSystems(ManagementScope scope, Guid? only = null)
     {
         var query = only is { } id
@@ -278,16 +621,22 @@ public sealed class WmiHyperVHost : IHyperVHost
 
     private static void EnrichWithSettings(ManagementScope scope, Dictionary<Guid, VmSummary> vms)
     {
+        // One query for all setting data: the realized one gives generation/version, snapshot ones are counted as checkpoints.
+        var checkpoints = vms.Keys.ToDictionary(k => k, _ => 0);
         using (var s = new ManagementObjectSearcher(scope, new ObjectQuery(
-                   "SELECT VirtualSystemIdentifier, VirtualSystemSubType, Version FROM Msvm_VirtualSystemSettingData " +
-                   "WHERE VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'"), Enumeration()))
+                   "SELECT VirtualSystemIdentifier, VirtualSystemType, VirtualSystemSubType, Version FROM Msvm_VirtualSystemSettingData"), Enumeration()))
         using (var r = s.Get())
         {
             foreach (ManagementBaseObject o in r)
             {
                 using (o)
                 {
-                    if (o["VirtualSystemIdentifier"] is string vsi && Guid.TryParse(vsi, out var id) && vms.TryGetValue(id, out var vm))
+                    if (o["VirtualSystemIdentifier"] is not string vsi || !Guid.TryParse(vsi, out var id) || !vms.TryGetValue(id, out var vm))
+                    {
+                        continue;
+                    }
+                    var type = o["VirtualSystemType"] as string;
+                    if (type == "Microsoft:Hyper-V:System:Realized")
                     {
                         vms[id] = vm with
                         {
@@ -295,8 +644,16 @@ public sealed class WmiHyperVHost : IHyperVHost
                             ConfigurationVersion = o["Version"] as string,
                         };
                     }
+                    else if (type == "Microsoft:Hyper-V:Snapshot:Realized")
+                    {
+                        checkpoints[id]++;
+                    }
                 }
             }
+        }
+        foreach (var (id, count) in checkpoints)
+        {
+            vms[id] = vms[id] with { CheckpointCount = count };
         }
 
         // Realized RASD InstanceIDs have the form "Microsoft:<VM GUID>\...". Snapshot settings use the snapshot GUID,
@@ -556,7 +913,7 @@ public sealed class WmiHyperVHost : IHyperVHost
         using var searcher = new ManagementObjectSearcher(scope,
             new ObjectQuery($"SELECT * FROM Msvm_ComputerSystem WHERE Name = '{vmId:D}'"), Enumeration());
         using var r = searcher.Get();
-        return r.Cast<ManagementObject>().FirstOrDefault();
+        return FirstObject(r);
     }
 
     private static ManagementObject? FindShutdownComponent(ManagementScope scope, Guid vmId)
@@ -564,7 +921,7 @@ public sealed class WmiHyperVHost : IHyperVHost
         using var searcher = new ManagementObjectSearcher(scope,
             new ObjectQuery($"SELECT * FROM Msvm_ShutdownComponent WHERE SystemName = '{vmId:D}'"), Enumeration());
         using var r = searcher.Get();
-        return r.Cast<ManagementObject>().FirstOrDefault();
+        return FirstObject(r);
     }
 
     // ---------------------------------------------------------------- helpers
@@ -649,7 +1006,7 @@ public sealed class WmiHyperVHost : IHyperVHost
     {
         using var searcher = new ManagementObjectSearcher(scope, new ObjectQuery($"SELECT * FROM {className}"), Enumeration());
         using var r = searcher.Get();
-        return r.Cast<ManagementObject>().FirstOrDefault()
+        return FirstObject(r)
                ?? throw new ManagementException($"{className} not found (insufficient rights?).");
     }
 

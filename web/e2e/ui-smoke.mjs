@@ -55,7 +55,8 @@ try {
   await page.locator('img.qr').waitFor();
   const secret = (await page.locator('.secret').first().innerText()).replace(/\s/g, '');
   await shot(page, '01-mfa-enrollment');
-  await page.getByLabel('Inserisci il primo codice per confermare').fill(totp(secret));
+  await page.locator('#mfa-otp-0').fill(totp(secret));
+  check('MFA code uses 6 separate boxes', (await page.locator('.otp-box').count()) === 6);
   await page.getByRole('button', { name: 'Attiva' }).click();
   await page.getByRole('heading', { name: 'Codici di recupero' }).waitFor();
   check('recovery codes shown once', (await page.locator('.codes span').count()) === 10);
@@ -105,13 +106,19 @@ try {
   await page.waitForTimeout(1500);
   await shot(page, '04-hosts');
 
-  await page.getByRole('link', { name: 'hv-lab-01' }).click();
+  // Row menu (right click) and footer
+  await page.locator('tr.clickable', { hasText: 'hv-lab-01' }).click({ button: 'right' });
+  check('right click opens row menu with remove action', (await page.getByRole('menuitem', { name: 'Rimuovi dal portale' }).count()) === 1);
+  await page.keyboard.press('Escape');
+  check('sidebar footer shows NEXQ S.r.l. and site', (await page.locator('.sidebar-footer').innerText()).includes('NEXQ S.r.l.') && (await page.locator('.sidebar-footer a[href="https://www.nexq.it"]').count()) === 1);
+  await page.locator('tr.clickable', { hasText: 'hv-lab-01' }).click();
   await page.getByRole('heading', { name: 'hv-lab-01' }).waitFor();
   await page.waitForTimeout(1000);
   const accessBanner = await page.locator('.alert.danger').first().innerText().catch(() => '');
   check('host detail reports real Hyper-V access status', /AccessDenied|NotInstalled|ServiceStopped/.test(accessBanner) || (await page.getByText('Ok').count()) > 0, accessBanner.slice(0, 80));
   await shot(page, '05-host-detail');
 
+  check('host page shows volumes and network adapters', (await page.getByRole('heading', { name: 'Volumi' }).count()) === 1 && (await page.getByRole('heading', { name: 'Schede di rete' }).count()) === 1);
   await page.getByRole('link', { name: 'Macchine virtuali' }).click();
   await page.waitForTimeout(800);
   await shot(page, '06-vms');
@@ -119,6 +126,8 @@ try {
   await page.getByRole('heading', { name: 'Assegnazioni dei ruoli' }).waitFor();
   await shot(page, '07-users');
   await page.getByRole('link', { name: 'Audit' }).click();
+  check('audit is paginated', (await page.locator('.pager').count()) === 1);
+  check('page itself does not scroll (only tables)', await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1));
   await page.getByRole('button', { name: 'Verifica integrità' }).click();
   await page.locator('.alert.ok').waitFor();
   check('audit integrity verified from UI', true);
@@ -134,8 +143,12 @@ try {
   await shot(page, '09b-guide');
 
   // Theme + language toggles
+  await page.locator('.account-button').click();
+  check('account menu with language and theme', (await page.getByRole('button', { name: 'Scuro' }).count()) === 1);
   await page.getByRole('button', { name: 'English' }).click();
-  await page.getByRole('button', { name: 'Toggle light/dark theme' }).click();
+  await page.getByRole('button', { name: 'Dark' }).click();
+  await shot(page, '09c-account-menu');
+  await page.keyboard.press('Escape');
   await page.getByRole('link', { name: 'Hosts', exact: true }).click();
   await page.waitForTimeout(500);
   await shot(page, '10-hosts-dark-en');

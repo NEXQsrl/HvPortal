@@ -40,6 +40,43 @@ public sealed class JobService
         _signal = signal;
     }
 
+    public const string PowerJobType = "vm.power";
+    public const string DeleteJobType = "vm.delete";
+
+    /// <summary>Deletes the VM configuration on Hyper-V (DestroySystem). Disk files are kept. VM must be Off or Saved.</summary>
+    public async Task<(Job Job, bool Created)> CreateVmDeleteJobAsync(Guid userId, VirtualMachine vm, string? idempotencyKey, CancellationToken ct)
+    {
+        if (idempotencyKey is not null)
+        {
+            var existing = await _db.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestedByUserId == userId && j.IdempotencyKey == idempotencyKey, ct);
+            if (existing is not null)
+            {
+                return existing.TargetId == vm.Id && existing.Type == DeleteJobType ? (existing, false) : throw new IdempotencyConflictException();
+            }
+        }
+        var now = _time.GetUtcNow();
+        var job = new Job
+        {
+            Type = DeleteJobType,
+            Operation = "Delete",
+            TargetType = ScopeType.Vm,
+            TargetId = vm.Id,
+            TargetName = vm.Name,
+            HostId = vm.HostId,
+            RequestedByUserId = userId,
+            RequiredPermission = Permissions.VmDelete,
+            Status = JobStatus.Queued,
+            CreatedAt = now,
+            TimeoutSeconds = 300,
+            IdempotencyKey = idempotencyKey,
+        };
+        _db.Jobs.Add(job);
+        _db.JobEvents.Add(new JobEvent { JobId = job.Id, At = now, Kind = "created", Message = $"Delete requested for {vm.Name}" });
+        await _db.SaveChangesAsync(ct);
+        _signal.Notify();
+        return (job, true);
+    }
+
     public static string PermissionFor(VmPowerOperation op) =>
         VmPowerRules.IsDestructive(op) ? Permissions.VmPowerForce : Permissions.VmPower;
 
@@ -64,7 +101,7 @@ public sealed class JobService
         var now = _time.GetUtcNow();
         var job = new Job
         {
-            Type = "vm.power",
+            Type = PowerJobType,
             Operation = op.ToString(),
             TargetType = ScopeType.Vm,
             TargetId = vm.Id,

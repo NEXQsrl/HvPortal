@@ -37,6 +37,58 @@ public sealed record HostFacts
     /// <summary>True when the Cluster service (ClusSvc) is installed. Cluster management is Milestone 3.</summary>
     public bool ClusterServicePresent { get; init; }
     public required string AgentVersion { get; init; }
+
+    public string? CpuName { get; init; }
+    public int? CpuSockets { get; init; }
+    public int? CpuCores { get; init; }
+    public int? CpuLoadPercent { get; init; }
+    public DateTimeOffset? LastBootUtc { get; init; }
+    public IReadOnlyList<HostVolume> Volumes { get; init; } = [];
+    public IReadOnlyList<NetworkAdapterInfo> NetworkAdapters { get; init; } = [];
+    public IReadOnlyList<string> VirtualSwitches { get; init; } = [];
+}
+
+/// <summary>Local fixed volume of the host (Win32_LogicalDisk, DriveType = 3).</summary>
+public sealed record HostVolume(string Name, string? Label, string? FileSystem, long? SizeBytes, long? FreeBytes);
+
+/// <summary>IP configuration of a network adapter (host: Win32_NetworkAdapterConfiguration; guest: Msvm_GuestNetworkAdapterConfiguration).</summary>
+public sealed record NetworkAdapterInfo
+{
+    public required string Name { get; init; }
+    public string? MacAddress { get; init; }
+    public IReadOnlyList<string> IpAddresses { get; init; } = [];
+    public IReadOnlyList<string> Subnets { get; init; } = [];
+    public IReadOnlyList<string> Gateways { get; init; } = [];
+    public IReadOnlyList<string> DnsServers { get; init; } = [];
+    public bool? DhcpEnabled { get; init; }
+    /// <summary>VM adapters only: virtual switch the adapter is connected to (null = not connected).</summary>
+    public string? SwitchName { get; init; }
+}
+
+/// <summary>Disk or DVD attached to a VM (Msvm_StorageAllocationSettingData, sizes from Msvm_ImageManagementService).</summary>
+public sealed record VmDisk
+{
+    /// <summary>"VirtualHardDisk", "DvdIso" or "Other".</summary>
+    public required string Kind { get; init; }
+    public string? Path { get; init; }
+    public string? Controller { get; init; }
+    public string? Location { get; init; }
+    /// <summary>VHD, VHDX, VHDSet.</summary>
+    public string? Format { get; init; }
+    /// <summary>Fixed, Dynamic, Differencing.</summary>
+    public string? DiskType { get; init; }
+    public long? MaxSizeBytes { get; init; }
+    public long? FileSizeBytes { get; init; }
+    public string? ParentPath { get; init; }
+}
+
+public sealed record VmDetails
+{
+    public required Guid VmId { get; init; }
+    public required DateTimeOffset CollectedAtUtc { get; init; }
+    public IReadOnlyList<VmDisk> Disks { get; init; } = [];
+    public IReadOnlyList<NetworkAdapterInfo> NetworkAdapters { get; init; } = [];
+    public IReadOnlyList<string> Warnings { get; init; } = [];
 }
 
 public sealed record VmSummary
@@ -63,6 +115,8 @@ public sealed record VmSummary
     public bool? ShutdownServiceAvailable { get; init; }
     public DateTimeOffset? TimeOfLastStateChangeUtc { get; init; }
     public DateTimeOffset? TimeOfLastConfigurationChangeUtc { get; init; }
+    /// <summary>Number of standard/production checkpoints (VSSD of type Microsoft:Hyper-V:Snapshot:Realized).</summary>
+    public int? CheckpointCount { get; init; }
 }
 
 public sealed record HostInventory

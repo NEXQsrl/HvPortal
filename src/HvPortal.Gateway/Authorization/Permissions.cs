@@ -11,6 +11,7 @@ namespace HvPortal.Gateway.Authorization;
 public static class Permissions
 {
     public const string InventoryRead = "inventory.read";
+    public const string InventoryAnnotate = "inventory.annotate";
     public const string VmPower = "vm.power";
     public const string VmPowerForce = "vm.power.force";
     public const string VmConfigCompute = "vm.config.compute";
@@ -39,6 +40,7 @@ public static class Permissions
     public static readonly IReadOnlyList<Definition> All =
     [
         new(InventoryRead, "Read inventory (hosts, VMs, state)", VmScopes, true),
+        new(InventoryAnnotate, "Edit portal descriptions of VMs", VmScopes, true),
         new(VmPower, "Start, guest shutdown/restart, pause, resume, save", VmScopes, true),
         new(VmPowerForce, "Turn off and hard reset (may lose guest data)", VmScopes, true),
         new(VmConfigCompute, "Change CPU and memory", VmScopes, false),
@@ -46,7 +48,7 @@ public static class Permissions
         new(VmConfigNetwork, "Change network adapters", VmScopes, false),
         new(VmCheckpointCreate, "Create checkpoints", VmScopes, false),
         new(VmCheckpointApply, "Apply or delete checkpoints", VmScopes, false),
-        new(VmDelete, "Delete VMs", VmScopes, false),
+        new(VmDelete, "Delete VMs (configuration; disk files are kept)", VmScopes, true),
         new(VmConsole, "Open VM console", VmScopes, false),
         new(VmMigrate, "Migrate VMs and storage", VmScopes, false),
         new(BackupRun, "Run backups", [.. VmScopes, ScopeType.BackupRepository], false),
@@ -85,8 +87,8 @@ public static class BuiltInRoles
             Authorization.Permissions.All.Where(p => p.Name is not (Authorization.Permissions.UsersManage or Authorization.Permissions.RolesManage or Authorization.Permissions.SettingsManage))
                 .Select(p => p.Name).ToArray()),
         new(VmOperator, "VM operator", "Day-to-day VM operations",
-            [Authorization.Permissions.InventoryRead, Authorization.Permissions.VmPower, Authorization.Permissions.VmConsole,
-             Authorization.Permissions.VmCheckpointCreate]),
+            [Authorization.Permissions.InventoryRead, Authorization.Permissions.InventoryAnnotate, Authorization.Permissions.VmPower,
+             Authorization.Permissions.VmConsole, Authorization.Permissions.VmCheckpointCreate]),
         new(BackupOperator, "Backup operator", "Run backups and restores",
             [Authorization.Permissions.InventoryRead, Authorization.Permissions.BackupRun, Authorization.Permissions.BackupRestore]),
         new(Auditor, "Auditor", "Read inventory, all jobs and the audit log",

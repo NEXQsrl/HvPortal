@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { del, get, post, put } from '../api/client';
 import type { Assignment, AuditEntry, Host, Role, SecuritySettings, UserRow, Vm } from '../api/types';
 import { CopyButton, Dialog, ErrorAlert, Loading, useLoad } from '../components/ui';
+import { Pager } from '../components/widgets';
 import { useI18n, type TKey } from '../i18n';
 import { useSession } from '../session';
 import { ChangePasswordForm, MfaEnrollment } from './AuthPages';
@@ -47,7 +48,7 @@ export function UsersPage() {
             <button type="button" className="primary" onClick={() => setAdding(true)}>{t('users.add')}</button></div>
           <p className="muted small">{t('users.noRole')}</p>
           {users.loading && !users.data ? <Loading /> : (
-            <div className="card table-wrap"><table>
+            <div className="table-card capped"><table>
               <thead><tr><th>{t('login.user')}</th><th>{t('users.enabled')}</th><th>{t('users.mfa')}</th><th>{t('users.lastLogin')}</th><th /></tr></thead>
               <tbody>
                 {(users.data ?? []).map((u) => (
@@ -79,7 +80,7 @@ export function UsersPage() {
           <div className="row"><h2>{t('roles.assignments')}</h2><span className="spacer" />
             <button type="button" className="primary" onClick={() => setAssigning(true)}>{t('roles.assign')}</button></div>
           <p className="muted small">{t('roles.denyHelp')}</p>
-          <div className="card table-wrap"><table>
+          <div className="table-card capped"><table>
             <thead><tr><th>{t('login.user')}</th><th>{t('roles.role')}</th><th>{t('roles.scope')}</th><th>{t('roles.effect')}</th><th /></tr></thead>
             <tbody>
               {(assignments.data ?? []).map((a) => (
@@ -93,7 +94,7 @@ export function UsersPage() {
             </tbody>
           </table></div>
           <h2>{t('roles.catalog')}</h2>
-          <div className="card table-wrap"><table><tbody>
+          <div className="table-card capped"><table><tbody>
             {(roles.data ?? []).map((r) => <tr key={r.id}><td><strong>{r.name}</strong><div className="muted small">{r.description}</div></td><td className="mono small">{r.permissions.join(', ')}</td></tr>)}
           </tbody></table></div>
           <AssignDialog open={assigning} onClose={() => { setAssigning(false); assignments.reload(); }} users={users.data ?? []} roles={roles.data ?? []} />
@@ -154,14 +155,17 @@ function AssignDialog({ open, onClose, users, roles }: { open: boolean; onClose:
 export function AuditPage() {
   const { t, fmtDate } = useI18n();
   const [outcome, setOutcome] = useState('');
-  const data = useLoad(() => get<{ total: number; items: AuditEntry[] }>(`/api/v1/audit?take=200${outcome ? '&outcome=' + outcome : ''}`), [outcome]);
+  const [action, setAction] = useState('');
+  const [query, setQuery] = useState('');
+  const [skip, setSkip] = useState(0);
+  const [take, setTake] = useState(50);
+  const qs = `skip=${skip}&take=${take}${outcome ? '&outcome=' + outcome : ''}${query ? '&action=' + encodeURIComponent(query) : ''}`;
+  const data = useLoad(() => get<{ total: number; items: AuditEntry[] }>(`/api/v1/audit?${qs}`), [qs]);
   const [verify, setVerify] = useState<{ valid: boolean; entriesChecked: number; firstInvalidId: number | null; problem: string | null } | null>(null);
   const [error, setError] = useState<unknown>(null);
   return (
-    <>
+    <div className="page-fill">
       <div className="row"><h1>{t('nav.audit')}</h1><span className="spacer" />
-        <select aria-label={t('audit.outcome')} value={outcome} onChange={(e) => setOutcome(e.target.value)} style={{ maxWidth: 160 }}>
-          <option value="">*</option><option>Success</option><option>Failure</option><option>Denied</option></select>
         <button type="button" onClick={async () => { setError(null); try { setVerify(await post('/api/v1/audit/verify')); } catch (e) { setError(e); } }}>{t('audit.verify')}</button>
         <a className="button" href="/api/v1/audit/export">{t('audit.export')}</a>
       </div>
@@ -169,15 +173,23 @@ export function AuditPage() {
       {verify && (verify.valid
         ? <div className="alert ok">{t('audit.valid', { n: verify.entriesChecked })}</div>
         : <div className="alert danger">{t('audit.invalid', { id: verify.firstInvalidId ?? '?', problem: verify.problem ?? '' })}</div>)}
+      <Pager total={data.data?.total ?? 0} skip={skip} take={take} onChange={(s, tk) => { setSkip(s); setTake(tk); }}>
+        <form className="row" onSubmit={(e) => { e.preventDefault(); setSkip(0); setQuery(action.trim()); }}>
+          <input aria-label={t('audit.action')} placeholder={t('audit.filterAction')} value={action} onChange={(e) => setAction(e.target.value)} style={{ width: 220 }} />
+          <select aria-label={t('audit.outcome')} value={outcome} onChange={(e) => { setSkip(0); setOutcome(e.target.value); }} style={{ width: 150 }}>
+            <option value="">{t('audit.allOutcomes')}</option><option>Success</option><option>Failure</option><option>Denied</option></select>
+          <button type="submit">{t('common.search')}</button>
+        </form>
+      </Pager>
       {data.loading && !data.data ? <Loading /> : (
-        <div className="card table-wrap"><table>
+        <div className="table-card fill"><table>
           <thead><tr><th>{t('audit.time')}</th><th>{t('audit.actor')}</th><th>{t('audit.action')}</th><th>{t('audit.resource')}</th><th>{t('audit.outcome')}</th><th>{t('audit.source')}</th></tr></thead>
           <tbody>
             {(data.data?.items ?? []).map((e) => (
               <tr key={e.id}>
                 <td className="small" style={{ whiteSpace: 'nowrap' }}>{fmtDate(e.timestampUtc)}</td>
                 <td>{e.actorName ?? '—'}<div className="muted small">{e.authMethod}</div></td>
-                <td className="mono small">{e.action}{e.detailsJson && <div className="muted">{e.detailsJson}</div>}</td>
+                <td className="mono small">{e.action}{e.detailsJson && <div className="muted" style={{ wordBreak: 'break-all' }}>{e.detailsJson}</div>}</td>
                 <td className="small">{e.resourceType}{e.resourceId && <div className="mono muted">{e.resourceId}</div>}</td>
                 <td><span className={'badge ' + (e.outcome === 'Success' ? 'ok' : 'danger')}>{e.outcome}</span></td>
                 <td className="small">{e.sourceIp}</td>
@@ -186,10 +198,9 @@ export function AuditPage() {
           </tbody>
         </table></div>
       )}
-    </>
+    </div>
   );
 }
-
 export function SettingsPage() {
   const { t } = useI18n();
   const settings = useLoad(() => get<SecuritySettings>('/api/v1/settings/security'));
@@ -275,7 +286,7 @@ export function AccountPage() {
         </div>
       </div>
       <h2>{t('account.sessions')}</h2>
-      <div className="card table-wrap"><table><tbody>
+      <div className="table-card capped"><table><tbody>
         {(sessions.data ?? []).map((s) => (
           <tr key={s.id}>
             <td className="small">{fmtDate(s.createdAt)} → {fmtDate(s.lastSeenAt)}</td>

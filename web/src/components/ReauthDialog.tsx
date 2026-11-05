@@ -3,6 +3,7 @@ import { onReauthRequired, post } from '../api/client';
 import { useI18n } from '../i18n';
 import { useSession } from '../session';
 import { Dialog, ErrorAlert } from './ui';
+import { OtpInput } from './widgets';
 
 /** Global step-up dialog: opened by the API client when the server answers "reauthentication_required". */
 export function ReauthDialog() {
@@ -55,8 +56,8 @@ export function ReauthDialog() {
       </div>
       {me?.mfaEnabled && (
         <div className="field">
-          <label htmlFor="reauth-code">{t('login.code')}</label>
-          <input id="reauth-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} />
+          <label>{t('login.code')}</label>
+          <OtpInput label={t('login.code')} value={code} onChange={setCode} idPrefix="reauth-otp" />
         </div>
       )}
     </Dialog>

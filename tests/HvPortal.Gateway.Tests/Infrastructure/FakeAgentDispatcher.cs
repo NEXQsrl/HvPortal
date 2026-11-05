@@ -27,6 +27,7 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
     public void AddVm(Guid hostId, Guid hyperVId, string name, VmPowerState state) => _vms[hyperVId] = (hostId, name, state, 600_000);
     public VmPowerState StateOf(Guid hyperVId) => _vms[hyperVId].State;
     public void SetState(Guid hyperVId, VmPowerState state) => _vms[hyperVId] = _vms[hyperVId] with { State = state };
+    public bool Exists(Guid hyperVId) => _vms.ContainsKey(hyperVId);
     public int PowerCommandsFor(Guid hyperVId) => Received.Count(c => c.Kind == AgentCommandKind.VmPower && c.VmId == hyperVId);
 
     public bool IsConnected(Guid hostId) => _connected.TryGetValue(hostId, out var c) && c;
@@ -46,6 +47,35 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 return Task.FromResult(_vms.TryGetValue(command.VmId!.Value, out var v)
                     ? new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Succeeded, Vm = Summary(command.VmId.Value, v) }
                     : new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.NotFound });
+
+            case AgentCommandKind.GetVmDetails:
+                return Task.FromResult(_vms.ContainsKey(command.VmId!.Value)
+                    ? new AgentCommandResult
+                    {
+                        CommandId = command.CommandId,
+                        Status = AgentCommandStatus.Succeeded,
+                        Details = new VmDetails
+                        {
+                            VmId = command.VmId.Value,
+                            CollectedAtUtc = DateTimeOffset.UtcNow,
+                            Disks = [new VmDisk { Kind = "VirtualHardDisk", Path = @"D:\VMs\disk.vhdx", Format = "VHDX", MaxSizeBytes = 64L << 30 }],
+                            NetworkAdapters = [new NetworkAdapterInfo { Name = "Network Adapter", IpAddresses = ["10.0.0.10"], SwitchName = "vSwitch" }],
+                        },
+                    }
+                    : new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.NotFound });
+
+            case AgentCommandKind.DeleteVm:
+                var delId = command.VmId!.Value;
+                if (!_vms.TryGetValue(delId, out var victim))
+                {
+                    return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.AlreadyInState });
+                }
+                if (victim.State is not (VmPowerState.Off or VmPowerState.Saved))
+                {
+                    return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.InvalidState });
+                }
+                _vms.TryRemove(delId, out _);
+                return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Succeeded, Message = "deleted" });
 
             case AgentCommandKind.VmPower:
                 var id = command.VmId!.Value;

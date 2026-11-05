@@ -440,6 +440,10 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("DisplayName")
                         .IsRequired()
                         .HasMaxLength(1024)
@@ -453,7 +457,7 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("HostFactsJson")
-                        .HasMaxLength(16000)
+                        .HasMaxLength(64000)
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("InventoryPartial")
@@ -879,8 +883,22 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("CheckpointCount")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("ConfigurationVersion")
                         .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("DetailsCollectedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DetailsJson")
+                        .HasMaxLength(64000)
                         .HasColumnType("TEXT");
 
                     b.Property<bool?>("DynamicMemoryEnabled")

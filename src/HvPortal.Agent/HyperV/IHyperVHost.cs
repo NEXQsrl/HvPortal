@@ -10,8 +10,12 @@ public interface IHyperVHost
 
     Task<VmSummary?> GetVmAsync(Guid vmId, CancellationToken ct);
 
+    Task<VmDetails?> GetVmDetailsAsync(Guid vmId, CancellationToken ct);
+
     Task<PowerOutcome> ExecutePowerAsync(Guid vmId, VmPowerOperation operation, string reason, TimeSpan timeout,
         IProgress<(int Percent, string Message)> progress, CancellationToken ct);
+
+    Task<PowerOutcome> DeleteVmAsync(Guid vmId, TimeSpan timeout, IProgress<(int Percent, string Message)> progress, CancellationToken ct);
 }
 
 public sealed record PowerOutcome(AgentCommandStatus Status, string Message, uint? HyperVCode, VmSummary? Vm);

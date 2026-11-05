@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError, post, resetCsrf } from '../api/client';
 import { TopControls } from '../components/Layout';
 import { CopyButton, ErrorAlert } from '../components/ui';
+import { OtpInput } from '../components/widgets';
 import { useI18n } from '../i18n';
 import { useSession } from '../session';
 
@@ -127,12 +128,13 @@ export function LoginPage() {
     }
   };
 
-  const submitMfa = async (e: FormEvent) => {
-    e.preventDefault();
+  const submitMfa = async (e?: FormEvent, value = code) => {
+    e?.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      await post('/api/v1/auth/login/mfa', useRecovery ? { challenge, recoveryCode: code } : { challenge, code });
+      await post('/api/v1/auth/login/mfa', useRecovery ? { challenge, recoveryCode: value } : { challenge, code: value });
       resetCsrf();
       await refresh();
     } catch (err) {
@@ -143,7 +145,6 @@ export function LoginPage() {
       setCode('');
     }
   };
-
   if (mode === 'recover') return <RecoverPage onDone={() => setMode('login')} />;
 
   return (
@@ -173,11 +174,18 @@ export function LoginPage() {
         </form>
       ) : (
         <form onSubmit={submitMfa}>
-          <div className="field">
-            <label htmlFor="login-code">{useRecovery ? t('login.recoveryCode') : t('login.code')}</label>
-            <input id="login-code" autoComplete="one-time-code" inputMode={useRecovery ? 'text' : 'numeric'} maxLength={useRecovery ? 20 : 6}
-              value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
-          </div>
+          {useRecovery ? (
+            <div className="field">
+              <label htmlFor="login-code">{t('login.recoveryCode')}</label>
+              <input id="login-code" autoComplete="off" maxLength={20} value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+            </div>
+          ) : (
+            <div className="otp-center">
+              <p className="muted" style={{ textAlign: 'center' }}>{t('login.codeHelp')}</p>
+              <OtpInput label={t('login.code')} value={code} onChange={setCode} autoFocus idPrefix="login-otp"
+                onComplete={(v) => void submitMfa(undefined, v)} />
+            </div>
+          )}
           <div className="row">
             <button className="primary" type="submit" disabled={busy || !code}>{t('login.verify')}</button>
             <span className="spacer" />
@@ -344,8 +352,8 @@ export function MfaEnrollment({ required, onDone }: { required?: boolean; onDone
             <div className="secret">{enroll.secret.replace(/(.{4})/g, '$1 ').trim()}</div>
           </div>
           <div className="field">
-            <label htmlFor="mfa-code">{t('mfa.firstCode')}</label>
-            <input id="mfa-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} />
+            <label>{t('mfa.firstCode')}</label>
+            <OtpInput label={t('mfa.firstCode')} value={code} onChange={setCode} idPrefix="mfa-otp" />
           </div>
           <button className="primary" type="submit" disabled={code.length !== 6}>{t('mfa.confirm')}</button>
         </form>

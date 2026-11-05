@@ -61,6 +61,17 @@ public class PowerStateMappingTests
 public class WmiHelperTests
 {
     [Fact]
+    public void Parses_cim_xml_embedded_instance_without_dtd()
+    {
+        const string xml = "<INSTANCE CLASSNAME='Msvm_VirtualHardDiskSettingData'><PROPERTY NAME='MaxInternalSize' TYPE='uint64'><VALUE>137438953472</VALUE></PROPERTY><PROPERTY NAME='Format' TYPE='uint16'><VALUE>3</VALUE></PROPERTY><PROPERTY NAME='ParentPath' TYPE='string'></PROPERTY></INSTANCE>";
+        var p = WmiHyperVHost.ParseEmbeddedInstance(xml);
+        Assert.Equal("137438953472", p["MaxInternalSize"]);
+        Assert.Equal("3", p["Format"]);
+        Assert.False(p.ContainsKey("ParentPath"));
+        Assert.ThrowsAny<System.Xml.XmlException>(() => WmiHyperVHost.ParseEmbeddedInstance("<!DOCTYPE x [<!ENTITY e SYSTEM 'file:///c:/windows/win.ini'>]><INSTANCE>&e;</INSTANCE>"));
+    }
+
+    [Fact]
     public void Parses_rasd_instance_owner()
     {
         var id = Guid.NewGuid();
@@ -91,6 +102,9 @@ public class CommandExecutorTests
         public int PowerCalls;
         public Task<HostInventory> CollectInventoryAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<VmSummary?> GetVmAsync(Guid vmId, CancellationToken ct) => Task.FromResult<VmSummary?>(null);
+        public Task<VmDetails?> GetVmDetailsAsync(Guid vmId, CancellationToken ct) => Task.FromResult<VmDetails?>(null);
+        public Task<PowerOutcome> DeleteVmAsync(Guid vmId, TimeSpan timeout, IProgress<(int Percent, string Message)> progress, CancellationToken ct) =>
+            Task.FromResult(new PowerOutcome(AgentCommandStatus.Succeeded, "deleted", 0, null));
         public async Task<PowerOutcome> ExecutePowerAsync(Guid vmId, VmPowerOperation operation, string reason, TimeSpan timeout,
             IProgress<(int Percent, string Message)> progress, CancellationToken ct)
         {

@@ -189,7 +189,9 @@ public sealed class JobRunner : BackgroundService
             }
             job.HostId = vm.HostId; // resolve the owner at execution time
 
-            if (!Enum.TryParse<VmPowerOperation>(job.Operation, out var op))
+            var isDelete = job.Type == JobService.DeleteJobType;
+            var op = default(VmPowerOperation);
+            if (!isDelete && !Enum.TryParse(job.Operation, out op))
             {
                 await FinalizeAsync(db, job, JobStatus.Failed, "Unknown operation.", "invalid_job", null);
                 return;
@@ -220,9 +222,9 @@ public sealed class JobRunner : BackgroundService
             {
                 // The job id is the command id: the agent deduplicates re-deliveries of the same id.
                 CommandId = job.Id,
-                Kind = AgentCommandKind.VmPower,
+                Kind = isDelete ? AgentCommandKind.DeleteVm : AgentCommandKind.VmPower,
                 VmId = vm.HyperVId,
-                PowerOperation = op,
+                PowerOperation = isDelete ? null : op,
                 TimeoutSeconds = job.TimeoutSeconds,
                 Reason = "HvPortal job " + job.Id.ToString("N"),
             };
@@ -244,6 +246,10 @@ public sealed class JobRunner : BackgroundService
             var (status, code) = Map(result.Status);
             var message = result.Status == AgentCommandStatus.AlreadyInState ? "No change needed: " + result.Message : result.Message;
             await FinalizeAsync(db, job, status, message, code, result.HyperVCode);
+            if (isDelete && status == JobStatus.Succeeded)
+            {
+                await InventoryCleanup.RemoveVmAsync(db, vm.Id, vm.HostId, "vm.deleted", _time.GetUtcNow(), CancellationToken.None);
+            }
         }
         catch (HostNotConnectedException)
         {
@@ -290,7 +296,9 @@ public sealed class JobRunner : BackgroundService
             var now = _time.GetUtcNow();
             var giveUp = now - (job.ReconcileStartedAt ?? now) > TimeSpan.FromMinutes(_options.ReconciliationGiveUpMinutes);
             var vm = await db.VirtualMachines.AsNoTracking().FirstOrDefaultAsync(v => v.Id == job.TargetId, ct);
-            if (vm is null || job.HostId is not { } hostId || !Enum.TryParse<VmPowerOperation>(job.Operation, out var op))
+            var isDelete = job.Type == JobService.DeleteJobType;
+            var op = default(VmPowerOperation);
+            if (vm is null || job.HostId is not { } hostId || (!isDelete && !Enum.TryParse(job.Operation, out op)))
             {
                 await FinalizeAsync(db, job, JobStatus.Unknown, "Outcome cannot be determined: VM no longer in inventory.", "outcome_unknown", null);
                 await ReleaseLockAsync(db, job);
@@ -313,6 +321,21 @@ public sealed class JobRunner : BackgroundService
             }
             catch (Exception ex) when (ex is HostNotConnectedException or AgentChannelLostException or TimeoutException)
             {
+                continue;
+            }
+            if (isDelete)
+            {
+                if (probe.Status == AgentCommandStatus.NotFound)
+                {
+                    await FinalizeAsync(db, job, JobStatus.Succeeded, "Outcome verified by reconciliation: the VM no longer exists on the host.", null, null);
+                    await ReleaseLockAsync(db, job);
+                    await InventoryCleanup.RemoveVmAsync(db, vm.Id, hostId, "vm.deleted", now, ct);
+                }
+                else
+                {
+                    await FinalizeAsync(db, job, JobStatus.Unknown, "The VM still exists on the host; the delete did not complete.", "outcome_unknown", null);
+                    await ReleaseLockAsync(db, job);
+                }
                 continue;
             }
             var state = probe.Vm?.PowerState;

@@ -64,6 +64,10 @@ public enum AgentCommandKind
     CollectInventory,
     GetVm,
     VmPower,
+    /// <summary>Disks and network adapters (with guest IPs) of one VM. Read-only, on demand.</summary>
+    GetVmDetails,
+    /// <summary>Msvm_VirtualSystemManagementService.DestroySystem. VM must be Off or Saved. Disk files are not deleted.</summary>
+    DeleteVm,
 }
 
 public sealed record AgentCommand
@@ -102,6 +106,7 @@ public sealed record AgentCommandResult
     public uint? HyperVCode { get; init; }
     public VmSummary? Vm { get; init; }
     public HostInventory? Inventory { get; init; }
+    public VmDetails? Details { get; init; }
     /// <summary>True when the agent returned a cached result for a command id it already executed.</summary>
     public bool Replayed { get; init; }
 }

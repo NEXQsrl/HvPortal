@@ -80,6 +80,18 @@ public sealed class CommandExecutor
                         Vm = vm,
                     };
 
+                case AgentCommandKind.GetVmDetails when command.VmId is { } detailsId && detailsId != Guid.Empty:
+                    var details = await _host.GetVmDetailsAsync(detailsId, ct);
+                    return new AgentCommandResult
+                    {
+                        CommandId = command.CommandId,
+                        Status = details is null ? AgentCommandStatus.NotFound : AgentCommandStatus.Succeeded,
+                        Details = details,
+                    };
+
+                case AgentCommandKind.DeleteVm when command.VmId is { } deleteId && deleteId != Guid.Empty:
+                    return await RunDeleteAsync(command, deleteId, progress, ct);
+
                 case AgentCommandKind.VmPower when command.VmId is { } vmId && vmId != Guid.Empty
                                                    && command.PowerOperation is { } op && Enum.IsDefined(op):
                     return await RunPowerAsync(command, vmId, op, progress, ct);
@@ -121,6 +133,26 @@ public sealed class CommandExecutor
                 HyperVCode = outcome.HyperVCode,
                 Vm = outcome.Vm,
             };
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<AgentCommandResult> RunDeleteAsync(AgentCommand command, Guid vmId, IProgress<AgentCommandProgress> progress, CancellationToken ct)
+    {
+        var timeout = TimeSpan.FromSeconds(Math.Clamp(command.TimeoutSeconds, 10, (int)MaxTimeout.TotalSeconds));
+        var gate = _vmLocks.GetOrAdd(vmId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            _logger.LogWarning("Deleting VM {VmId} (command {CommandId})", vmId, command.CommandId);
+            var p = new Progress<(int Percent, string Message)>(x =>
+                progress.Report(new AgentCommandProgress { CommandId = command.CommandId, Percent = x.Percent, Message = x.Message }));
+            var outcome = await _host.DeleteVmAsync(vmId, timeout, p, ct);
+            _logger.LogWarning("Delete VM {VmId}: {Status} {Message}", vmId, outcome.Status, outcome.Message);
+            return new AgentCommandResult { CommandId = command.CommandId, Status = outcome.Status, Message = outcome.Message, HyperVCode = outcome.HyperVCode };
         }
         finally
         {

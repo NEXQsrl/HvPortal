@@ -33,9 +33,37 @@ export interface Me {
 
 export interface Capability { name: string; status: string; note?: string | null }
 
+export interface NetworkAdapterInfo {
+  name: string;
+  macAddress: string | null;
+  ipAddresses: string[];
+  subnets: string[];
+  gateways: string[];
+  dnsServers: string[];
+  dhcpEnabled: boolean | null;
+  switchName?: string | null;
+}
+
+export interface HostVolume { name: string; label: string | null; fileSystem: string | null; sizeBytes: number | null; freeBytes: number | null }
+
+export interface VmDisk {
+  kind: 'VirtualHardDisk' | 'DvdIso' | 'Other';
+  path: string | null;
+  controller: string | null;
+  location: string | null;
+  format: string | null;
+  diskType: string | null;
+  maxSizeBytes: number | null;
+  fileSizeBytes: number | null;
+  parentPath: string | null;
+}
+
+export interface VmDetails { vmId: string; collectedAtUtc: string; disks: VmDisk[]; networkAdapters: NetworkAdapterInfo[]; warnings: string[] }
+
 export interface Host {
   id: string;
   displayName: string;
+  description: string | null;
   machineName: string | null;
   dnsHostName: string | null;
   status: 'Pending' | 'Active' | 'Revoked';
@@ -51,7 +79,14 @@ export interface Host {
   enrolledAt: string | null;
   vmCount: number;
   os: { osCaption: string | null; osVersion: string | null; osBuildNumber: string | null; domain: string | null; partOfDomain: boolean } | null;
-  hardware: { logicalProcessorCount: number | null; totalPhysicalMemoryBytes: number | null; freePhysicalMemoryBytes: number | null } | null;
+  hardware: {
+    logicalProcessorCount: number | null; totalPhysicalMemoryBytes: number | null; freePhysicalMemoryBytes: number | null;
+    cpuName: string | null; cpuSockets: number | null; cpuCores: number | null; cpuLoadPercent: number | null;
+  } | null;
+  lastBootUtc: string | null;
+  volumes: HostVolume[];
+  networkAdapters: NetworkAdapterInfo[];
+  virtualSwitches: string[];
   edition: string;
   platform: string;
   support: string;
@@ -64,6 +99,8 @@ export interface Vm {
   id: string;
   hyperVId: string;
   name: string;
+  description: string | null;
+  checkpointCount: number | null;
   hostId: string;
   hostName: string | null;
   hostConnected: boolean;
@@ -88,6 +125,9 @@ export interface Vm {
   missingSince: string | null;
   allowedOperations: PowerOperation[];
   destructiveOperations: PowerOperation[];
+  canAnnotate: boolean;
+  canDelete: boolean;
+  canForget: boolean;
 }
 
 export interface Job {

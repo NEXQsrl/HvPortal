@@ -174,6 +174,8 @@ public sealed class ManagedHost
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public required string DisplayName { get; set; }
+    /// <summary>Portal-only free text (not written to Hyper-V).</summary>
+    public string? Description { get; set; }
     public string? MachineName { get; set; }
     public string? DnsHostName { get; set; }
     public HostStatus Status { get; set; } = HostStatus.Pending;
@@ -221,6 +223,12 @@ public sealed class VirtualMachine
     public Guid HostId { get; set; }
     public Guid HyperVId { get; set; }
     public required string Name { get; set; }
+    /// <summary>Portal-only free text (not written to Hyper-V).</summary>
+    public string? Description { get; set; }
+    public int? CheckpointCount { get; set; }
+    /// <summary>Last on-demand details (disks, adapters, guest IPs) as JSON, with collection time.</summary>
+    public string? DetailsJson { get; set; }
+    public DateTimeOffset? DetailsCollectedAt { get; set; }
     public VmPowerState PowerState { get; set; }
     public int EnabledStateRaw { get; set; }
     public bool IsCritical { get; set; }

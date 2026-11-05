@@ -105,7 +105,8 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
         m.Entity<ManagedHost>(e =>
         {
             e.HasIndex(x => x.DisplayName).IsUnique();
-            e.Property(x => x.HostFactsJson).HasMaxLength(16000);
+            e.Property(x => x.HostFactsJson).HasMaxLength(64000);
+            e.Property(x => x.Description).HasMaxLength(1000);
             e.Property(x => x.InventoryWarningsJson).HasMaxLength(16000);
             e.Property(x => x.AccessMessage).HasMaxLength(2000);
         });
@@ -118,6 +119,8 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
         m.Entity<VirtualMachine>(e =>
         {
             e.HasIndex(x => new { x.HostId, x.HyperVId }).IsUnique();
+            e.Property(x => x.DetailsJson).HasMaxLength(64000);
+            e.Property(x => x.Description).HasMaxLength(1000);
             e.HasIndex(x => x.Name);
         });
         m.Entity<InventoryEvent>().HasIndex(x => new { x.HostId, x.At });

@@ -50,6 +50,7 @@ public static class InventoryEndpoints
         {
             h.Id,
             h.DisplayName,
+            h.Description,
             h.MachineName,
             h.DnsHostName,
             status = h.Status.ToString(),
@@ -65,7 +66,11 @@ public static class InventoryEndpoints
             h.EnrolledAt,
             vmCount,
             os = facts is null ? null : new { facts.OsCaption, facts.OsVersion, facts.OsBuildNumber, facts.Domain, facts.PartOfDomain },
-            hardware = facts is null ? null : new { facts.LogicalProcessorCount, facts.TotalPhysicalMemoryBytes, facts.FreePhysicalMemoryBytes },
+            hardware = facts is null ? null : new { facts.LogicalProcessorCount, facts.TotalPhysicalMemoryBytes, facts.FreePhysicalMemoryBytes, facts.CpuName, facts.CpuSockets, facts.CpuCores, facts.CpuLoadPercent },
+            lastBootUtc = facts?.LastBootUtc,
+            volumes = facts?.Volumes ?? [],
+            networkAdapters = facts?.NetworkAdapters ?? [],
+            virtualSwitches = facts?.VirtualSwitches ?? [],
             edition = eval.Edition,
             platform = eval.Platform,
             support = eval.Support,
@@ -253,6 +258,8 @@ public static class InventoryEndpoints
     private static async Task<object> VmDtoAsync(VirtualMachine v, ManagedHost? host, bool connected, DateTimeOffset now, Guid uid, AccessEvaluator access, CancellationToken ct)
     {
         var canPower = await access.HasAsync(uid, Permissions.VmPower, ResourceRef.Vm(v.Id), ct);
+        var canDelete = await access.HasAsync(uid, Permissions.VmDelete, ResourceRef.Vm(v.Id), ct);
+        var canAnnotate = await access.HasAsync(uid, Permissions.InventoryAnnotate, ResourceRef.Vm(v.Id), ct);
         var canForce = await access.HasAsync(uid, Permissions.VmPowerForce, ResourceRef.Vm(v.Id), ct);
         var allowed = Enum.GetValues<VmPowerOperation>()
             .Where(op => VmPowerRules.IsAllowed(op, v.PowerState) && (VmPowerRules.IsDestructive(op) ? canForce : canPower))
@@ -263,6 +270,8 @@ public static class InventoryEndpoints
             v.Id,
             v.HyperVId,
             v.Name,
+            v.Description,
+            v.CheckpointCount,
             v.HostId,
             hostName = host?.DisplayName,
             hostConnected = connected,
@@ -286,6 +295,9 @@ public static class InventoryEndpoints
             v.IsMissing,
             v.MissingSince,
             allowedOperations = connected && !v.IsMissing ? allowed.ToArray() : [],
+            canAnnotate,
+            canDelete = canDelete && connected && !v.IsMissing && v.PowerState is VmPowerState.Off or VmPowerState.Saved,
+            canForget = canDelete && v.IsMissing,
             destructiveOperations = Enum.GetValues<VmPowerOperation>().Where(VmPowerRules.IsDestructive).Select(o => o.ToString()),
         };
     }
