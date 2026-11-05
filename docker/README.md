@@ -15,12 +15,12 @@ Hyper-V hosts (agent) ──mTLS:HVP_AGENT_PORT──► (Linux) │  (DB, key r
 From the repository root (it builds the UI, the gateway and the Windows agent package served by the portal):
 
 ```bash
-docker build -f docker/Dockerfile -t hvportal-gateway:0.3.4 .
+docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.3.4 .
 ```
 
 Get the image onto the Docker host used by Portainer:
 - push it to your private registry (`docker tag` + `docker push`) and set `HVP_IMAGE` to its name, **or**
-- `docker save hvportal-gateway:0.3.4 -o hvportal-gateway-0.3.4.tar`, then Portainer > **Images > Import**.
+- `docker save --platform linux/amd64 hvportal-gateway:0.3.4 -o hvportal-gateway-0.3.4.tar`, then Portainer > **Images > Import**.
 
 The repository is private: do not push the image to a public registry.
 
@@ -28,6 +28,14 @@ The compose file uses `pull_policy: ${HVP_PULL_POLICY:-never}`: with an imported
 download it (otherwise: "pull access denied for hvportal-gateway, repository does not exist"). With a private
 registry set `HVP_IMAGE` to the full name and `HVP_PULL_POLICY=missing` (or `always`).
 The image is built for `linux/amd64`; for an ARM Docker host build it with `--platform linux/arm64`.
+`--provenance=false --sbom=false` and `docker save --platform` produce a single-manifest archive that every Docker
+engine (and Portainer's import) loads with its name; without them Docker Desktop writes a nested OCI index with
+attestations that some engines import untagged ("No such image: hvportal-gateway:0.3.4" at deploy).
+
+### "No such image" at deploy: checklist
+1. Portainer > **Images** of the **same environment** as the stack: `hvportal-gateway:0.3.4` must be listed.
+2. Listed as `<none>:<none>`? Open it and add the tag `hvportal-gateway:0.3.4` (or re-import the archive built as above).
+3. From the Docker host shell: `docker load -i hvportal-gateway-0.3.4.tar` must print `Loaded image: hvportal-gateway:0.3.4`.
 
 ## 2. Create the stack in Portainer
 
