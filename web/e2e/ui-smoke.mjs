@@ -70,8 +70,17 @@ try {
   await shot(page, '02-dashboard-empty');
 
   // Add a host -> enrollment dialog
-  await page.getByRole('link', { name: 'Host', exact: true }).click();
-  await page.getByRole('button', { name: 'Aggiungi host' }).click();
+  // Hosts, groups and VMs live in the Inventory only (no separate sidebar entries).
+  const nav = page.getByRole('navigation', { name: 'Main' });
+  check('sidebar has only Inventory for hosts/VMs', (await nav.getByRole('link', { name: 'Inventario', exact: true }).count()) === 1
+    && (await nav.getByRole('link', { name: 'Host', exact: true }).count()) === 0 && (await nav.getByRole('link', { name: 'Macchine virtuali', exact: true }).count()) === 0);
+  await nav.getByRole('link', { name: 'Inventario', exact: true }).click();
+  await page.getByRole('heading', { name: 'Inventario' }).waitFor();
+  check('inventory tree has Host, Gruppi and Tutte le VM sections', (await Promise.all(['Host', 'Gruppi', 'Tutte le VM'].map((n) => page.getByRole('treeitem', { name: new RegExp('^' + n) }).count()))).every((c) => c === 1));
+  await page.getByRole('treeitem', { name: /^Host/ }).click({ button: 'right' });
+  check('right click on Host section offers "Aggiungi host"', (await page.getByRole('menuitem', { name: 'Aggiungi host' }).count()) === 1);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Aggiungi host' }).first().click();
   await page.locator('#host-name').fill('hv-lab-01');
   await page.getByRole('button', { name: 'Crea e ottieni il token di registrazione' }).click();
   await page.getByRole('heading', { name: /Registra l'agente/ }).waitFor();
@@ -131,7 +140,6 @@ try {
   await shot(page, '05b-host-settings');
 
   // Groups (folders) in the tree
-  await page.getByRole('radio', { name: 'Gruppi di VM (cartelle)' }).click();
   await page.getByRole('button', { name: 'Nuovo gruppo' }).first().click();
   await page.locator('#group-name').fill('Produzione');
   await page.getByRole('dialog').getByRole('button', { name: 'Crea' }).click();
@@ -149,7 +157,13 @@ try {
   await page.getByRole('heading', { name: 'hv-lab-01' }).waitFor();
   check('command palette jumps to a host', true);
 
-  await page.getByRole('link', { name: 'Macchine virtuali', exact: true }).click();
+  await page.getByRole('treeitem', { name: /^Tutte le VM/ }).click();
+  await page.getByRole('tab', { name: /Tutte le VM/, selected: true }).waitFor();
+  check('"Tutte le VM" opens the all-VMs view of the inventory', true);
+  await page.getByRole('tab', { name: /Gruppi/ }).click();
+  check('groups view explains they are not Hyper-V VM groups', (await page.getByText(/Get-VMGroup/).count()) === 1);
+  await page.goto(new URL('/vms', url).href);
+  check('old /vms link redirects to the inventory', await page.waitForURL(/\/inventory\?view=vms/, { timeout: 5000 }).then(() => true, () => false));
   await page.waitForTimeout(800);
   await shot(page, '07-vms');
   await page.getByRole('link', { name: 'Utenti e ruoli' }).click();
@@ -166,11 +180,29 @@ try {
   await page.getByRole('heading', { name: 'Sicurezza' }).waitFor();
   await shot(page, '10-settings');
 
-  await page.getByRole('link', { name: 'Guida' }).click();
-  await page.getByRole('heading', { name: 'Guida: collegare un host Hyper-V' }).waitFor();
-  await page.locator('summary', { hasText: 'Risoluzione dei problemi' }).waitFor();
-  check('guide page available in Italian', true);
-  await shot(page, '11-guide');
+  await page.getByRole('link', { name: 'Guida', exact: true }).click();
+  await page.getByRole('heading', { name: 'Guida', exact: true }).waitFor();
+  const guideCards = ['Collegare un host Hyper-V', 'Aggiornare i servizi Windows', 'Rimuovere un host', 'Risoluzione dei problemi'];
+  check('guide has separate pages', (await Promise.all(guideCards.map((n) => page.getByRole('link', { name: new RegExp(n) }).count()))).every((c) => c >= 1));
+  await shot(page, '11-guide-home');
+  await page.getByRole('link', { name: /Aggiornare i servizi Windows/ }).first().click();
+  await page.getByRole('heading', { name: 'Aggiornare i servizi Windows' }).waitFor();
+  await page.locator('tr', { hasText: 'hv-lab-01' }).first().waitFor();
+  await page.getByText(/Pacchetto agente su questo gateway: \d+\.\d+\.\d+/).waitFor();
+  check('update page: per-host agent version status', (await page.locator('tr', { hasText: 'hv-lab-01' }).getByText(/Aggiornato|Da aggiornare|Più recente/).count()) === 1);
+  const agentCmd = await page.locator('pre.command').filter({ hasText: 'Install-Agent.ps1' }).first().innerText();
+  check('update page: agent update command keeps the enrollment (no token)', /agent-package-\d+\.\d+\.\d+\\installer/.test(agentCmd) && /Install-Agent\.ps1 -Source \.\.\\agent\s*$/.test(agentCmd.split('\n')[1] ?? ''), agentCmd.replace(/\n/g, ' | '));
+  check('update page: gateway section with rollback steps', (await page.locator('pre.command').filter({ hasText: 'Install-Gateway.ps1' }).count()) >= 2);
+  check('update page: detects a gateway not running as a service', await page.getByText(/non è in esecuzione come servizio Windows/).waitFor({ timeout: 10000 }).then(() => true, () => false));
+  await shot(page, '11b-guide-update');
+  await page.getByRole('navigation', { name: 'Pagine della guida' }).getByRole('link', { name: 'Collegare un host Hyper-V' }).click();
+  await page.getByRole('heading', { name: 'Collegare un host Hyper-V' }).waitFor();
+  await page.locator('pre.command').filter({ hasText: 'Test-NetConnection' }).waitFor();
+  await page.getByRole('navigation', { name: 'Pagine della guida' }).getByRole('link', { name: 'Risoluzione dei problemi' }).click();
+  await page.getByRole('heading', { name: 'Risoluzione dei problemi' }).first().waitFor();
+  check('troubleshooting page with its sections', (await page.getByRole('heading', { level: 2 }).count()) >= 4);
+  check('guide pages available in Italian', true);
+  await shot(page, '11c-guide-trouble');
 
   // Theme + language from the account menu
   await page.locator('.account-button').click();
@@ -180,17 +212,18 @@ try {
   await shot(page, '12-account-menu');
   await page.keyboard.press('Escape');
   check('dark theme applied', await page.evaluate(() => document.documentElement.classList.contains('dark')));
-  await page.getByRole('link', { name: 'Hosts', exact: true }).click();
+  await page.getByRole('link', { name: 'Inventory', exact: true }).click();
   await page.waitForTimeout(500);
   await shot(page, '13-hosts-dark-en');
-  check('language switch to English', (await page.getByRole('heading', { name: 'Hosts' }).count()) > 0);
+  check('language switch to English', (await page.getByRole('heading', { name: 'Inventory' }).count()) > 0 && (await page.getByRole('treeitem', { name: /^All VMs/ }).count()) === 1);
   await page.getByRole('link', { name: 'Dashboard', exact: true }).click();
   await page.waitForTimeout(500);
   await shot(page, '14-dashboard-dark');
   await page.getByRole('link', { name: 'Guide', exact: true }).click();
-  await page.getByRole('heading', { name: 'Guide: connect a Hyper-V host' }).waitFor();
-  await page.locator('summary', { hasText: 'Troubleshooting' }).waitFor();
-  check('guide page available in English', true);
+  await page.getByRole('heading', { name: 'Guide', exact: true }).waitFor();
+  await page.getByRole('link', { name: /Update the Windows services/ }).first().click();
+  await page.getByRole('heading', { name: 'Update the Windows services' }).waitFor();
+  check('guide pages available in English', true);
 
   // Phone width
   await page.setViewportSize({ width: 390, height: 800 });

@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { get } from '@/api/client';
 import type { InventoryEvent, Job, Vm } from '@/api/types';
 import { ActionsButton } from '@/components/actions';
+import { AgentUpdateNotice } from '@/components/AgentUpdateNotice';
 import { CheckpointIcon, ErrorAlert, GroupIcon, KeyValue, Loading, Notice, PageHeader, PowerBadge, Section, StatCard, StatusBadge, VmIcon } from '@/components/common';
 import { VmConsole } from '@/components/console/VmConsole';
 import { useInventory } from '@/components/inventory/InventoryProvider';
@@ -76,6 +77,7 @@ export function VmPage() {
           ))}
         </TabsList>
       </PageHeader>
+      <AgentUpdateNotice host={host} className="mx-4 mt-3" />
       {vm.stale && <div className="px-4 pt-3"><Notice kind="warn">{t('stale.banner')}</Notice></div>}
       {vm.isMissing && <div className="px-4 pt-3"><Notice kind="danger">{t('vm.missing')} ({fmtDate(vm.missingSince)})</Notice></div>}
 

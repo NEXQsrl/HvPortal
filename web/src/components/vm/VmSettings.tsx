@@ -1,11 +1,13 @@
 import { Cpu, Disc3, HardDrive, MemoryStick, Network, Plus, Save, Settings2, ShieldCheck, Undo2 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, get } from '@/api/client';
-import type { Accepted, ConfigChange, ConfigResponse, IsosResponse, VmConfig } from '@/api/ops-types';
+import type { Accepted, ConfigChange, ConfigResponse, VmConfig } from '@/api/ops-types';
 import { realtime } from '@/api/realtime';
 import type { Vm } from '@/api/types';
 import { ErrorAlert, Loading, Notice, StatusBadge } from '@/components/common';
 import { Field } from '@/components/dialogs';
+import { useInventory } from '@/components/inventory/InventoryProvider';
+import { IsoPicker } from '@/components/ops/IsoPicker';
 import { useOps } from '@/components/ops/OperationsProvider';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -105,7 +107,7 @@ export function VmSettings({ vm }: { vm: Vm }) {
   const { t } = useI18n();
   const ops = useOps();
   const cfg = useLoad(() => get<ConfigResponse>(`/api/v1/vms/${vm.id}/config`), [vm.id]);
-  const isos = useLoad(() => (cfg.data?.can.storage ? get<IsosResponse>(`/api/v1/hosts/${vm.hostId}/isos`) : Promise.resolve(null)), [vm.hostId, cfg.data?.can.storage]);
+  const host = useInventory().hostById.get(vm.hostId);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -132,8 +134,6 @@ export function VmSettings({ vm }: { vm: Vm }) {
   const nameInvalid = draft.name.trim() !== c.name && !VM_NAME.test(draft.name.trim());
   const memInvalid = [draft.startupMb, ...(draft.dynamic ? [draft.minMb, draft.maxMb] : [])].some((m) => m < 32 || m % 2 !== 0)
     || (draft.dynamic && (draft.minMb > draft.startupMb || draft.maxMb < draft.startupMb));
-  const isoFiles = isos.data?.files ?? [];
-  const isoOptions = [...new Set([...(draft.iso ? [draft.iso] : []), ...isoFiles.map((f) => f.path)])];
 
   const apply = async () => {
     setBusy(true);
@@ -228,11 +228,10 @@ export function VmSettings({ vm }: { vm: Vm }) {
         </Block>
 
         <Block icon={<Disc3 className="size-4" />} title={t('cfg.dvd')} disabled={!can.storage}>
-          <Field label={t('cfg.iso')} htmlFor="cfg-iso" className="sm:col-span-2" hint={cfg.data.isoLibrary.length === 0 ? t('cfg.noLibrary') : c.dvdDrives.length === 0 ? t('cfg.noDvd') : undefined}>
-            <NativeSelect id="cfg-iso" value={draft.iso} onChange={(e) => set({ iso: e.target.value })}>
-              <option value="">{t('cfg.eject')}</option>
-              {isoOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-            </NativeSelect>
+          <Field label={t('cfg.iso')} htmlFor="cfg-iso" className="sm:col-span-2" hint={c.dvdDrives.length === 0 ? t('cfg.noDvd') : undefined}>
+            {host && can.storage
+              ? <IsoPicker id="cfg-iso" host={host} value={draft.iso} onChange={(p) => set({ iso: p })} emptyLabel={t('cfg.eject')} />
+              : <NativeSelect id="cfg-iso" value={draft.iso} disabled><option value={draft.iso}>{draft.iso || t('cfg.eject')}</option></NativeSelect>}
           </Field>
         </Block>
 

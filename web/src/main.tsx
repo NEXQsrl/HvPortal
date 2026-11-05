@@ -15,11 +15,9 @@ import { AccountPage, AuditPage, PlannedPage, SettingsPage, UsersPage } from './
 import { ForcedMfaPage, ForcedPasswordChangePage, LoginPage, SetupPage } from './pages/AuthPages';
 import { ConsolePage } from './pages/ConsolePage';
 import { DashboardPage } from './pages/DashboardPage';
-import { GuidePage } from './pages/GuidePage';
+import { GuideConnect, GuideHome, GuideLayout, GuideRemove, GuideTroubleshooting, GuideUpdate } from './pages/guide/GuidePages';
 import { GroupPage, InventoryHome } from './pages/inventory/GroupPage';
-import { HostListPage } from './pages/inventory/HostListPage';
 import { HostPage } from './pages/inventory/HostPage';
-import { VmListPage } from './pages/inventory/VmListPage';
 import { VmPage } from './pages/inventory/VmPage';
 import { JobDetailPage, JobsPage } from './pages/JobsPage';
 import { NetworkPage, StoragePage } from './pages/ResourcesPages';
@@ -43,9 +41,9 @@ function Gate() {
           <Route element={<AppShell />}>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/inventory" element={<InventoryHome />} />
-            <Route path="/vms" element={<VmListPage />} />
+            <Route path="/vms" element={<Navigate to="/inventory?view=vms" replace />} />
             <Route path="/vms/:id" element={<VmPage />} />
-            <Route path="/hosts" element={<HostListPage />} />
+            <Route path="/hosts" element={<Navigate to="/inventory?view=hosts" replace />} />
             <Route path="/hosts/:id" element={<HostPage />} />
             <Route path="/groups/:id" element={<GroupPage />} />
             <Route path="/networks" element={<NetworkPage />} />
@@ -56,7 +54,13 @@ function Gate() {
             <Route path="/audit" element={<AuditPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/account" element={<AccountPage />} />
-            <Route path="/guide" element={<GuidePage />} />
+            <Route path="/guide" element={<GuideLayout />}>
+              <Route index element={<GuideHome />} />
+              <Route path="connect" element={<GuideConnect />} />
+              <Route path="update" element={<GuideUpdate />} />
+              <Route path="remove" element={<GuideRemove />} />
+              <Route path="troubleshooting" element={<GuideTroubleshooting />} />
+            </Route>
             <Route path="/backup" element={<PlannedPage titleKey="nav.backup" milestone="Milestone 3" />} />
             <Route path="/templates" element={<PlannedPage titleKey="nav.templates" milestone="Milestone 3" />} />
             <Route path="*" element={<Navigate to="/" replace />} />

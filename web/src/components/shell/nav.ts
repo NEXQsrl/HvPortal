@@ -1,4 +1,4 @@
-import { Archive, BookOpen, HardDrive, LayoutDashboard, Layers, ListChecks, Monitor, Network, ScrollText, Server, Settings, Users, type LucideIcon } from 'lucide-react';
+import { Archive, BookOpen, HardDrive, LayoutDashboard, Layers, ListChecks, Network, ScrollText, Settings, Users, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -9,13 +9,14 @@ export interface NavItem {
   permission?: string[];
   planned?: boolean;
   end?: boolean;
+  /** Also active on these routes (e.g. Inventory for hosts, VMs and groups). */
+  match?: RegExp;
 }
 
 export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'nav.dashboard', icon: LayoutDashboard, section: 'main', end: true },
-  { to: '/inventory', label: 'nav.inventory', icon: Layers, section: 'main' },
-  { to: '/vms', label: 'nav.vms', icon: Monitor, section: 'main' },
-  { to: '/hosts', label: 'nav.hosts', icon: Server, section: 'main' },
+  // Hosts, groups and VMs all live in the inventory (tree + views), as in vCenter.
+  { to: '/inventory', label: 'nav.inventory', icon: Layers, section: 'main', match: /^\/(inventory|vms|hosts|groups)(\/|$)/ },
   { to: '/networks', label: 'nav.networks', icon: Network, section: 'main' },
   { to: '/storage', label: 'nav.storage', icon: HardDrive, section: 'main' },
   { to: '/jobs', label: 'nav.jobs', icon: ListChecks, section: 'ops' },

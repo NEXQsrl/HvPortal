@@ -173,9 +173,10 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     if (!g) return [{ key: 'new', label: t('group.new'), icon: FolderPlus, onSelect: () => setDialog({ kind: 'newGroup', parentId: null }) }];
     return [
       { key: 'open', label: t('menu.open'), icon: SquareArrowOutUpRight, onSelect: () => navigate(`/groups/${g.id}`) },
-      { key: 'new-sub', label: t('group.newSub'), icon: FolderPlus, separatorBefore: true, onSelect: () => setDialog({ kind: 'newGroup', parentId: g.id }) },
+      // The wizard opens with this group preselected: the VM is added to it as soon as it appears in the inventory.
+      ...(inv.hosts.some((h) => h.canCreateVm) ? [{ key: 'new-vm', label: t('group.newVmHere'), icon: Monitor, separatorBefore: true, onSelect: () => setDialog({ kind: 'createVm', groupId: g.id }) }] : []),
+      { key: 'new-sub', label: t('group.newSub'), icon: FolderPlus, separatorBefore: !inv.hosts.some((h) => h.canCreateVm), onSelect: () => setDialog({ kind: 'newGroup', parentId: g.id }) },
       { key: 'add-vms', label: t('group.addVms'), icon: Plus, onSelect: () => setDialog({ kind: 'addVms', group: g }) },
-      ...(inv.hosts.some((h) => h.canCreateVm) ? [{ key: 'new-vm', label: t('host.newVm'), icon: Monitor, onSelect: () => setDialog({ kind: 'createVm', groupId: g.id }) }] : []),
       { key: 'edit', label: t('group.edit'), icon: Pencil, separatorBefore: true, onSelect: () => setDialog({ kind: 'editGroup', group: g }) },
       { key: 'move', label: t('group.move'), icon: FolderInput, onSelect: () => setDialog({ kind: 'moveGroup', group: g }) },
       { key: 'delete', label: t('group.delete'), icon: Trash2, danger: true, separatorBefore: true, onSelect: () => setDialog({ kind: 'deleteGroup', group: g }) },

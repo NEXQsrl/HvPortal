@@ -1,5 +1,20 @@
 # Testing
 
+## v0.3.1 run (2026-11-05, development machine: Windows 11 Business 26200, non-administrator)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Agent.Tests` | 66 | pass — adds VM-location rules (system folders, UNC, traversal, streams, device paths), folder browser against the real file system (drives, hidden/system folders excluded, blocked roots refused, missing tail accepted only for the location), protocol 3 requirements, unknown command values answered without dropping the channel |
+| `tests/HvPortal.Gateway.Tests` | 137 | pass — adds folder browser permissions (`vm.create` for folders, `hosts.manage` for ISO files), blocked/UNC/traversal paths, **nothing sent to protocol-2 agents** (`agent_outdated`), VM location validation + normalization + protocol check, console WebSocket route accepting HTTP/2 extended CONNECT |
+| `web/e2e/ui-smoke.mjs` (Edge headless) | 43 | pass — adds single Inventory entry in the sidebar, tree sections Host / Groups / All VMs, "Add host" from the Host section context menu, All VMs view, groups note about Hyper-V VM groups, redirect of the old `/vms` link |
+| `web` Vitest | 1 | pass |
+| Manual probe (real Kestrel, `ClientWebSocket` HTTP/2 and HTTP/1.1, no session) | 2 | before the fix HTTP/2 got **400** (CSRF on CONNECT) and HTTP/1.1 401; after the fix both reach authentication (401) |
+
+Not covered without a Hyper-V host where the agent has rights: creating a VM in a chosen folder, the folder browser
+on a real server (LUNs, mount points), adding an ISO folder from the browser and booting from it (real-host test plan
+V13–V15). The new-VM wizard is not exercised by the e2e (it needs a host with Hyper-V access): it is covered by type
+checking and by the API tests.
+
 ## v0.3.0 run (2026-11-05, development machine: Windows 11 Business 26200, non-administrator)
 
 | Suite | Count | Result |

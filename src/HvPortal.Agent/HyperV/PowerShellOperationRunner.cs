@@ -32,6 +32,19 @@ public sealed class PowerShellOperationRunner
         {
             return new HvOperationOutcome { Ok = false, Error = "Rejected by agent validation: " + validation };
         }
+        if (operation == HvOperation.BrowseFolders)
+        {
+            // Plain file-system listing: done in-process (no PowerShell, nothing modified).
+            try
+            {
+                var listing = HostFolderBrowser.Browse(HvOperations.FromElement<FolderBrowseRequest>(args)!);
+                return new HvOperationOutcome { Ok = true, Result = HvOperations.ToElement(listing) };
+            }
+            catch (Exception ex) when (ex is HostPathException or IOException or UnauthorizedAccessException)
+            {
+                return new HvOperationOutcome { Ok = false, Error = ex is UnauthorizedAccessException ? "Access denied to the folder for the agent service account." : ex.Message };
+            }
+        }
         if (!File.Exists(_scriptPath))
         {
             return new HvOperationOutcome { Ok = false, Error = "Operations script missing from the agent installation." };
@@ -124,7 +137,21 @@ public sealed class PowerShellOperationRunner
                 case HvOperation.SetVmConfig:
                     return HvOperations.FromElement<VmConfigChange>(args) is { } c ? OperationValidation.Validate(c) : "invalid_arguments";
                 case HvOperation.NewVm:
-                    return HvOperations.FromElement<NewVmRequest>(args) is { } n ? OperationValidation.Validate(n) : "invalid_arguments";
+                    if (HvOperations.FromElement<NewVmRequest>(args) is not { } n)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(n) is { } invalidVm)
+                    {
+                        return invalidVm;
+                    }
+                    if (n.Location is { } location)
+                    {
+                        HostFolderBrowser.CheckFolder(location, mustExist: false);
+                    }
+                    return null;
+                case HvOperation.BrowseFolders:
+                    return HvOperations.FromElement<FolderBrowseRequest>(args) is { } b ? OperationValidation.Validate(b) : "invalid_arguments";
                 case HvOperation.ListIsos:
                     return HvOperations.FromElement<IsoListRequest>(args) is { } i && i.Roots.Count <= 16 && i.Roots.All(r => r.Length <= 260) ? null : "invalid_iso_roots";
                 case HvOperation.ListCheckpoints:
@@ -141,6 +168,10 @@ public sealed class PowerShellOperationRunner
         catch (JsonException)
         {
             return "invalid_arguments";
+        }
+        catch (HostPathException ex)
+        {
+            return "invalid_location (" + ex.Message + ")";
         }
     }
 

@@ -45,6 +45,8 @@ public sealed class AgentConnectionManager : IAgentDispatcher
 
     public bool IsConnected(Guid hostId) => _sessions.ContainsKey(hostId);
 
+    public int ProtocolVersionOf(Guid hostId) => _sessions.TryGetValue(hostId, out var s) ? s.ProtocolVersion : 0;
+
     public IReadOnlyCollection<Guid> ConnectedHosts => _sessions.Keys.ToList();
 
     public async Task HandleChannelAsync(HttpContext http)
@@ -134,13 +136,15 @@ public sealed class AgentConnectionManager : IAgentDispatcher
             throw new HostNotConnectedException(hostId);
         }
         // Older agents cannot even parse newer command kinds (and would drop the channel): refuse locally, nothing is sent.
-        if (command.Kind is AgentCommandKind.HyperVOperation or AgentCommandKind.ConsoleFrame or AgentCommandKind.ConsoleInput && session.ProtocolVersion < 2)
+        var required = AgentProtocol.RequiredVersion(command);
+        if (session.ProtocolVersion < required)
         {
+            var minAgent = required >= 3 ? "0.3.1" : "0.3";
             return new AgentCommandResult
             {
                 CommandId = command.CommandId,
                 Status = AgentCommandStatus.Rejected,
-                Message = "The agent on this host does not support this operation (agent protocol " + session.ProtocolVersion + "). Update the agent to 0.3 or later.",
+                Message = $"The agent on this host does not support this operation (agent protocol {session.ProtocolVersion}). Update the agent to {minAgent} or later.",
             };
         }
         var pending = session.Register(command.CommandId, onProgress);

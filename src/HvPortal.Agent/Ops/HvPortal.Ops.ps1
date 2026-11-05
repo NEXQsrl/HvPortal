@@ -7,7 +7,8 @@
    - every value is cast to an explicit type and passed as a cmdlet parameter (splatting of fixed keys);
    - no Invoke-Expression, no script blocks built from input, no Start-Process;
    - VMs are always resolved by Id (names are not unique in Hyper-V);
-   - new files are created only under the host default VHD folder (Get-VMHost), never at caller-chosen paths;
+   - new files are created under the host default folders (Get-VMHost) or, for NewVm, under <location>\<VM name>\ where
+     location was validated by the agent (local fixed drive, no system/hidden folders, no junctions or symbolic links);
    - ISO paths must be inside the allowed library roots provided by the agent.
 #>
 $ErrorActionPreference = 'Stop'
@@ -235,9 +236,24 @@ try {
                 if (-not $sw) { throw "Virtual switch not found: $($a.switchName)" }
                 $params.SwitchName = $sw.Name
             }
+            $vhdFolder = $h.VirtualHardDiskPath
+            $vmFolder = $null
+            if ($a.location) {
+                # <location>\<name>\: Hyper-V puts the configuration in "Virtual Machines", the new disk goes to "Virtual Hard Disks".
+                $location = [string]$a.location
+                $vmFolder = Join-Path $location $name
+                if ((Test-Path -LiteralPath $vmFolder) -and (Get-ChildItem -LiteralPath $vmFolder -Force | Select-Object -First 1)) {
+                    throw "The folder $vmFolder already exists and is not empty."
+                }
+                $vhdFolder = Join-Path $vmFolder 'Virtual Hard Disks'
+                try { New-Item -ItemType Directory -Path $vhdFolder -Force | Out-Null }
+                catch { throw "Cannot create $vhdFolder with the agent service account: $($_.Exception.Message)" }
+                [void]$applied.Add('folder')
+                $params.Path = $location
+            }
             $diskPath = $null
             if ([int64]$a.diskSizeGb -gt 0) {
-                $diskPath = Join-Path $h.VirtualHardDiskPath ((Get-SafeName $name) + '.vhdx')
+                $diskPath = Join-Path $vhdFolder ((Get-SafeName $name) + '.vhdx')
                 if (Test-Path -LiteralPath $diskPath) { throw "File already exists: $diskPath" }
                 $size = [uint64]$a.diskSizeGb * 1GB
                 if ([bool]$a.diskFixed) { New-VHD -Path $diskPath -SizeBytes $size -Fixed | Out-Null; $params.VHDPath = $diskPath }
@@ -245,7 +261,16 @@ try {
             } else {
                 $params.NoVHD = $true
             }
-            $vm = New-VM @params
+            try { $vm = New-VM @params }
+            catch {
+                # Leave nothing behind: the fixed disk created above (the path did not exist) and the folders created above
+                # if they are still empty (never pre-existing content).
+                if ([bool]$a.diskFixed -and $diskPath) { Remove-Item -LiteralPath $diskPath -Force -ErrorAction SilentlyContinue }
+                if ($vmFolder -and -not (Get-ChildItem -LiteralPath $vmFolder -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+                    Remove-Item -LiteralPath $vmFolder -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                throw
+            }
             [void]$applied.Add('created')
             $warning = $null
             try {

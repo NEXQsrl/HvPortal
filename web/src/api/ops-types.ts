@@ -95,6 +95,11 @@ export interface HostDiskRow { disk: HostDiskInfo; portalVmId: string }
 export interface IsoFile { path: string; sizeBytes: number; modifiedUtc: string }
 export interface IsosResponse { roots: string[]; files: IsoFile[] }
 
+/** GET /hosts/{id}/folders (agent 0.3.1+): drives when path is null, otherwise sub-folders (system/hidden excluded). */
+export interface DriveEntry { path: string; label: string | null; totalBytes: number; freeBytes: number }
+export interface FolderEntry { name: string; path: string }
+export interface FolderListing { path: string | null; parent: string | null; drives: DriveEntry[]; folders: FolderEntry[]; isos: IsoFile[]; freeBytes: number | null; truncated: boolean }
+
 export interface HostDefaultsResponse {
   defaults: { virtualHardDiskPath: string | null; virtualMachinePath: string | null; logicalProcessorCount: number; memoryCapacityBytes: number; supportedVersions: string[]; defaultVersion: string | null };
   switches: string[];
@@ -121,6 +126,8 @@ export interface NewVmSpec {
   automaticStartAction?: string;
   startAfterCreate: boolean;
   notes?: string;
+  /** Folder that will contain <name>\ (null = host defaults). */
+  location?: string | null;
 }
 
 export interface Accepted { jobId: string; created: boolean }

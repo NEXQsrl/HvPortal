@@ -84,9 +84,13 @@ public static partial class OperationValidation
         if (r.CheckpointType is not null && !CheckpointTypes.Contains(r.CheckpointType)) return "invalid_checkpoint_type";
         if (r.AutomaticStartAction is not null && !StartActions.Contains(r.AutomaticStartAction)) return "invalid_start_action";
         if (r.Notes is { Length: > MaxNotes }) return "notes_too_long";
+        if (HostPaths.ValidateLocation(r.Location) is { } loc) return loc;
         if (r.IsoRoots.Count > 16 || r.IsoRoots.Any(x => x.Length > 260)) return "invalid_iso_roots";
         return null;
     }
+
+    public static string? Validate(FolderBrowseRequest r) =>
+        r.Path is null || HostPaths.IsValidLocalFolder(r.Path) ? null : "invalid_path";
 
     private static bool InvalidMemory(long? mb) => mb is { } v && (v < MinMemoryMb || v > MaxMemoryMb || v % 2 != 0);
 

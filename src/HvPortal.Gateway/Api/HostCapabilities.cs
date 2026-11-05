@@ -43,6 +43,8 @@ public static class HostCapabilities
             new("vm.guest-restart", ok && build >= 14393 ? "available" : "unavailable", "Msvm_ShutdownComponent.InitiateReboot requires WS2016+."),
             new("vm.configure", ops ? "available" : "unavailable", opsNote ?? "CPU, memory, firmware, DVD/ISO, network adapters, new/expanded disks."),
             new("vm.create", ops ? "available" : "unavailable", opsNote),
+            new("vm.location", ops && AgentAtLeast(facts?.AgentVersion, 0, 3, 1) ? "available" : "unavailable",
+                ops && !AgentAtLeast(facts?.AgentVersion, 0, 3, 1) ? "Update the agent to 0.3.1 or later." : "Folder browser for VM location and ISO files (system folders hidden)."),
             new("vm.checkpoints", ops ? "available" : "unavailable", opsNote ?? "Create, apply, delete. Checkpoints are not backups."),
             new("vm.console", ops ? "available" : "unavailable", opsNote ?? "Hypervisor screen capture + keyboard/mouse (not RDP)."),
             new("cluster", facts?.ClusterServicePresent == true ? "detected (management in Milestone 3)" : "not detected"),
@@ -52,9 +54,9 @@ public static class HostCapabilities
         return new Evaluation(edition, platform, support, caps);
     }
 
-    internal static bool AgentAtLeast(string? version, int major, int minor)
+    internal static bool AgentAtLeast(string? version, int major, int minor, int patch = 0)
     {
         var core = version?.Split('+', '-')[0];
-        return Version.TryParse(core, out var v) && (v.Major > major || (v.Major == major && v.Minor >= minor));
+        return Version.TryParse(core, out var v) && new Version(v.Major, v.Minor, Math.Max(v.Build, 0)) >= new Version(major, minor, patch);
     }
 }

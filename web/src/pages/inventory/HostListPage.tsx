@@ -1,25 +1,21 @@
-import { Plus, Server } from 'lucide-react';
+import { Server } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { KebabMenu, rowLink, WithContextMenu } from '@/components/actions';
-import { Empty, ErrorAlert, HostIcon, Loading, Meter, PageHeader, StatusBadge } from '@/components/common';
+import { Empty, ErrorAlert, HostIcon, Loading, Meter, StatusBadge } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { useOps } from '@/components/ops/OperationsProvider';
-import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useI18n } from '@/i18n';
 import { percent } from '@/lib/format';
-import { useSession } from '@/session';
 
-export function HostListPage() {
+/** Hosts table of the inventory page (Inventory > Host). */
+export function HostTable() {
   const { t, fmtDate } = useI18n();
-  const { can } = useSession();
   const inv = useInventory();
   const ops = useOps();
   const navigate = useNavigate();
   return (
-    <div className="flex h-full flex-col">
-      <PageHeader icon={<Server className="size-5" />} title={t('nav.hosts')} subtitle={`${inv.hosts.filter((h) => h.connected).length}/${inv.hosts.length} ${t('dash.connected')}`}
-        actions={can('hosts.manage') && <Button size="sm" onClick={() => ops.openAddHost()}><Plus />{t('host.add')}</Button>} />
+    <div className="flex h-full min-h-0 flex-col">
       <ErrorAlert error={inv.error} className="mx-4" />
       {inv.loading ? <Loading /> : inv.hosts.length === 0 ? <Empty icon={<Server className="size-6" />}>{t('dash.noHosts')}</Empty> : (
         <Table containerClassName="min-h-0 flex-1">

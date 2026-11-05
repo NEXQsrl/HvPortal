@@ -26,6 +26,15 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 - Basic browser console (hypervisor screen capture, keyboard, synthetic mouse) — [console.md](console.md).
 - UI rebuilt with shadcn/ui: vCenter-like layout (navigator tree, object tabs, recent tasks, command palette).
 
+## v0.3.1 — delivered (code + automated tests; real-host validation pending)
+- Console fixed in browsers using HTTP/2 (WebSocket over extended CONNECT, RFC 8441).
+- Inventory as the single entry point: one tree (Hosts → VMs, Groups → folders/VMs, All VMs); add host / new group /
+  new VM from the tree and the inventory page; "New VM in this group" in the group context menu.
+- New-VM wizard: VM location chosen with a host folder browser (system folders hidden and refused), memory and disk
+  presets, ISO browser for administrators (adds the folder to the host ISO library), footer no longer clipped.
+- Agent protocol 3 (agent 0.3.1): `BrowseFolders`, `NewVm.Location`; the gateway never sends them to older agents;
+  agents reply `Rejected` to commands they cannot parse instead of dropping the channel.
+
 ## Milestone 2
 - Remaining VM configuration: boot order, TPM on existing VMs, controllers, disk detach/removal with ownership
   checks, online/offline matrix validated on hosts.

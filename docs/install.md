@@ -74,10 +74,21 @@ Users & roles → *Assign role*. New users have no permissions. Prefer scoped ro
 
 ## Upgrade
 
-Run the same install script with the new release. The script stops the service, copies the database
-(`db\hvportal.db.pre-upgrade-<timestamp>`), backs up binaries (`<InstallPath>.bak-<timestamp>`), installs, starts, and
-**rolls back the binaries automatically** if the service does not stay running. Database migrations run at start;
-to roll back a release that applied migrations, restore the pre-upgrade database copy together with the old binaries.
+The portal has a step-by-step page with the commands for your installation: **Guide → Update the Windows services**
+(it also lists the agent version of every host).
+
+- **Gateway**: run `Install-Gateway.ps1` from the new release **with the same parameters used at installation**
+  (`-PublicNames`, `-BindAddress`, ports, `-UiCertificateThumbprint`; current values:
+  `(Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\HvPortalGateway).Environment`). The script stops the
+  service, copies the database files to `db\pre-upgrade-<timestamp>\` (`hvportal.db`, `-wal`, `-shm`), backs up the
+  binaries (`<InstallPath>.bak-<timestamp>`), installs, starts, and **rolls back the binaries automatically** if the
+  service does not stay running. Migrations run at start: to go back to an older release, stop the service, delete
+  `hvportal.db-wal`/`-shm`, restore the pre-upgrade copy and reinstall the old release.
+- **Agent**: extract the new package into a new folder on the host and run `.\Install-Agent.ps1 -Source ..\agent`
+  without `-Gateway` or token: the enrollment (`C:\ProgramData\HvPortal\Agent`) is kept; binaries are backed up and
+  restored automatically if the service does not start. Rollback: same command from the previous package folder.
+- Order: gateway first, then agents. The gateway never sends command kinds an agent's protocol does not know; those
+  functions show "update the agent".
 
 ## Uninstall
 

@@ -32,6 +32,7 @@ function LiveIndicator() {
 
 function SidebarNav({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const { t } = useI18n();
+  const { pathname } = useLocation();
   const { can } = useSession();
   const visible = (n: NavItem) => !n.permission || n.permission.some(can);
   const sections: { key: NavItem['section']; label?: TKey }[] = [{ key: 'main' }, { key: 'ops', label: 'nav.operations' }, { key: 'admin', label: 'nav.admin' }];
@@ -47,7 +48,7 @@ function SidebarNav({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?
               const link = (
                 <NavLink key={n.to} to={n.to} end={n.end} onClick={onNavigate}
                   className={({ isActive }) => cn('flex h-8 items-center gap-2.5 rounded-md px-2 text-sm text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                    isActive && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground', collapsed && 'justify-center px-0', n.planned && 'soon')}>
+                    (isActive || n.match?.test(pathname)) && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground', collapsed && 'justify-center px-0', n.planned && 'soon')}>
                   <n.icon className="size-4 shrink-0" />
                   {!collapsed && <span className="truncate">{t(n.label as TKey)}</span>}
                   {!collapsed && n.planned && <span className="ml-auto rounded bg-muted px-1 text-[10px] text-muted-foreground">{t('shell.soon')}</span>}

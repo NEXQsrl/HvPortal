@@ -61,6 +61,10 @@ Record results (date, build, edition, pass/fail, evidence) in a copy of the tabl
 | V10 | Console with a user who loses `vm.console` while connected | session closed within 60 s with "no longer authorized" |
 | V11 | Groups: VM in nested folder; VM operator assigned on the parent folder | operator sees and powers the VM; moving the subfolder out removes access; organizer without `roles.manage` cannot move VMs into the operator's folder |
 | V12 | Host with `Hyper-V-PowerShell` removed / GPO AllSigned | operations fail with the explicit error message; inventory/power/console unaffected |
+| V13 | (agent 0.3.1) Wizard → Storage → Browse: drives of the host incl. LUN/mounted volumes; open D:\ | Windows, Users, Program Files, ProgramData, inetpub, PerfLogs, VBRCatalog, ovhupd, Packages, `$Recycle.Bin`, System Volume Information not listed; free space correct |
+| V14 | (agent 0.3.1) Create a VM in `D:\HV-Test` (folder not existing) with a 20 GB dynamic disk | `D:\HV-Test\<name>\Virtual Machines\<id>.vmcx` and `...\Virtual Hard Disks\<name>.vhdx` (verify the exact layout created by `New-VM -Path`); typing `C:\Windows\x` is refused; re-creating with the same name refused (non-empty folder) |
+| V15 | (agent 0.3.1, admin) Wizard → Installation → Browse an ISO outside the library | folder added to the host ISO library (audit `hosts.iso_library.update`), VM boots from the ISO in the console; a VM operator without `hosts.manage` sees no Browse button |
+| V16 | Console from Edge/Chrome on the production URL (HTTP/2) | the WebSocket opens (no "WebSocket connection failed"); frames and input work |
 
 ## Result log template
 

@@ -34,7 +34,8 @@ public static class ConsoleEndpoints
     public static void Map(WebApplication app)
     {
         app.MapPost("/api/v1/vms/{id:guid}/console/tickets", IssueTicketAsync).WithTags("Console");
-        app.MapGet("/api/v1/vms/{id:guid}/console/ws", ConnectAsync).WithTags("Console").ExcludeFromDescription();
+        // HTTP/1.1 WebSockets use GET, HTTP/2 WebSockets (RFC 8441, used by browsers over h2) use CONNECT.
+        app.MapMethods("/api/v1/vms/{id:guid}/console/ws", ["GET", "CONNECT"], ConnectAsync).WithTags("Console").ExcludeFromDescription();
         app.MapGet("/api/v1/console/sessions", ListSessionsAsync).WithTags("Console");
     }
 

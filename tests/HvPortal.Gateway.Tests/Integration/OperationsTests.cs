@@ -9,6 +9,7 @@ using HvPortal.Gateway.Data;
 using HvPortal.Gateway.Security;
 using HvPortal.Gateway.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HvPortal.Gateway.Tests.Integration;
 
@@ -300,6 +301,61 @@ public sealed class OperationsTests : IAsyncLifetime
         Assert.Equal("vm_name_exists", await (await admin.PostJsonAsync($"/api/v1/hosts/{hostId}/vms", new { vm = new { name = "web-03" } })).CodeAsync());
     }
 
+    [Fact]
+    public async Task Folder_browser_needs_vm_create_for_folders_and_hosts_manage_for_isos()
+    {
+        var (hostId, _) = await _app.CreateHostAsync("browse-host");
+        var creatorRole = await CustomRoleAsync("Creator-b", Permissions.InventoryRead, Permissions.VmCreate);
+        var creator = await _app.CreateUserAsync("creator-b");
+        await AssignRoleAsync(creator, creatorRole, ScopeType.Host, hostId.ToString("D"));
+        await _app.CreateUserAsync("op-b", BuiltInRoles.VmOperator);
+        await _app.CreateUserAsync("admin-b", BuiltInRoles.PlatformAdmin);
+        var c = await LoginAsync("creator-b");
+
+        var drives = await (await c.GetAsync($"/api/v1/hosts/{hostId}/folders")).JsonAsync();
+        Assert.Contains(drives.GetProperty("drives").EnumerateArray(), d => d.GetProperty("path").GetString() == @"D:\");
+        var d1 = await (await c.GetAsync($"/api/v1/hosts/{hostId}/folders?path={Uri.EscapeDataString(@"d:\")}")).JsonAsync();
+        Assert.Contains(d1.GetProperty("folders").EnumerateArray(), f => f.GetProperty("name").GetString() == "Virtual Machines");
+        // System folders are refused before reaching the agent; UNC and traversal are invalid.
+        Assert.Equal("location_not_allowed", await (await c.GetAsync($"/api/v1/hosts/{hostId}/folders?path={Uri.EscapeDataString(@"C:\Windows\System32")}")).CodeAsync());
+        Assert.Equal("invalid_path", await (await c.GetAsync($"/api/v1/hosts/{hostId}/folders?path={Uri.EscapeDataString(@"\\server\share")}")).CodeAsync());
+        Assert.Equal("invalid_path", await (await c.GetAsync($"/api/v1/hosts/{hostId}/folders?path={Uri.EscapeDataString(@"D:\a\..\Windows")}")).CodeAsync());
+        // ISO files only for hosts.manage.
+        Assert.Equal(HttpStatusCode.Forbidden, (await c.GetAsync($"/api/v1/hosts/{hostId}/folders?path={Uri.EscapeDataString(@"D:\ISO")}&isos=true")).StatusCode);
+        var op = await LoginAsync("op-b");
+        Assert.Equal(HttpStatusCode.Forbidden, (await op.GetAsync($"/api/v1/hosts/{hostId}/folders")).StatusCode);
+        var admin = await LoginAsync("admin-b");
+        var isoDir = await (await admin.GetAsync($"/api/v1/hosts/{hostId}/folders?path={Uri.EscapeDataString(@"D:\ISO")}&isos=true")).JsonAsync();
+        Assert.Equal(@"D:\ISO\win.iso", isoDir.GetProperty("isos")[0].GetProperty("path").GetString());
+
+        // Agents older than protocol 3 never receive the command.
+        _app.Agent.ProtocolVersions[hostId] = 2;
+        var before = _app.Agent.OperationsReceived(HvOperation.BrowseFolders).Count;
+        Assert.Equal("agent_outdated", await (await c.GetAsync($"/api/v1/hosts/{hostId}/folders")).CodeAsync());
+        Assert.Equal(before, _app.Agent.OperationsReceived(HvOperation.BrowseFolders).Count);
+    }
+
+    [Fact]
+    public async Task Create_vm_location_is_validated_and_needs_a_protocol_3_agent()
+    {
+        var (hostId, _) = await _app.CreateHostAsync("loc-host");
+        await _app.CreateUserAsync("admin-loc", BuiltInRoles.PlatformAdmin);
+        var c = await LoginAsync("admin-loc");
+        Assert.Equal("location_not_allowed", await (await c.PostJsonAsync($"/api/v1/hosts/{hostId}/vms", new { vm = new { name = "l1", location = @"C:\Windows" } })).CodeAsync());
+        Assert.Equal("location_not_allowed", await (await c.PostJsonAsync($"/api/v1/hosts/{hostId}/vms", new { vm = new { name = "l1", location = @"D:\$Recycle.Bin\x" } })).CodeAsync());
+        Assert.Equal("invalid_location", await (await c.PostJsonAsync($"/api/v1/hosts/{hostId}/vms", new { vm = new { name = "l1", location = @"\\nas\vms" } })).CodeAsync());
+
+        var job = await JobAsync(await c.PostJsonAsync($"/api/v1/hosts/{hostId}/vms", new { vm = new { name = "l2", location = @"d:\Virtual Machines\" } }));
+        Assert.Equal(JobStatus.Succeeded, job.Status);
+        var sent = HvOperations.FromElement<NewVmRequest>(_app.Agent.OperationsReceived(HvOperation.NewVm).Last().OperationArgs)!;
+        Assert.Equal(@"D:\Virtual Machines", sent.Location);
+
+        _app.Agent.ProtocolVersions[hostId] = 2;
+        Assert.Equal("agent_outdated", await (await c.PostJsonAsync($"/api/v1/hosts/{hostId}/vms", new { vm = new { name = "l3", location = @"D:\VMs" } })).CodeAsync());
+        // Without a location the old agent still creates VMs in the host default folders.
+        Assert.Equal(JobStatus.Succeeded, (await JobAsync(await c.PostJsonAsync($"/api/v1/hosts/{hostId}/vms", new { vm = new { name = "l4" } }))).Status);
+    }
+
     // ------------------------------------------------------------------ checkpoints
 
     [Fact]
@@ -429,6 +485,18 @@ public sealed class OperationsTests : IAsyncLifetime
             r.Headers["Cookie"] = cookies.GetCookieHeader(new Uri("https://localhost"));
         };
         await Assert.ThrowsAnyAsync<Exception>(() => wsClient.ConnectAsync(new Uri($"wss://localhost/api/v1/vms/{vms["desktop"]}/console/ws"), CancellationToken.None));
+    }
+
+    [Fact]
+    public void Console_socket_accepts_http2_extended_connect()
+    {
+        // Browsers open WebSockets over HTTP/2 with CONNECT (RFC 8441); a GET-only route made Edge/Chrome fail the handshake.
+        var sources = _app.Services.GetServices<Microsoft.AspNetCore.Routing.EndpointDataSource>();
+        var ep = sources.SelectMany(s => s.Endpoints).OfType<Microsoft.AspNetCore.Routing.RouteEndpoint>()
+            .Single(e => e.RoutePattern.RawText == "/api/v1/vms/{id:guid}/console/ws");
+        var methods = ep.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.HttpMethodMetadata>()!.HttpMethods;
+        Assert.Contains("GET", methods);
+        Assert.Contains("CONNECT", methods);
     }
 
     // ------------------------------------------------------------------ shell

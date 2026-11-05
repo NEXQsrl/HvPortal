@@ -32,6 +32,21 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
 
     public bool IsConnected(Guid hostId) => _connected.TryGetValue(hostId, out var c) && c;
 
+    /// <summary>Simulated agent protocol per host (default: current). Mirrors the gateway guard of AgentConnectionManager.</summary>
+    public ConcurrentDictionary<Guid, int> ProtocolVersions { get; } = new();
+
+    public int ProtocolVersionOf(Guid hostId) =>
+        !IsConnected(hostId) ? 0 : ProtocolVersions.TryGetValue(hostId, out var v) ? v : AgentProtocol.Version;
+
+    /// <summary>Folder tree returned by BrowseFolders (path -> sub-folder names); drives are the keys of length 3.</summary>
+    public Dictionary<string, string[]> Folders { get; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [@"C:\"] = ["Hyper-V"],
+        [@"D:\"] = ["Virtual Machines", "ISO"],
+        [@"D:\ISO"] = [],
+        [@"D:\Virtual Machines"] = [],
+    };
+
     public void Disconnect(Guid hostId, string reason) => _connected[hostId] = false;
 
     public Task<AgentCommandResult> SendAsync(Guid hostId, AgentCommand command, Action<AgentCommandProgress>? onProgress, TimeSpan timeout, CancellationToken ct)
@@ -39,6 +54,11 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
         if (!IsConnected(hostId))
         {
             throw new HostNotConnectedException(hostId);
+        }
+        // Same local guard as AgentConnectionManager: nothing is sent to an agent whose protocol is too old.
+        if (ProtocolVersionOf(hostId) < AgentProtocol.RequiredVersion(command))
+        {
+            return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Rejected, Message = "update the agent" });
         }
         Received.Enqueue(command);
         switch (command.Kind)
@@ -224,6 +244,23 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                     .Select(kv => new HostDiskInfo(@"D:\VHDs\" + kv.Value.Name + ".vhdx", kv.Key, kv.Value.Name, "SCSI 0:0", "VHDX", "Dynamic", 64L << 30, 10L << 30, null)).ToList());
             case HvOperation.ListIsos:
                 return Ok(new[] { new IsoFile(@"D:\ISO\win.iso", 5L << 30, DateTimeOffset.UtcNow) });
+            case HvOperation.BrowseFolders:
+                var b = HvOperations.FromElement<FolderBrowseRequest>(command.OperationArgs)!;
+                if (b.Path is null)
+                {
+                    return Ok(new FolderListing { Drives = Folders.Keys.Where(k => k.Length == 3).Select(k => new DriveEntry(k, null, 1L << 40, 1L << 39)).ToList() });
+                }
+                if (!Folders.TryGetValue(b.Path, out var subs))
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "Folder not found." };
+                }
+                return Ok(new FolderListing
+                {
+                    Path = b.Path,
+                    Folders = subs.Select(n => new FolderEntry(n, System.IO.Path.Combine(b.Path, n))).ToList(),
+                    Isos = b.IncludeIsos && b.Path.Equals(@"D:\ISO", StringComparison.OrdinalIgnoreCase) ? [new IsoFile(@"D:\ISO\win.iso", 5L << 30, DateTimeOffset.UtcNow)] : [],
+                    FreeBytes = 1L << 39,
+                });
             default:
                 return new HvOperationOutcome { Ok = false, Error = "Unsupported operation." };
         }

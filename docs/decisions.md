@@ -97,6 +97,25 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-016 Host folder browser and VM location (agent protocol 3)
+- The location and ISO pickers need to see the host's folders. `BrowseFolders` is a read-only operation executed
+  in-process by the agent (.NET file-system APIs, no PowerShell): only local fixed drives; hidden, system and
+  reparse-point entries (junctions, symbolic links, mount points) are skipped; the top-level system folders of a drive
+  (`HostPaths.BlockedRootFolders`: Windows, Users, Program Files, ProgramData, inetpub, PerfLogs, VBRCatalog, ovhupd,
+  Packages, ...) and every `$...` folder are neither listed nor accepted. Max 500 entries per folder.
+- Folders are listed to users with `vm.create` on the host; `.iso` files only to `hosts.manage`, because choosing an ISO
+  outside the library adds its folder to the host's ISO library (audited). Non-administrators still pick only ISOs
+  inside the library.
+- `NewVmRequest.Location`: validated by the gateway (syntax, blocked folders) and by the agent against the real file
+  system (fixed drive, no hidden/system/reparse ancestors). The script creates `<location>\<name>\Virtual Hard Disks`
+  and calls `New-VM -Path <location>` (Hyper-V adds `<name>\Virtual Machines`); it refuses a non-empty existing
+  `<location>\<name>` and removes only the empty folders and the fixed disk it created if `New-VM` fails.
+- Protocol 3: older agents would ignore `location` (creating the VM elsewhere) or fail to parse `BrowseFolders`.
+  `AgentProtocol.RequiredVersion(command)` is checked before sending; agents 0.3.1+ answer `Rejected` to unknown
+  commands so a future gateway cannot break their channel.
+- Portal groups stay logical (ADR-015). They are deliberately **not** created as native Hyper-V VM groups
+  (`New-VMGroup`), which are per host and carry no permissions; native groups will be shown separately (roadmap).
+
 ## ADR-015 Nested logical groups and access-change guard
 - Groups are folders: `LogicalGroup.ParentId`, max depth 16, sibling names unique, cycles refused. Role assignments
   on a group apply to its VMs and to every subgroup (`AccessEvaluator` adds the ancestor chain).

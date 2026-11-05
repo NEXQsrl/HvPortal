@@ -1,6 +1,6 @@
 # Browser console
 
-**Status (v0.3.0): basic console implemented.** It is a *Hyper-V console* (the hypervisor's view of the VM display),
+**Status (v0.3.1): basic console implemented** (v0.3.1 fixes the WebSocket handshake for browsers using HTTP/2: the endpoint accepts the extended CONNECT of RFC 8441, which carries no anti-forgery header and is protected by the Origin check and the one-time ticket). It is a *Hyper-V console* (the hypervisor's view of the VM display),
 not RDP into the guest: it works when the guest has no network and before the operating system starts (BIOS/UEFI,
 boot manager, OS installation, recovery).
 

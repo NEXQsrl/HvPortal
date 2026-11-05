@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { enGuide, itGuide } from './i18n-guide';
 import { enOps, itOps } from './i18n-ops';
 
 const enBase = {
@@ -362,7 +363,7 @@ const enBase = {
   'state.Unknown': 'Unknown',
 };
 
-const en = { ...enBase, ...enOps };
+const en = { ...enBase, ...enOps, ...enGuide };
 type Key = keyof typeof en;
 
 const itBase: Record<keyof typeof enBase, string> = {
@@ -726,7 +727,7 @@ const itBase: Record<keyof typeof enBase, string> = {
   'state.Unknown': 'Sconosciuto',
 };
 
-const it: Record<Key, string> = { ...itBase, ...itOps };
+const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide };
 
 export type Lang = 'it' | 'en';
 const dictionaries: Record<Lang, Record<Key, string>> = { en, it };

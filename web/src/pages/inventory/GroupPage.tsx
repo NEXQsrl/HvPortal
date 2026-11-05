@@ -1,14 +1,18 @@
-import { ChevronDown, FolderPlus, Layers, Plus } from 'lucide-react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ChevronDown, FolderPlus, Layers, Plus, Server } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ActionsButton, KebabMenu, rowLink, WithContextMenu } from '@/components/actions';
-import { Empty, GroupIcon, Loading, PageHeader, Section, StatCard, VmIcon } from '@/components/common';
+import { Empty, GroupIcon, Loading, Notice, PageHeader, Section, StatCard } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { useOps } from '@/components/ops/OperationsProvider';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { VmTable } from '@/components/vm/VmTable';
-import { useI18n } from '@/i18n';
+import { useI18n, type TKey } from '@/i18n';
+import { useSession } from '@/session';
+import { HostTable } from './HostListPage';
+import { VmListView } from './VmListPage';
 
 export function GroupPage() {
   const { id } = useParams();
@@ -84,53 +88,73 @@ export function GroupPage() {
   );
 }
 
+const VIEWS = ['hosts', 'groups', 'vms'] as const;
+type View = (typeof VIEWS)[number];
+
+/**
+ * Inventory: the single entry point for hosts, groups and VMs (vCenter-like). Views: hosts, groups (logical folders of
+ * the portal) and all VMs; from here hosts are added, groups created and VMs created.
+ */
 export function InventoryHome() {
   const { t } = useI18n();
+  const { can } = useSession();
   const inv = useInventory();
   const ops = useOps();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const view: View = (VIEWS as readonly string[]).includes(params.get('view') ?? '') ? (params.get('view') as View) : 'hosts';
   const roots = inv.childrenOf(null);
   const ungrouped = inv.vms.filter((v) => inv.groupsOfVm(v.id).length === 0);
+  const counts: Record<View, number> = { hosts: inv.hosts.length, groups: inv.groups.length, vms: inv.vms.length };
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <PageHeader icon={<Layers className="size-5" />} title={t('nav.inventory')} subtitle={`${inv.hosts.length} host · ${inv.vms.length} VM · ${inv.groups.length} ${t('tree.groups').toLowerCase()}`}
+    <Tabs value={view} onValueChange={(v) => setParams({ view: v }, { replace: true })} className="flex h-full min-h-0 flex-col gap-0">
+      <PageHeader icon={<Layers className="size-5" />} title={t('nav.inventory')}
+        subtitle={`${inv.hosts.filter((h) => h.connected).length}/${inv.hosts.length} host ${t('dash.connected')} · ${inv.vms.length} VM · ${inv.groups.length} ${t('tree.groups').toLowerCase()}`}
         actions={<>
+          {can('hosts.manage') && <Button size="sm" variant="outline" onClick={() => ops.openAddHost()}><Server />{t('host.add')}</Button>}
           {inv.canManageGroups && <Button size="sm" variant="outline" onClick={() => ops.openNewGroup(null)}><FolderPlus />{t('group.new')}</Button>}
           {inv.hosts.some((h) => h.canCreateVm) && <Button size="sm" onClick={() => ops.openCreateVm()}><Plus />{t('wiz.title')}</Button>}
-        </>} />
-      <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
-        <Section title={t('tree.groups')}>
-          {roots.length === 0 ? <Empty>{t('tree.empty')}</Empty> : (
-            <Table>
-              <TableBody>
-                {roots.map((g) => (
-                  <WithContextMenu key={g.id} items={ops.groupActions(g)} label={g.name}>
-                    <TableRow {...rowLink(() => navigate(`/groups/${g.id}`))}>
-                      <TableCell><div className="flex items-center gap-2"><GroupIcon /><span className="font-medium">{g.name}</span></div></TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{g.description}</TableCell>
-                      <TableCell className="text-right text-xs text-muted-foreground tabular">{inv.childrenOf(g.id).length} · {g.vmIds.length} VM</TableCell>
-                    </TableRow>
-                  </WithContextMenu>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </Section>
-        {ungrouped.length > 0 && (
-          <Section title={t('tree.ungrouped')}>
-            <Table>
-              <TableBody>
-                {ungrouped.slice(0, 50).map((v) => (
-                  <TableRow key={v.id} {...rowLink(() => navigate(`/vms/${v.id}`))}>
-                    <TableCell><div className="flex items-center gap-2"><VmIcon state={v.powerState} critical={v.isCritical} /><span>{v.name}</span></div></TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{v.hostName}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Section>
+        </>}>
+        <TabsList variant="line" className="-mb-px h-9 w-full justify-start overflow-x-auto rounded-none bg-transparent p-0">
+          {VIEWS.map((v) => (
+            <TabsTrigger key={v} value={v} className="flex-none gap-1.5 px-3">
+              {t(('inv.view.' + v) as TKey)}<span className="rounded bg-muted px-1 text-[10px] text-muted-foreground tabular">{counts[v]}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </PageHeader>
+      <TabsContent value="hosts" className="min-h-0">{view === 'hosts' && <HostTable />}</TabsContent>
+      <TabsContent value="vms" className="min-h-0">{view === 'vms' && <VmListView />}</TabsContent>
+      <TabsContent value="groups" className="min-h-0 overflow-auto">
+        {view === 'groups' && (
+          <div className="space-y-3 p-4">
+            <Notice kind="info">{t('group.logicalNote')}</Notice>
+            <Section title={t('tree.groups')}>
+              {roots.length === 0 ? <Empty>{t('tree.empty')}</Empty> : (
+                <Table>
+                  <TableBody>
+                    {roots.map((g) => (
+                      <WithContextMenu key={g.id} items={ops.groupActions(g)} label={g.name}>
+                        <TableRow {...rowLink(() => navigate(`/groups/${g.id}`))}>
+                          <TableCell><div className="flex items-center gap-2"><GroupIcon /><span className="font-medium">{g.name}</span></div></TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{g.description}</TableCell>
+                          <TableCell className="text-right text-xs text-muted-foreground tabular">{inv.childrenOf(g.id).length} · {g.vmIds.length} VM</TableCell>
+                          <TableCell className="w-10 text-right"><KebabMenu items={ops.groupActions(g)} label={t('menu.more')} /></TableCell>
+                        </TableRow>
+                      </WithContextMenu>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </Section>
+            {ungrouped.length > 0 && (
+              <Section title={`${t('tree.ungrouped')} (${ungrouped.length})`}>
+                <VmTable vms={ungrouped} className="max-h-[50vh]" />
+              </Section>
+            )}
+          </div>
         )}
-      </div>
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }

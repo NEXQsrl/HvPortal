@@ -241,6 +241,18 @@ public sealed class GatewayChannelService : BackgroundService
         }
     }
 
+    internal static AgentCommand? TryReadCommand(AgentEnvelope env)
+    {
+        try
+        {
+            return env.Read<AgentCommand>();
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
     private async Task HandleAsync(AgentEnvelope env, ChannelSender sender, CancellationToken ct)
     {
         switch (env.Type)
@@ -249,7 +261,22 @@ public sealed class GatewayChannelService : BackgroundService
                 await sender.SendAsync(new AgentEnvelope(AgentMessageType.Pong, env.CorrelationId, null), ct);
                 break;
 
-            case AgentMessageType.Command when env.Read<AgentCommand>() is { } cmd:
+            case AgentMessageType.Command:
+                if (TryReadCommand(env) is not { } cmd)
+                {
+                    // A command this agent cannot parse (e.g. an operation added in a newer protocol): refuse it, keep the channel.
+                    _logger.LogWarning("Rejecting a command this agent version cannot read");
+                    if (Guid.TryParse(env.CorrelationId, out var unknownId))
+                    {
+                        await sender.SendAsync(AgentEnvelope.Create(AgentMessageType.CommandResult, env.CorrelationId, new AgentCommandResult
+                        {
+                            CommandId = unknownId,
+                            Status = AgentCommandStatus.Rejected,
+                            Message = $"Command not supported by agent protocol {AgentProtocol.Version}. Update the agent.",
+                        }), ct);
+                    }
+                    break;
+                }
                 _ = Task.Run(async () =>
                 {
                     var progress = new Progress<AgentCommandProgress>(p =>

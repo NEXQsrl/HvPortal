@@ -5,6 +5,7 @@ import { get, put } from '@/api/client';
 import type { HostDiskRow, IsosResponse, SwitchInfo } from '@/api/ops-types';
 import type { Host, InventoryEvent } from '@/api/types';
 import { ActionsButton } from '@/components/actions';
+import { AgentUpdateNotice } from '@/components/AgentUpdateNotice';
 import { ErrorAlert, HostIcon, KeyValue, Loading, Meter, Notice, PageHeader, Section, StatCard, StatusBadge } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { useOps } from '@/components/ops/OperationsProvider';
@@ -55,6 +56,7 @@ export function HostPage() {
           {TABS.map((x) => <TabsTrigger key={x} value={x} className="flex-none px-3">{t(('host.tab.' + x) as TKey)}{x === 'vms' && <span className="ml-1 text-xs text-muted-foreground">{vms.length}</span>}</TabsTrigger>)}
         </TabsList>
       </PageHeader>
+      <AgentUpdateNotice host={h} className="mx-4 mt-3" />
       {(h.stale && h.status === 'Active') || (h.access && h.access !== 'Ok') || h.partial ? (
         <div className="space-y-2 px-4 pt-3">
           {h.stale && h.status === 'Active' && <Notice kind="warn">{t('stale.banner')}</Notice>}

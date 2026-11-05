@@ -28,3 +28,20 @@ export const VM_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._()-]{0,99}$/u;
 export const GROUP_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._()-]{0,63}$/u;
 export const CHECKPOINT_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._():-]{0,99}$/u;
 export const LIBRARY_PATH = /^[A-Za-z]:\\(?:[^\x00-\x1f"*?<>|:\\/]+\\?)*$/;
+
+/** major.minor.patch of "0.3.0", "0.3.0.0" or "0.3.0+abc"; null when unknown. */
+export function semver(v: string | null | undefined): [number, number, number] | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v ?? '');
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+export const compareVersions = (a: [number, number, number], b: [number, number, number]) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+export const shortVersion = (v: string | null | undefined) => semver(v)?.join('.') ?? v ?? '—';
+
+/** True when the agent is known to be older than the gateway (both are released together). */
+export function isAgentOlder(agentVersion: string | null | undefined, gatewayVersion: string | null | undefined): boolean {
+  const a = semver(agentVersion);
+  const g = semver(gatewayVersion);
+  return !!a && !!g && compareVersions(a, g) < 0;
+}

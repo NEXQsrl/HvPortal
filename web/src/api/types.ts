@@ -93,6 +93,8 @@ export interface Host {
   capabilities: Capability[];
   canCreateVm: boolean;
   isoLibrary: string[];
+  /** Agent 0.3.1+: folder browser for the VM location and ISO files. */
+  canBrowseFolders?: boolean;
 }
 
 export interface InventoryEvent { id: number; hostId: string; vmId: string | null; kind: string; details: string | null; at: string }

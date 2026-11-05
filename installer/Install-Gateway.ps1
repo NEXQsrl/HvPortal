@@ -37,11 +37,15 @@ if ($DataPath -match '^\\\\') { throw 'The data directory must be on local stora
 $upgrade = [bool](Get-Service $service -ErrorAction SilentlyContinue)
 if ($upgrade) {
     Stop-Service $service -Force
-    $db = Join-Path $DataPath 'db\hvportal.db'
-    if (Test-Path $db) {
-        $copy = Join-Path $DataPath "db\hvportal.db.pre-upgrade-$(Get-Date -Format yyyyMMddHHmmss)"
-        Copy-Item $db $copy
-        Write-Host "Database copied to $copy before upgrade."
+    # Consistent copy of the SQLite database (main file + WAL + shared memory) while the service is stopped.
+    $dbDir = Join-Path $DataPath 'db'
+    if (Test-Path (Join-Path $dbDir 'hvportal.db')) {
+        $copy = Join-Path $dbDir "pre-upgrade-$(Get-Date -Format yyyyMMddHHmmss)"
+        New-Item -ItemType Directory -Force -Path $copy | Out-Null
+        foreach ($f in 'hvportal.db', 'hvportal.db-wal', 'hvportal.db-shm') {
+            if (Test-Path (Join-Path $dbDir $f)) { Copy-Item (Join-Path $dbDir $f) $copy }
+        }
+        Write-Host "Database copied to $copy before upgrade (rollback: restore these files with the previous version)."
     }
 }
 

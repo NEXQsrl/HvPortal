@@ -56,8 +56,9 @@ message, 501 `agent_outdated`). Changes are jobs (202 + `jobId`), re-authorized 
 | POST `/vms/{id}/checkpoints/{cid}/apply` `{confirmName}` | apply (job) | `vm.checkpoint.apply`; VM Off/Saved; typed VM name |
 | POST `/vms/{id}/checkpoints/{cid}/delete` `{includeChildren}` | delete/merge (job) | `vm.checkpoint.apply` |
 | GET `/hosts/{id}/defaults` | wizard data: host capacity, default paths, switches, ISO library, existing names | `vm.create` on host |
-| POST `/hosts/{id}/vms` `{vm, groupId?}` | create VM (job `vm.create/New`, serialized per host) | `vm.create` on host; group placement needs `groups.manage` (+ access-change rule) |
+| POST `/hosts/{id}/vms` `{vm, groupId?}` | create VM (job `vm.create/New`, serialized per host); optional `vm.location` (local folder; `invalid_location`, `location_not_allowed`, 501 `agent_outdated` before agent 0.3.1) | `vm.create` on host; group placement needs `groups.manage` (+ access-change rule) |
 | GET `/hosts/{id}/switches` · `/hosts/{id}/disks` | virtual switches · VM virtual disks (live) | host visibility; VM names/disks filtered to readable VMs |
+| GET `/hosts/{id}/folders?path=&isos=` | folder browser (agent 0.3.1+): drives when `path` is empty, else sub-folders (system/hidden/linked excluded) and, with `isos=true`, `.iso` files; 501 `agent_outdated` on older agents | folders: `vm.create` on host or `hosts.manage` · ISO files: `hosts.manage` |
 | GET `/hosts/{id}/isos` · PUT `/hosts/{id}/iso-library` `{paths}` | ISO files · library folders (local absolute paths, max 16, no UNC/`..`) | read: host read / `vm.create` / `vm.config.storage` on a VM of the host · write: `hosts.manage` |
 | POST `/vms/{id}/console/tickets` | one-time console ticket (30 s) | `vm.console` |
 | GET `/vms/{id}/console/ws` (WebSocket) | console stream; first message `{"t":"auth","ticket":…}` | session cookie + same Origin + valid ticket ([console.md](console.md)) |

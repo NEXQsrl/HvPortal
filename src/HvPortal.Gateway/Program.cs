@@ -204,11 +204,12 @@ namespace HvPortal.Gateway
                 },
             });
             app.UseRouting();
+            // Before the cross-site checks, which need to recognize WebSocket handshakes (HTTP/1.1 GET and HTTP/2 CONNECT).
+            app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
             app.UseRateLimiter();
             app.UseAuthentication();
             app.UseCrossSiteProtection(devOrigins);
             app.UseAuthorization();
-            app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
 
             AuthEndpoints.Map(app);
             MfaEndpoints.Map(app);
@@ -227,7 +228,8 @@ namespace HvPortal.Gateway
                 var admin = await access.HasAsync(http.User.UserId(), Permissions.SettingsManage, ResourceRef.Global, http.RequestAborted);
                 return Results.Ok(new
                 {
-                    version = typeof(GatewayHost).Assembly.GetName().Version?.ToString(),
+                    version = ProductInfo.Version,
+                    runningAsService = ProductInfo.RunningAsService,
                     milestone = "M1+",
                     database = "SQLite",
                     connectedAgents = agents.ConnectedHosts.Count,

@@ -32,7 +32,7 @@ public static class AuthEndpoints
             setupRequired = !await db.Users.AnyAsync(http.RequestAborted),
             authenticated = http.User.Identity?.IsAuthenticated == true,
             providers = new[] { "local" },
-            version = typeof(AuthEndpoints).Assembly.GetName().Version?.ToString(),
+            version = ProductInfo.Version,
         })).AllowAnonymous();
 
         g.MapGet("/auth/csrf", (IAntiforgery af, HttpContext http) =>

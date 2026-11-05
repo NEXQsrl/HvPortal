@@ -46,6 +46,14 @@ In breve, sull'host Hyper-V, in PowerShell come amministratore:
   4. cd C:\HvPortal\agent-package\installer
      `$env:HVP_ENROLLMENT_TOKEN = '<token monouso dal portale, valido 15 minuti>'
      .\Install-Agent.ps1 -Source ..\agent -Gateway https://<gateway>:<porta> -CaSha256 <impronta CA>
+
+Aggiornamento di un agente già installato (nel portale: Guida > Aggiornare i servizi Windows):
+  1. Verifica ed estrai in una nuova cartella:  Expand-Archive .\HvPortal.Agent-win-x64.zip C:\HvPortal\agent-package-$version -Force
+  2. cd C:\HvPortal\agent-package-$version\installer
+     .\Install-Agent.ps1 -Source ..\agent
+     (senza token: l'identità dell'agente viene mantenuta; se il servizio non parte viene ripristinata la versione precedente)
+
+Disinstallazione:  .\Uninstall-HvPortal.ps1 -Component Agent   (poi rimuovi l'host nel portale)
 "@
     $readmeEn = @"
 HvPortal Agent $version
@@ -59,6 +67,14 @@ Summary, on the Hyper-V host, in an elevated PowerShell:
   4. cd C:\HvPortal\agent-package\installer
      `$env:HVP_ENROLLMENT_TOKEN = '<one-time token from the portal, valid 15 minutes>'
      .\Install-Agent.ps1 -Source ..\agent -Gateway https://<gateway>:<port> -CaSha256 <CA fingerprint>
+
+Updating an installed agent (in the portal: Guide > Update the Windows services):
+  1. Verify and extract into a new folder:  Expand-Archive .\HvPortal.Agent-win-x64.zip C:\HvPortal\agent-package-$version -Force
+  2. cd C:\HvPortal\agent-package-$version\installer
+     .\Install-Agent.ps1 -Source ..\agent
+     (no token: the agent identity is kept; if the service does not start, the previous version is restored)
+
+Uninstall:  .\Uninstall-HvPortal.ps1 -Component Agent   (then remove the host in the portal)
 "@
     Set-Content -Path "$staging\LEGGIMI.txt" -Value $readmeIt -Encoding utf8
     Set-Content -Path "$staging\README.txt" -Value $readmeEn -Encoding utf8

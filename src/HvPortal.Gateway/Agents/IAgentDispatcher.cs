@@ -7,6 +7,9 @@ public interface IAgentDispatcher
 {
     bool IsConnected(Guid hostId);
 
+    /// <summary>Protocol announced by the connected agent (AgentHello), 0 when not connected.</summary>
+    int ProtocolVersionOf(Guid hostId);
+
     /// <exception cref="HostNotConnectedException">Nothing was sent: safe to retry.</exception>
     /// <exception cref="AgentChannelLostException">The command was sent but the channel dropped: outcome unknown.</exception>
     /// <exception cref="TimeoutException">The command was sent but no result arrived in time: outcome unknown.</exception>

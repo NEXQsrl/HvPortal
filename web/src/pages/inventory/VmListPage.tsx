@@ -1,31 +1,25 @@
-import { Monitor, Plus, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { ErrorAlert, Loading, PageHeader } from '@/components/common';
+import { ErrorAlert, Loading } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
-import { useOps } from '@/components/ops/OperationsProvider';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { VmTable } from '@/components/vm/VmTable';
 import { useI18n, type TKey } from '@/i18n';
 
-export function VmListPage() {
+/** All VMs with filters (Inventory > All VMs). */
+export function VmListView() {
   const { t } = useI18n();
   const inv = useInventory();
-  const ops = useOps();
   const [search, setSearch] = useState('');
   const [state, setState] = useState('');
   const [host, setHost] = useState('');
   const rows = useMemo(() => inv.vms.filter((v) =>
     (!search || [v.name, v.hostName ?? '', v.description ?? '', v.guestOperatingSystem ?? ''].some((s) => s.toLowerCase().includes(search.toLowerCase())))
     && (!state || v.powerState === state) && (!host || v.hostId === host)), [inv.vms, search, state, host]);
-  const canCreate = inv.hosts.some((h) => h.canCreateVm);
 
   return (
-    <div className="flex h-full flex-col">
-      <PageHeader icon={<Monitor className="size-5" />} title={t('nav.vms')}
-        subtitle={`${inv.vms.filter((v) => v.powerState === 'Running').length} ${t('dash.running')} · ${inv.vms.length} VM`}
-        actions={canCreate && <Button size="sm" onClick={() => ops.openCreateVm()}><Plus />{t('wiz.title')}</Button>} />
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b bg-panel px-4 py-2">
         <div className="relative w-full max-w-xs">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />

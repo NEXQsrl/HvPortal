@@ -85,7 +85,10 @@ public static class HttpSecurity
                         return;
                     }
                 }
-                if (path.StartsWithSegments("/api") && !(HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method) || HttpMethods.IsOptions(ctx.Request.Method)))
+                // WebSocket handshakes (GET, or CONNECT over HTTP/2) cannot carry the anti-forgery header: they are protected by the
+                // mandatory Origin check above and by one-time tickets sent inside the socket.
+                if (path.StartsWithSegments("/api") && !ctx.WebSockets.IsWebSocketRequest
+                    && !(HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method) || HttpMethods.IsOptions(ctx.Request.Method)))
                 {
                     var af = ctx.RequestServices.GetRequiredService<IAntiforgery>();
                     try

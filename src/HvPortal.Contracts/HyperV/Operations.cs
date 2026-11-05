@@ -19,6 +19,8 @@ public enum HvOperation
     RemoveCheckpoint,
     ListSwitches,
     ListHostDisks,
+    /// <summary>Protocol 3. Read-only listing of local fixed drives / sub-folders (and .iso files) for the location and ISO pickers.</summary>
+    BrowseFolders,
 }
 
 public static class HvOperations
@@ -95,10 +97,34 @@ public sealed record NewVmRequest
     public string? AutomaticStartAction { get; init; }
     public bool StartAfterCreate { get; init; }
     public string? Notes { get; init; }
+    /// <summary>
+    /// Protocol 3. Local folder that will contain the VM (configuration and new disk go to &lt;Location&gt;\&lt;name&gt;\).
+    /// Null = host defaults (Get-VMHost VirtualMachinePath / VirtualHardDiskPath). System folders are refused (see HostPaths).
+    /// </summary>
+    public string? Location { get; init; }
     public IReadOnlyList<string> IsoRoots { get; init; } = [];
 }
 
 public sealed record IsoListRequest(IReadOnlyList<string> Roots);
+
+/// <summary>Path null = list the local fixed drives.</summary>
+public sealed record FolderBrowseRequest(string? Path, bool IncludeIsos);
+
+public sealed record DriveEntry(string Path, string? Label, long TotalBytes, long FreeBytes);
+
+public sealed record FolderEntry(string Name, string Path);
+
+public sealed record FolderListing
+{
+    public string? Path { get; init; }
+    public string? Parent { get; init; }
+    public IReadOnlyList<DriveEntry> Drives { get; init; } = [];
+    public IReadOnlyList<FolderEntry> Folders { get; init; } = [];
+    public IReadOnlyList<IsoFile> Isos { get; init; } = [];
+    /// <summary>Free space of the drive containing Path.</summary>
+    public long? FreeBytes { get; init; }
+    public bool Truncated { get; init; }
+}
 
 public sealed record CheckpointRequest(Guid VmId, string? Name, string? CheckpointId, bool IncludeChildren);
 

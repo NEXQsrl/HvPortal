@@ -218,6 +218,80 @@ public class OperationRunnerValidationTests
     }
 }
 
+public class HostFolderTests
+{
+    [Theory]
+    [InlineData(@"D:\VMs", null)]
+    [InlineData(@"D:\", null)]
+    [InlineData(@"E:\Hyper-V\Prod", null)]
+    [InlineData(@"C:\Windows", "location_not_allowed")]
+    [InlineData(@"c:\windows\temp", "location_not_allowed")]
+    [InlineData(@"C:\Users\admin\VMs", "location_not_allowed")]
+    [InlineData(@"D:\VBRCatalog", "location_not_allowed")]
+    [InlineData(@"D:\ovhupd\x", "location_not_allowed")]
+    [InlineData(@"D:\Packages", "location_not_allowed")]
+    [InlineData(@"D:\PerfLogs", "location_not_allowed")]
+    [InlineData(@"D:\inetpub\wwwroot", "location_not_allowed")]
+    [InlineData(@"D:\$Recycle.Bin", "location_not_allowed")]
+    [InlineData(@"\\nas\share", "invalid_location")]
+    [InlineData(@"D:\a\..\Windows", "invalid_location")]
+    [InlineData(@"D:\VMs\.", "invalid_location")]
+    [InlineData(@"D:\VMs:stream", "invalid_location")]
+    [InlineData(@"\\?\D:\VMs", "invalid_location")]
+    [InlineData(@"D:VMs", "invalid_location")]
+    public void Location_rules(string path, string? expected) => Assert.Equal(expected, HostPaths.ValidateLocation(path));
+
+    [Fact]
+    public void Drives_are_local_fixed_and_system_folders_are_hidden()
+    {
+        var drives = HostFolderBrowser.FixedDrives();
+        var system = Path.GetPathRoot(Environment.SystemDirectory)!;
+        Assert.Contains(drives, d => d.Path.Equals(system, StringComparison.OrdinalIgnoreCase));
+        var root = HostFolderBrowser.Browse(new FolderBrowseRequest(system, false));
+        Assert.Null(root.Parent);
+        Assert.DoesNotContain(root.Folders, f => HostPaths.IsBlockedRootFolder(f.Name));
+        Assert.DoesNotContain(root.Folders, f => f.Name.Equals("Windows", StringComparison.OrdinalIgnoreCase) || f.Name.StartsWith('$'));
+        Assert.Throws<HostPathException>(() => HostFolderBrowser.Browse(new FolderBrowseRequest(Environment.SystemDirectory, false)));
+        Assert.Throws<HostPathException>(() => HostFolderBrowser.CheckFolder(system + "hvp-missing-" + Guid.NewGuid().ToString("N"), mustExist: true));
+        // VM location: a missing tail is acceptable (created by the script), a blocked one is not.
+        var missing = system + "hvp-missing-" + Guid.NewGuid().ToString("N") + @"\VMs";
+        Assert.Equal(missing, HostFolderBrowser.CheckFolder(missing, mustExist: false));
+        Assert.Throws<HostPathException>(() => HostFolderBrowser.CheckFolder(system + @"Program Files\x", mustExist: false));
+    }
+
+    [Fact]
+    public void Runner_rejects_blocked_locations_and_browse_paths()
+    {
+        Assert.Equal("location_not_allowed", PowerShellOperationRunner.Validate(HvOperation.NewVm,
+            HvOperations.ToElement(new NewVmRequest { Name = "vm1", Location = @"C:\Windows\Temp" })));
+        Assert.Equal("invalid_path", PowerShellOperationRunner.Validate(HvOperation.BrowseFolders,
+            HvOperations.ToElement(new FolderBrowseRequest(@"\\server\c$", false))));
+        Assert.Null(PowerShellOperationRunner.Validate(HvOperation.BrowseFolders, HvOperations.ToElement(new FolderBrowseRequest(null, false))));
+    }
+
+    [Fact]
+    public void Protocol_3_is_required_for_browsing_and_vm_location()
+    {
+        AgentCommand Op(HvOperation op, object args) => new()
+        {
+            CommandId = Guid.NewGuid(), Kind = AgentCommandKind.HyperVOperation, Operation = op, OperationArgs = HvOperations.ToElement(args),
+        };
+        Assert.Equal(3, AgentProtocol.RequiredVersion(Op(HvOperation.BrowseFolders, new FolderBrowseRequest(null, false))));
+        Assert.Equal(3, AgentProtocol.RequiredVersion(Op(HvOperation.NewVm, new NewVmRequest { Name = "a", Location = @"D:\VMs" })));
+        Assert.Equal(2, AgentProtocol.RequiredVersion(Op(HvOperation.NewVm, new NewVmRequest { Name = "a" })));
+        Assert.Equal(1, AgentProtocol.RequiredVersion(new AgentCommand { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.CollectInventory }));
+    }
+
+    [Fact]
+    public void Unknown_command_values_do_not_break_the_channel()
+    {
+        var json = "{\"type\":\"Command\",\"correlationId\":\"" + Guid.NewGuid() + "\",\"payload\":{\"commandId\":\"" + Guid.NewGuid()
+            + "\",\"kind\":\"HyperVOperation\",\"operation\":\"SomeFutureOperation\"}}";
+        var env = System.Text.Json.JsonSerializer.Deserialize<AgentEnvelope>(json, AgentProtocol.Json)!;
+        Assert.Null(HvPortal.Agent.Channel.GatewayChannelService.TryReadCommand(env));
+    }
+}
+
 public class GatewayTrustTests
 {
     private static X509Certificate2 Ca(string name, out ECDsa key)

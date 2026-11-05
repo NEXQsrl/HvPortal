@@ -3,11 +3,11 @@
 Browser-based management for Microsoft Hyper-V hosts — standalone or (later) clustered, in a domain or in a
 workgroup — with local accounts, MFA, fine-grained RBAC, persistent jobs and a tamper-evident audit log.
 
-> **Status: v0.3.0 (pre-release, private).** Not published; do not distribute.
+> **Status: v0.3.1 (pre-release, private).** Not published; do not distribute.
 > "Hyper-V", "Windows Server" and "Microsoft Entra" are trademarks of Microsoft. HvPortal is an independent
 > project and is not affiliated with or endorsed by Microsoft. The product name is provisional.
 
-## What works today (v0.3.0)
+## What works today (v0.3.1)
 
 | Area | State |
 |---|---|
@@ -24,7 +24,8 @@ workgroup — with local accounts, MFA, fine-grained RBAC, persistent jobs and a
 | Audit log with HMAC hash chain, export, verification | ✅ tested |
 | VM configuration (CPU, memory, Secure Boot, DVD/ISO library, vNIC switch/VLAN, new/expanded disks), VM creation wizard, checkpoints — typed jobs via the Hyper-V PowerShell module | ✅ code + tests; real-host validation pending |
 | Browser console (hypervisor screen + keyboard/mouse, works before boot; not RDP) | ✅ code + tests; real-host validation pending |
-| VM groups as nested folders with RBAC inheritance and anti-escalation; inventory tree with drag and drop | ✅ tested |
+| VM groups as nested folders with RBAC inheritance and anti-escalation (portal groups, not Hyper-V `VMGroup`); single inventory tree (Hosts / Groups / All VMs) with drag and drop | ✅ tested |
+| Host folder browser for VM location and ISO files (system folders hidden and refused) — agent 0.3.1 | ✅ code + tests; real-host validation pending |
 | Web UI (React/TypeScript, shadcn/ui): vCenter-like navigator, object tabs, recent tasks, command palette, IT/EN, light/dark, responsive, live updates | ✅ tested with Edge |
 | SQLite | ✅ — PostgreSQL / SQL Server: Milestone 2 |
 | Entra ID, PostgreSQL/SQL Server, switch management, templates, clusters/migration, backup, Replica, S2D | ⏳ see [roadmap](docs/roadmap.md) |

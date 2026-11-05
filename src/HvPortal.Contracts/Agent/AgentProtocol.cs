@@ -10,8 +10,33 @@ namespace HvPortal.Contracts.Agent;
 /// </summary>
 public static class AgentProtocol
 {
-    /// <summary>2 = v0.3: HyperVOperation, ConsoleFrame and ConsoleInput commands.</summary>
-    public const int Version = 2;
+    /// <summary>
+    /// 2 = v0.3: HyperVOperation, ConsoleFrame and ConsoleInput commands.
+    /// 3 = v0.3.1: BrowseFolders operation, NewVm.Location; unreadable commands are answered with Rejected.
+    /// </summary>
+    public const int Version = 3;
+
+    /// <summary>
+    /// Lowest agent protocol able to execute the command as intended. The gateway never sends a command to an older
+    /// agent: older agents either cannot parse it or would silently ignore new fields (e.g. create the VM elsewhere).
+    /// </summary>
+    public static int RequiredVersion(AgentCommand command)
+    {
+        if (command.Kind is not (AgentCommandKind.HyperVOperation or AgentCommandKind.ConsoleFrame or AgentCommandKind.ConsoleInput))
+        {
+            return 1;
+        }
+        if (command.Operation is HvOperation.BrowseFolders)
+        {
+            return 3;
+        }
+        if (command.Operation is HvOperation.NewVm && command.OperationArgs is { ValueKind: JsonValueKind.Object } args
+            && args.TryGetProperty("location", out var loc) && loc.ValueKind == JsonValueKind.String)
+        {
+            return 3;
+        }
+        return 2;
+    }
     /// <summary>Large enough for an uncompressible 1920x1200 console frame (RGB565, base64 in JSON).</summary>
     public const int MaxMessageBytes = 8 * 1024 * 1024;
     public const string ChannelPath = "/agent/v1/channel";

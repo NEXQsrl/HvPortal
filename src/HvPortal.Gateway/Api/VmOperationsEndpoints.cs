@@ -41,6 +41,7 @@ public static class VmOperationsEndpoints
         hosts.MapGet("/{id:guid}/switches", SwitchesAsync);
         hosts.MapGet("/{id:guid}/disks", DisksAsync);
         hosts.MapGet("/{id:guid}/isos", IsosAsync);
+        hosts.MapGet("/{id:guid}/folders", FoldersAsync);
         hosts.MapPut("/{id:guid}/iso-library", SetIsoLibraryAsync);
         hosts.MapPost("/{id:guid}/vms", CreateVmAsync);
     }
@@ -487,6 +488,44 @@ public static class VmOperationsEndpoints
         return error ?? Results.Ok(new { roots, files });
     }
 
+    /// <summary>
+    /// Folder browser (agent 0.3.1+): local fixed drives and their sub-folders, system/hidden folders excluded by the agent.
+    /// Folders only for the VM location (vm.create on the host); .iso files only for administrators (hosts.manage), who can
+    /// add the folder to the host's ISO library. Read-only: nothing is created on the host.
+    /// </summary>
+    private static async Task<IResult> FoldersAsync(Guid id, string? path, bool? isos, HttpContext http, PortalDbContext db, AccessEvaluator access,
+        IAgentDispatcher agents)
+    {
+        if (await HostAsync(id, http, db) is null)
+        {
+            return ApiSupport.NotFound();
+        }
+        var uid = http.User.UserId();
+        var includeIsos = isos == true;
+        var admin = await access.HasAsync(uid, Permissions.HostsManage, ResourceRef.Global, http.RequestAborted);
+        if (includeIsos ? !admin : !admin && !await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted))
+        {
+            if (!await access.HasAsync(uid, Permissions.InventoryRead, ResourceRef.Host(id), http.RequestAborted))
+            {
+                return ApiSupport.NotFound();
+            }
+            await http.WriteAuditAsync("hosts.folders.browse", AuditOutcome.Denied, "host", id.ToString("D"), new { includeIsos });
+            return ApiSupport.Forbidden("forbidden", $"Missing permission '{(includeIsos ? Permissions.HostsManage : Permissions.VmCreate)}' on host.");
+        }
+        var target = string.IsNullOrWhiteSpace(path) ? null : HostPaths.Normalize(path);
+        var request = new FolderBrowseRequest(target, includeIsos);
+        if (OperationValidation.Validate(request) is { } invalid)
+        {
+            return ApiSupport.BadRequest(invalid, @"Local folder such as D:\VMs (no UNC paths, no '..').");
+        }
+        if (target is not null && HostPaths.IsBlocked(target))
+        {
+            return ApiSupport.BadRequest("location_not_allowed", "System folders cannot be browsed.");
+        }
+        var (result, error) = await QueryAsync(agents, id, HvOperation.BrowseFolders, request, null, http.RequestAborted, timeoutSeconds: 30);
+        return error ?? Results.Ok(result);
+    }
+
     private static async Task<IResult> SetIsoLibraryAsync(Guid id, IsoLibraryRequest req, HttpContext http, PortalDbContext db)
     {
         if (await http.GuardAsync(Permissions.HostsManage, ResourceRef.Global, "hosts.iso_library.update") is { } denied)
@@ -529,7 +568,12 @@ public static class VmOperationsEndpoints
             return ApiSupport.BadRequest("invalid_request");
         }
         var roots = OperationPolicy.IsoRoots(host);
-        var spec = req.Vm with { Name = req.Vm.Name?.Trim() ?? "", IsoRoots = roots };
+        var spec = req.Vm with
+        {
+            Name = req.Vm.Name?.Trim() ?? "",
+            IsoRoots = roots,
+            Location = string.IsNullOrWhiteSpace(req.Vm.Location) ? null : HostPaths.Normalize(req.Vm.Location),
+        };
         if (OperationValidation.Validate(spec) is { } invalid)
         {
             return ApiSupport.BadRequest(invalid);
@@ -541,6 +585,11 @@ public static class VmOperationsEndpoints
         if (spec.SwitchName is { Length: > 0 } sw && !SwitchNames(host).Contains(sw, StringComparer.Ordinal))
         {
             return ApiSupport.BadRequest("unknown_switch");
+        }
+        if (spec.Location is not null && agents.IsConnected(id) && agents.ProtocolVersionOf(id) < 3)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated",
+                "Choosing the VM location needs agent 0.3.1 or later on this host. Update the agent or use the host default location.");
         }
         if (await db.VirtualMachines.AnyAsync(v => v.HostId == id && !v.IsMissing && v.Name == spec.Name, http.RequestAborted))
         {
@@ -569,7 +618,7 @@ public static class VmOperationsEndpoints
         var summary = new
         {
             spec.Name, spec.Generation, spec.ProcessorCount, spec.MemoryStartupMb, spec.DynamicMemory, spec.DiskSizeGb, spec.DiskFixed,
-            spec.SwitchName, spec.IsoPath, spec.SecureBootTemplate, spec.EnableTpm, spec.StartAfterCreate, req.GroupId,
+            spec.SwitchName, spec.IsoPath, spec.SecureBootTemplate, spec.EnableTpm, spec.StartAfterCreate, spec.Location, req.GroupId,
         };
         return await QueueAsync(http, jobs, new JobService.OperationJobSpec(JobService.CreateJobType, "New", ScopeType.Host, id, spec.Name, id,
             Permissions.VmCreate, new JobService.OperationParameters(HvOperations.ToElement(spec), req.GroupId, extra), timeout,
