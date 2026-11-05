@@ -37,6 +37,17 @@ attestations that some engines import untagged ("No such image: hvportal-gateway
 2. Listed as `<none>:<none>`? Open it and add the tag `hvportal-gateway:0.3.4` (or re-import the archive built as above).
 3. From the Docker host shell: `docker load -i hvportal-gateway-0.3.4.tar` must print `Loaded image: hvportal-gateway:0.3.4`.
 
+## 1b. Or let Docker build it (no image to import)
+
+- **Portainer > Images > Build a new image > Upload**: upload `hvportal-source-<version>.tar` (made with
+  `git archive --format=tar -o hvportal-source-0.3.4.tar HEAD`), Dockerfile path `docker/Dockerfile`, image name
+  `hvportal-gateway:0.3.4`, **Build**. Then deploy `docker-compose.yml` as below.
+- **Portainer > Stacks > Repository** (Git repository reachable by Portainer, read-only token for a private
+  repository): compose path `docker/docker-compose.build.yml` - the image is built at deploy.
+- **Docker host shell**, in the source folder: `docker compose -f docker/docker-compose.build.yml up -d --build`.
+
+The build needs Internet access from the Docker host (base images, NuGet and npm packages).
+
 ## 2. Create the stack in Portainer
 
 1. **Stacks > Add stack > Web editor**: paste `docker/docker-compose.yml`.
