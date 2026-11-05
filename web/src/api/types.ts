@@ -97,6 +97,8 @@ export interface Host {
   canBrowseFolders?: boolean;
   /** Agent 0.3.2+: portal groups mirrored as native Hyper-V VM groups. */
   nativeVmGroups?: boolean;
+  /** Agent 0.3.3+: file explorer (browse, download, upload). */
+  canBrowseFiles?: boolean;
   vmGroupsSyncedAt?: string | null;
   vmGroupsSyncError?: string | null;
 }

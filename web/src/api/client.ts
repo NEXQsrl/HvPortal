@@ -83,3 +83,40 @@ export const del = <T>(path: string) => api<T>('DELETE', path);
 export function newIdempotencyKey(): string {
   return 'ui-' + crypto.randomUUID();
 }
+
+/**
+ * Raw upload (application/octet-stream) with progress, for the host file explorer. XMLHttpRequest because fetch has
+ * no upload progress. Same CSRF rules as api(); returns an abort function.
+ */
+export function uploadFile<T>(path: string, file: Blob, onProgress: (loaded: number, total: number) => void): { promise: Promise<T>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  const promise = (async () => {
+    const send = (token: string) => new Promise<{ status: number; text: string }>((resolve, reject) => {
+      xhr.open('POST', path);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader('X-CSRF-TOKEN', token);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.setRequestHeader('Accept', 'application/json');
+      xhr.upload.onprogress = (e) => onProgress(e.loaded, e.lengthComputable ? e.total : file.size);
+      xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText });
+      xhr.onerror = () => reject(new ApiError(0, 'network_error', 'Network error'));
+      xhr.onabort = () => reject(new ApiError(0, 'aborted', 'Upload cancelled'));
+      xhr.send(file);
+    });
+    let r = await send(await ensureCsrf());
+    if (r.status === 400 && r.text.includes('csrf_invalid')) {
+      resetCsrf();
+      r = await send(await ensureCsrf());
+    }
+    if (r.status >= 200 && r.status < 300) return (r.text ? JSON.parse(r.text) : undefined) as T;
+    let code = 'http_' + r.status;
+    let message = String(r.status);
+    try {
+      const body = JSON.parse(r.text);
+      code = body.code ?? body.title ?? code;
+      message = body.detail ?? body.title ?? message;
+    } catch { /* not JSON */ }
+    throw new ApiError(r.status, code, message);
+  })();
+  return { promise, abort: () => xhr.abort() };
+}

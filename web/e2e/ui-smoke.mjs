@@ -14,6 +14,8 @@ const agentData = arg('agent-data');
 const agentExe = arg('agent-exe');
 const agentPort = arg('agent-port', '28444');
 const out = arg('out', 'e2e-out');
+/** Local folder (not a system folder) with sample.txt, used to exercise the host file explorer against the real agent. */
+const filesDir = arg('files-dir');
 mkdirSync(out, { recursive: true });
 
 function totp(base32) {
@@ -180,6 +182,36 @@ try {
   await page.getByRole('link', { name: 'Impostazioni', exact: true }).click();
   await page.getByRole('heading', { name: 'Sicurezza' }).waitFor();
   await shot(page, '10-settings');
+
+  if (filesDir) {
+    // Host file explorer (real agent, real file system of this machine).
+    rmSync(join(filesDir, 'uploaded.bin'), { force: true });
+    await page.getByRole('link', { name: 'Storage', exact: true }).click();
+    await page.getByRole('tab', { name: 'File' }).click();
+    await page.getByRole('button', { name: /C:/ }).first().click();
+    await page.getByRole('row', { name: 'Apri ' + filesDir.split('\\')[1], exact: true }).waitFor();
+    const rootRows = await Promise.all(['Windows', 'Users', 'Program Files', 'ProgramData', 'inetpub'].map((n) => page.getByRole('row', { name: 'Apri ' + n, exact: true }).count()));
+    check('file explorer hides system folders (Windows, Users, Program Files, ProgramData, inetpub)', rootRows.every((c) => c === 0));
+    for (const seg of filesDir.split('\\').slice(1)) await page.getByRole('row', { name: 'Apri ' + seg, exact: true }).click();
+    await page.getByRole('link', { name: 'Scarica sample.txt' }).waitFor();
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('link', { name: 'Scarica sample.txt' }).click()]);
+    const dlPath = join(out, 'sample-downloaded.txt');
+    await dl.saveAs(dlPath);
+    check('file download matches the file on the host', readFileSync(dlPath).equals(readFileSync(join(filesDir, 'sample.txt'))));
+    const payload = Buffer.alloc(5 * 1024 * 1024 + 123);
+    for (let i = 0; i < payload.length; i++) payload[i] = (i * 31 + 7) & 255;
+    await page.locator('input[type=file]').setInputFiles({ name: 'uploaded.bin', mimeType: 'application/octet-stream', buffer: payload });
+    await page.getByText('uploaded.bin caricato e verificato.').waitFor({ timeout: 30000 });
+    check('file upload (2 chunks, SHA-256 verified) lands on the host', readFileSync(join(filesDir, 'uploaded.bin')).equals(payload));
+    await page.getByRole('link', { name: 'Scarica uploaded.bin' }).waitFor();
+    await shot(page, '10b-storage-files');
+    await page.locator('input[type=file]').setInputFiles({ name: 'uploaded.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('x') });
+    await page.getByRole('heading', { name: 'Il file esiste già' }).waitFor();
+    check('uploading an existing file asks before replacing it', true);
+    await page.getByRole('dialog').getByRole('button', { name: 'Annulla' }).click();
+    check('declined replacement leaves the file unchanged', readFileSync(join(filesDir, 'uploaded.bin')).equals(payload));
+    rmSync(join(filesDir, 'uploaded.bin'), { force: true });
+  }
 
   await page.getByRole('link', { name: 'Guida', exact: true }).click();
   await page.getByRole('heading', { name: 'Guida', exact: true }).waitFor();

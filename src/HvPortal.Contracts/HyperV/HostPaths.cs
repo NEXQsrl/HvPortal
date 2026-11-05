@@ -48,6 +48,31 @@ public static partial class HostPaths
         return segments.Length > 1 && IsBlockedRootFolder(segments[1]);
     }
 
+    [GeneratedRegex(@"^(CON|PRN|AUX|NUL|COM[0-9¹²³]|LPT[0-9¹²³])(\..*)?$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex ReservedDeviceName();
+
+    /// <summary>A single file name: no separators, wildcards, streams (':'), control characters, device names or trailing dot/space.</summary>
+    public static bool IsValidFileName(string? name) =>
+        name is { Length: >= 1 and <= 200 } && name.IndexOfAny(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) < 0
+        && !name.Any(char.IsControl) && name is not ("." or "..") && !name.EndsWith(' ') && !name.EndsWith('.')
+        && !ReservedDeviceName().IsMatch(name);
+
+    /// <summary>Full path of a file inside an acceptable folder.</summary>
+    public static bool IsValidFilePath(string? path)
+    {
+        if (path is null || path.Length > MaxPathLength + 201)
+        {
+            return false;
+        }
+        var i = path.LastIndexOf('\\');
+        if (i < 2)
+        {
+            return false;
+        }
+        var folder = i == 2 ? path[..3] : path[..i];
+        return IsValidLocalFolder(folder) && IsValidFileName(path[(i + 1)..]);
+    }
+
     /// <summary>Null when acceptable as VM location, otherwise an error code.</summary>
     public static string? ValidateLocation(string? path)
     {

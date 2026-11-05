@@ -1,5 +1,14 @@
 # Testing
 
+## v0.3.3 run (2026-11-05, development machine, non-administrator)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Agent.Tests` | 79 | pass — adds upload state machine on the real file system (hidden temporary file, retried chunk ignored, gap refused, verified commit, no overwrite by default, hash mismatch leaves the existing file and removes the temporary one, abort), chunked reads, **files open for writing refused**, hidden files refused, file-name rules, protocol 5 |
+| `tests/HvPortal.Gateway.Tests` | 144 | pass — adds file permissions (read vs write, host scope), blocked/invalid paths, 3-chunk download with audit SHA-256, in-use file 409, 2-chunk upload with SHA-256, conflict without overwrite, overwrite, invalid names, protocol gate |
+| `web/e2e/ui-smoke.mjs` | 49 | pass — adds the file explorer **against the real agent on this machine**: system folders hidden at C:\, download equals the file on disk, 5 MB upload lands on disk byte-identical, overwrite confirmation, declined replacement leaves the file unchanged |
+| `web` Vitest | 1 | pass |
+
 ## v0.3.2 run (2026-11-05, development machine, non-administrator)
 
 | Suite | Count | Result |

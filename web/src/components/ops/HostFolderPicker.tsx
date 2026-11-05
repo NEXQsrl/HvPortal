@@ -56,7 +56,7 @@ export function HostFolderPicker({ hostId, mode, initialPath, onPickFolder, onPi
 
   const crumbs = path ? path.replace(/\\$/, '').split('\\').map((seg, i, all) => ({ name: i === 0 ? seg + '\\' : seg, path: i === 0 ? seg + '\\' : all.slice(0, i + 1).join('\\') })) : [];
   const iso = mode === 'iso' && selected ? data?.isos.find((f) => f.path === selected) : undefined;
-  const folderTarget = mode === 'folder' ? (selected ?? data?.path ?? null) : null;
+  const folderTarget = mode === 'folder' ? (data?.path ?? null) : null;
 
   const confirm = () => {
     if (mode === 'iso' && iso) onPickIso?.(iso);
@@ -108,14 +108,12 @@ export function HostFolderPicker({ hostId, mode, initialPath, onPickFolder, onPi
             <ul className="space-y-0.5">
               {data.folders.map((f) => (
                 <li key={f.path}>
-                  <button type="button" role="option" aria-selected={selected === f.path}
-                    onClick={() => setSelected(mode === 'folder' ? f.path : null)} onDoubleClick={() => setPath(f.path)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); setPath(f.path); } }}
-                    className={cn('group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent', selected === f.path && 'bg-primary/10 ring-1 ring-primary/40')}>
-                    {selected === f.path ? <FolderOpen className="size-4 text-primary" /> : <Folder className="size-4 text-amber-500" />}
+                  {/* One click opens the folder (Explorer-like); "Select folder" then picks the folder being shown. */}
+                  <button type="button" aria-label={t('picker.open', { name: f.name })} onClick={() => setPath(f.path)}
+                    className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent">
+                    <Folder className="size-4 text-amber-500 group-hover:hidden" /><FolderOpen className="hidden size-4 text-amber-500 group-hover:block" />
                     <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                    <span role="button" tabIndex={-1} aria-label={t('picker.open', { name: f.name })} onClick={(e) => { e.stopPropagation(); setPath(f.path); }}
-                      className="rounded p-0.5 text-muted-foreground opacity-60 hover:bg-background group-hover:opacity-100"><ChevronRight className="size-4" /></span>
+                    <ChevronRight className="size-4 text-muted-foreground opacity-60 group-hover:opacity-100" />
                   </button>
                 </li>
               ))}

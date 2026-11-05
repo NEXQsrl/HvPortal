@@ -25,6 +25,15 @@ public enum HvOperation
     ListVmGroups,
     /// <summary>Protocol 4. Reconcile the native VM groups owned by the portal with the desired state (VmGroupSyncRequest).</summary>
     SyncVmGroups,
+    /// <summary>Protocol 5. Folders and files of a host folder (file explorer). In-process in the agent.</summary>
+    ListFolder,
+    /// <summary>Protocol 5. One chunk of a file (download). Files open for writing by others (running VM disks) cannot be read.</summary>
+    ReadFile,
+    /// <summary>Protocol 5. Upload: begin (temporary hidden file), chunk, commit (size + SHA-256 verified, then renamed), abort.</summary>
+    WriteFileBegin,
+    WriteFileChunk,
+    WriteFileCommit,
+    WriteFileAbort,
 }
 
 public static class HvOperations
@@ -118,6 +127,27 @@ public sealed record DriveEntry(string Path, string? Label, long TotalBytes, lon
 
 public sealed record FolderEntry(string Name, string Path);
 
+public sealed record FileEntry(string Name, string Path, long SizeBytes, DateTimeOffset ModifiedUtc);
+
+/// <summary>File transfer between the portal and a host (protocol 5): fixed-size chunks, base64 in the agent channel.</summary>
+public static class FileTransfer
+{
+    public const int ChunkBytes = 4 * 1024 * 1024;
+    /// <summary>Base64 length of a full chunk.</summary>
+    public const int MaxChunkBase64 = (ChunkBytes + 2) / 3 * 4;
+    public const long MaxUploadBytes = 1L << 40; // 1 TB
+}
+
+public sealed record FileListRequest(string Path);
+public sealed record FileReadRequest(string Path, long Offset, int Length);
+public sealed record FileChunk(long Offset, long TotalBytes, DateTimeOffset ModifiedUtc, string Data, bool Eof);
+public sealed record FileWriteBeginRequest(string Folder, string Name, long SizeBytes, bool Overwrite);
+public sealed record FileWriteBeginResult(Guid UploadId, string Path);
+public sealed record FileWriteChunkRequest(Guid UploadId, long Offset, string Data);
+public sealed record FileWriteCommitRequest(Guid UploadId, string Sha256);
+public sealed record FileWriteAbortRequest(Guid UploadId);
+public sealed record FileWriteResult(string Path, long SizeBytes, string Sha256);
+
 public sealed record FolderListing
 {
     public string? Path { get; init; }
@@ -125,6 +155,8 @@ public sealed record FolderListing
     public IReadOnlyList<DriveEntry> Drives { get; init; } = [];
     public IReadOnlyList<FolderEntry> Folders { get; init; } = [];
     public IReadOnlyList<IsoFile> Isos { get; init; } = [];
+    /// <summary>ListFolder only: all files (hidden/system/linked excluded).</summary>
+    public IReadOnlyList<FileEntry> Files { get; init; } = [];
     /// <summary>Free space of the drive containing Path.</summary>
     public long? FreeBytes { get; init; }
     public bool Truncated { get; init; }

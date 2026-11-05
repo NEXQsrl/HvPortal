@@ -68,6 +68,9 @@ Record results (date, build, edition, pass/fail, evidence) in a copy of the tabl
 | V18 | Rename "Ubuntu", remove its VM, delete it | renamed in place (same id), then removed; a group created by hand with `New-VMGroup` is untouched |
 | V19 | Create a native group by hand, then Host > Hyper-V VM groups > Import | portal group created with the VMs, row shows "managed"; renaming it in the portal renames it in Hyper-V |
 | V20 | Delete a mirrored group in Hyper-V Manager / PowerShell | recreated at the next forced pass (≤ 30 min) or with "Sync now" |
+| V21 | (agent 0.3.3) Storage > Files: open D:\, upload a 6 GB ISO, then mount it from the ISO library | progress to 100 %, file appears only at the end, audit `host.files.upload` with SHA-256 equal to `Get-FileHash` on the host |
+| V22 | Download the VHDX of a running VM and of a stopped VM | running: refused "file in use"; stopped: downloads, SHA-256 matches |
+| V23 | Upload into a folder the agent account cannot write (e.g. an ACL-protected folder) | `access_denied`, nothing left behind (no `.hvpart` file) |
 | V16 | Console from Edge/Chrome on the production URL (HTTP/2) | the WebSocket opens (no "WebSocket connection failed"); frames and input work |
 
 ## Result log template

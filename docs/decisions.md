@@ -97,6 +97,24 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-018 Host file explorer: browse, download, upload (agent protocol 5)
+- Need: copy ISOs and other files to/from hosts from the browser (Storage > Files), without RDP or SMB shares.
+- Typed, in-process agent operations (no PowerShell): `ListFolder`, `ReadFile`, `WriteFileBegin/Chunk/Commit/Abort`.
+  Same folder rules as ADR-016 (local fixed drives; hidden, system and reparse-point entries skipped; top-level
+  system folders and `$...` refused), enforced by gateway and agent. File names: no separators, streams, wildcards,
+  device names, trailing dot/space.
+- Transfers are relayed in 4 MB chunks over the agent channel; nothing is stored on the gateway. Downloads stream to
+  the browser and are aborted (not truncated) on failure. Uploads require Content-Length, go to a hidden
+  `.<name>.<id>.hvpart` file next to the target and are renamed only after size and SHA-256 (computed by the gateway
+  while relaying, re-computed by the agent) match. Existing files are replaced only with explicit overwrite (the UI
+  asks). Idle uploads are discarded after 10 minutes; at most 4 concurrent uploads per host.
+- Reads open files with `FileShare.Read`: a file open for writing elsewhere (the VHDX of a running VM) cannot be
+  downloaded, so the portal never hands out an inconsistent copy of an active disk.
+- Permissions `host.files.read` (browse + download) and `host.files.write` (upload), scoped Global/Cluster/Host;
+  included in the platform and infrastructure administrator roles. Every download and upload is audited with path,
+  size and SHA-256. The agent writes with its own identity (virtual service account): folders it cannot write in
+  return `access_denied`.
+
 ## ADR-017 Portal groups mirrored as native Hyper-V VM groups (agent protocol 4)
 - Requirement: groups created in the portal must be visible with `Get-VMGroup` on the hosts. The portal stays the
   source of truth; permissions still come only from portal groups (native groups never grant anything).

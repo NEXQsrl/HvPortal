@@ -81,6 +81,8 @@ public static class InventoryEndpoints
             canBrowseFolders = connected && h.Access == HyperVAccessStatus.Ok && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 1),
             // Agent 0.3.2+ (protocol 4): portal groups mirrored as native Hyper-V VM groups.
             nativeVmGroups = h.Access == HyperVAccessStatus.Ok && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 2),
+            // Agent 0.3.3+ (protocol 5): file explorer (browse, download, upload).
+            canBrowseFiles = connected && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 3),
             vmGroupsSyncedAt = h.VmGroupsSyncedAt,
             vmGroupsSyncError = h.VmGroupsSyncError,
         };

@@ -178,7 +178,14 @@ public sealed class CommandExecutor
         }
         try
         {
-            _logger.LogInformation("Hyper-V operation {Operation} (command {CommandId})", op, command.CommandId);
+            if (op is HvOperation.ReadFile or HvOperation.WriteFileChunk)
+            {
+                _logger.LogDebug("File transfer chunk {Operation} (command {CommandId})", op, command.CommandId);
+            }
+            else
+            {
+                _logger.LogInformation("Hyper-V operation {Operation} (command {CommandId})", op, command.CommandId);
+            }
             var outcome = await _ops!.RunAsync(op, command.OperationArgs, timeout, ct);
             return new AgentCommandResult
             {

@@ -244,6 +244,9 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                     .Select(kv => new HostDiskInfo(@"D:\VHDs\" + kv.Value.Name + ".vhdx", kv.Key, kv.Value.Name, "SCSI 0:0", "VHDX", "Dynamic", 64L << 30, 10L << 30, null)).ToList());
             case HvOperation.ListIsos:
                 return Ok(new[] { new IsoFile(@"D:\ISO\win.iso", 5L << 30, DateTimeOffset.UtcNow) });
+            case HvOperation.ListFolder or HvOperation.ReadFile or HvOperation.WriteFileBegin or HvOperation.WriteFileChunk
+                or HvOperation.WriteFileCommit or HvOperation.WriteFileAbort:
+                return FileOperation(command);
             case HvOperation.ListVmGroups:
                 return ListVmGroups(hostId);
             case HvOperation.SyncVmGroups:
@@ -337,6 +340,69 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
         }
         return new HvOperationOutcome { Ok = true, Applied = applied, Result = HvOperations.ToElement(new VmGroupSyncResult { Ids = ids, Removed = removed }) };
     }
+
+    /// <summary>Simulated host files (full path -> content) for the file explorer; folders are those of <see cref="Folders"/>.</summary>
+    public ConcurrentDictionary<string, byte[]> Files { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Paths that behave like the disk of a running VM (open for writing elsewhere).</summary>
+    public HashSet<string> FilesInUse { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly ConcurrentDictionary<Guid, (string Path, long Size, bool Overwrite, MemoryStream Data)> _uploads = new();
+
+    private HvOperationOutcome FileOperation(AgentCommand command)
+    {
+        HvOperationOutcome Ok(object result) => new() { Ok = true, Result = HvOperations.ToElement(result) };
+        HvOperationOutcome Fail(string error) => new() { Ok = false, Error = error };
+        switch (command.Operation)
+        {
+            case HvOperation.ListFolder:
+                var l = HvOperations.FromElement<FileListRequest>(command.OperationArgs)!;
+                if (!Folders.TryGetValue(l.Path, out var subs)) return Fail("not_found: folder not found.");
+                return Ok(new FolderListing
+                {
+                    Path = l.Path,
+                    Folders = subs.Select(n => new FolderEntry(n, System.IO.Path.Combine(l.Path, n))).ToList(),
+                    Files = Files.Where(kv => string.Equals(System.IO.Path.GetDirectoryName(kv.Key), l.Path, StringComparison.OrdinalIgnoreCase))
+                        .Select(kv => new FileEntry(System.IO.Path.GetFileName(kv.Key), kv.Key, kv.Value.Length, DateTimeOffset.UtcNow)).ToList(),
+                });
+            case HvOperation.ReadFile:
+                var r = HvOperations.FromElement<FileReadRequest>(command.OperationArgs)!;
+                if (FilesInUse.Contains(r.Path)) return Fail("file_in_use: the file is open for writing by another process.");
+                if (!Files.TryGetValue(r.Path, out var content)) return Fail("not_found: file not found.");
+                var len = (int)Math.Min(r.Length, content.Length - r.Offset);
+                return Ok(new FileChunk(r.Offset, content.Length, DateTimeOffset.UtcNow, Convert.ToBase64String(content, (int)r.Offset, len), r.Offset + len >= content.Length));
+            case HvOperation.WriteFileBegin:
+                var b = HvOperations.FromElement<FileWriteBeginRequest>(command.OperationArgs)!;
+                var final = System.IO.Path.Combine(b.Folder, b.Name);
+                if (!Folders.ContainsKey(b.Folder)) return Fail("not_found: folder not found.");
+                if (Files.ContainsKey(final) && !b.Overwrite) return Fail("file_exists: the file already exists.");
+                var uid = Guid.NewGuid();
+                _uploads[uid] = (final, b.SizeBytes, b.Overwrite, new MemoryStream());
+                return Ok(new FileWriteBeginResult(uid, final));
+            case HvOperation.WriteFileChunk:
+                var c = HvOperations.FromElement<FileWriteChunkRequest>(command.OperationArgs)!;
+                if (!_uploads.TryGetValue(c.UploadId, out var up)) return Fail("upload_not_found: unknown upload.");
+                if (c.Offset != up.Data.Length) return Fail("invalid_range: unexpected offset.");
+                up.Data.Write(Convert.FromBase64String(c.Data));
+                return Ok(new { written = up.Data.Length });
+            case HvOperation.WriteFileCommit:
+                var cm = HvOperations.FromElement<FileWriteCommitRequest>(command.OperationArgs)!;
+                if (!_uploads.TryRemove(cm.UploadId, out var done)) return Fail("upload_not_found: unknown upload.");
+                var bytes = done.Data.ToArray();
+                var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+                if (bytes.Length != done.Size) return Fail("invalid_size: size mismatch.");
+                if (hash != cm.Sha256) return Fail("hash_mismatch: hash mismatch.");
+                Files[done.Path] = bytes;
+                return Ok(new FileWriteResult(done.Path, bytes.Length, hash));
+            default:
+                var a = HvOperations.FromElement<FileWriteAbortRequest>(command.OperationArgs)!;
+                _uploads.TryRemove(a.UploadId, out _);
+                AbortedUploads++;
+                return Ok(new { aborted = true });
+        }
+    }
+
+    public int AbortedUploads { get; private set; }
 
     private static VmSummary Summary(Guid id, (Guid HostId, string Name, VmPowerState State, long UptimeMs) v) =>
         new() { VmId = id, Name = v.Name, PowerState = v.State, UptimeMs = v.UptimeMs };

@@ -67,7 +67,7 @@ Three .NET projects plus the SPA:
 Key cross-cutting flows:
 - **Commands are typed and closed.** There is no "run script/WQL/path" command anywhere; adding a capability means a
   new `HvOperation` value + argument record + validation in Contracts + a branch in the script/agent + gateway endpoint.
-- **Protocol versioning.** `AgentProtocol.Version` (currently 4) is announced in `AgentHello`.
+- **Protocol versioning.** `AgentProtocol.Version` (currently 5) is announced in `AgentHello`.
   `AgentProtocol.RequiredVersion(command)` is checked in `AgentConnectionManager.SendAsync` (and mirrored in
   `FakeAgentDispatcher`): never send a command an older agent cannot parse or would silently misinterpret. Bump it
   when adding enum values or semantics-changing fields. Product version is in `Directory.Build.props` (+ `web/package.json`).

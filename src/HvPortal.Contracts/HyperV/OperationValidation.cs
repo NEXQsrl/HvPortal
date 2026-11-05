@@ -118,6 +118,17 @@ public static partial class OperationValidation
         return null;
     }
 
+    public static string? Validate(FileReadRequest r) =>
+        !HostPaths.IsValidFilePath(r.Path) ? "invalid_path"
+        : HostPaths.IsBlocked(r.Path) ? "location_not_allowed"
+        : r.Offset < 0 || r.Length is < 1 or > FileTransfer.ChunkBytes ? "invalid_range" : null;
+
+    public static string? Validate(FileWriteBeginRequest r) =>
+        !HostPaths.IsValidLocalFolder(r.Folder) ? "invalid_path"
+        : HostPaths.IsBlocked(r.Folder) ? "location_not_allowed"
+        : !HostPaths.IsValidFileName(r.Name) ? "invalid_file_name"
+        : r.SizeBytes is < 0 or > FileTransfer.MaxUploadBytes ? "invalid_size" : null;
+
     public static string? Validate(FolderBrowseRequest r) =>
         r.Path is null || HostPaths.IsValidLocalFolder(r.Path) ? null : "invalid_path";
 

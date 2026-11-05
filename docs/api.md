@@ -63,6 +63,9 @@ message, 501 `agent_outdated`). Changes are jobs (202 + `jobId`), re-authorized 
 | GET `/hosts/{id}/vm-groups` | native Hyper-V VM groups (Get-VMGroup) with members, owner portal group, mirroring status; `supported:false` before agent 0.3.2 | host read |
 | POST `/hosts/{id}/vm-groups/sync` | force the mirroring now | `groups.manage` |
 | POST `/hosts/{id}/vm-groups/import` | import native groups not owned by the portal as portal groups, then mirror | `hosts.manage` + `groups.manage` |
+| GET `/hosts/{id}/files?path=` | drives (no path) or folders + files of a folder (agent 0.3.3+) | `host.files.read` on host |
+| GET `/hosts/{id}/files/download?path=` | file download (streamed, 4 MB chunks); 409 `file_in_use` for files open for writing | `host.files.read` on host; audited |
+| POST `/hosts/{id}/files/upload?folder=&name=&overwrite=` | raw body (`application/octet-stream`, Content-Length required); 409 `file_exists` unless `overwrite=true`; returns path, size, SHA-256 | `host.files.write` on host; audited |
 | POST `/vms/{id}/console/tickets` | one-time console ticket (30 s) | `vm.console` |
 | GET `/vms/{id}/console/ws` (WebSocket) | console stream; first message `{"t":"auth","ticket":…}` | session cookie + same Origin + valid ticket ([console.md](console.md)) |
 | GET `/console/sessions` | open console sessions | `audit.read` |

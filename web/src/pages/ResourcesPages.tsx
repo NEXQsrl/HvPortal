@@ -1,11 +1,13 @@
 import { HardDrive, Network } from 'lucide-react';
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Empty, HostIcon, Meter, PageHeader, Section } from '@/components/common';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Empty, HostIcon, Meter, Notice, PageHeader, Section } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useI18n } from '@/i18n';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { HostFileExplorer } from '@/components/vm/HostFileExplorer';
+import { useI18n, type TKey } from '@/i18n';
 import { formatBytes, percent } from '@/lib/format';
 import { HostStorage, HostSwitches } from './inventory/HostPage';
 
@@ -29,16 +31,27 @@ export function NetworkPage() {
   );
 }
 
+const STORAGE_TABS = ['overview', 'files'] as const;
+
 export function StoragePage() {
   const { t } = useI18n();
   const inv = useInventory();
+  const [params, setParams] = useSearchParams();
+  const tab = (STORAGE_TABS as readonly string[]).includes(params.get('tab') ?? '') ? params.get('tab')! : 'overview';
   const connected = inv.hosts.filter((h) => h.connected && h.access === 'Ok');
   const [hostId, setHostId] = useState(connected[0]?.id ?? '');
   const host = inv.hostById.get(hostId);
+  const fileHosts = inv.hosts.filter((h) => h.canBrowseFiles);
+  const [fileHostId, setFileHostId] = useState(fileHosts[0]?.id ?? '');
+  const fileHost = inv.hostById.get(fileHostId) ?? fileHosts[0];
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <PageHeader icon={<HardDrive className="size-5" />} title={t('sto.title')} subtitle={t('sto.help')} />
-      <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
+    <Tabs value={tab} onValueChange={(v) => setParams(v === 'overview' ? {} : { tab: v }, { replace: true })} className="flex h-full min-h-0 flex-col gap-0">
+      <PageHeader icon={<HardDrive className="size-5" />} title={t('sto.title')} subtitle={t('sto.help')}>
+        <TabsList variant="line" className="-mb-px h-9 w-full justify-start overflow-x-auto rounded-none bg-transparent p-0">
+          {STORAGE_TABS.map((x) => <TabsTrigger key={x} value={x} className="flex-none px-3">{t(('sto.tab.' + x) as TKey)}</TabsTrigger>)}
+        </TabsList>
+      </PageHeader>
+      <TabsContent value="overview" className="min-h-0 space-y-3 overflow-auto p-4">
         <Section title={t('sto.volumes')}>
           <Table>
             <TableHeader><TableRow><TableHead>{t('vm.host')}</TableHead><TableHead>{t('host.volume')}</TableHead><TableHead>{t('host.fileSystem')}</TableHead><TableHead className="text-right">{t('host.size')}</TableHead><TableHead className="text-right">{t('host.freeSpace')}</TableHead><TableHead className="w-36">{t('host.usage')}</TableHead></TableRow></TableHeader>
@@ -66,7 +79,23 @@ export function StoragePage() {
           )}
         </div>
         {host ? <HostStorage host={host} /> : <Empty>{t('net.noHosts')}</Empty>}
-      </div>
-    </div>
+      </TabsContent>
+      <TabsContent value="files" className="flex min-h-0 flex-col gap-3 overflow-auto p-4">
+        {tab === 'files' && (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold">{t('files.host')}</h2>
+              {fileHosts.length > 0 && (
+                <NativeSelect aria-label={t('vm.host')} value={fileHost?.id ?? ''} onChange={(e) => setFileHostId(e.target.value)} className="w-56">
+                  {fileHosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)}
+                </NativeSelect>
+              )}
+              <span className="text-xs text-muted-foreground">{t('files.help')}</span>
+            </div>
+            {fileHost ? <HostFileExplorer key={fileHost.id} host={fileHost} /> : <Notice kind="warn">{t('files.noHosts')}</Notice>}
+          </>
+        )}
+      </TabsContent>
+    </Tabs>
   );
 }

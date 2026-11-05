@@ -14,8 +14,9 @@ public static class AgentProtocol
     /// 2 = v0.3: HyperVOperation, ConsoleFrame and ConsoleInput commands.
     /// 3 = v0.3.1: BrowseFolders operation, NewVm.Location; unreadable commands are answered with Rejected.
     /// 4 = v0.3.2: ListVmGroups / SyncVmGroups (native Hyper-V VM groups mirrored from portal groups).
+    /// 5 = v0.3.3: host file explorer (ListFolder, ReadFile, WriteFile*).
     /// </summary>
-    public const int Version = 4;
+    public const int Version = 5;
 
     /// <summary>
     /// Lowest agent protocol able to execute the command as intended. The gateway never sends a command to an older
@@ -26,6 +27,11 @@ public static class AgentProtocol
         if (command.Kind is not (AgentCommandKind.HyperVOperation or AgentCommandKind.ConsoleFrame or AgentCommandKind.ConsoleInput))
         {
             return 1;
+        }
+        if (command.Operation is HvOperation.ListFolder or HvOperation.ReadFile or HvOperation.WriteFileBegin or HvOperation.WriteFileChunk
+            or HvOperation.WriteFileCommit or HvOperation.WriteFileAbort)
+        {
+            return 5;
         }
         if (command.Operation is HvOperation.ListVmGroups or HvOperation.SyncVmGroups)
         {

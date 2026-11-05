@@ -35,6 +35,11 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 - Agent protocol 3 (agent 0.3.1): `BrowseFolders`, `NewVm.Location`; the gateway never sends them to older agents;
   agents reply `Rejected` to commands they cannot parse instead of dropping the channel.
 
+## v0.3.3 — delivered (code + automated tests; real-host validation pending)
+- Storage > Files: host file explorer (open folders with one click, download, upload with progress and drag and
+  drop, overwrite confirmation), permissions `host.files.read` / `host.files.write`, audited (ADR-018). Agent
+  protocol 5 (agent 0.3.3). Folder picker: one click opens a folder.
+
 ## v0.3.2 — delivered (code + automated tests; real-host validation pending)
 - Portal groups mirrored automatically as native Hyper-V VM groups (`Get-VMGroup`), nested groups as management
   collections; host tab "Hyper-V VM groups" with status, "Sync now" and one-time import of existing native groups

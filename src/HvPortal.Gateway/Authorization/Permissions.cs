@@ -29,6 +29,8 @@ public static class Permissions
     public const string JobsReadAll = "jobs.read.all";
     public const string JobsCancelAll = "jobs.cancel.all";
     public const string HostsManage = "hosts.manage";
+    public const string HostFilesRead = "host.files.read";
+    public const string HostFilesWrite = "host.files.write";
     public const string UsersManage = "users.manage";
     public const string RolesManage = "roles.manage";
     public const string SettingsManage = "settings.manage";
@@ -60,6 +62,8 @@ public static class Permissions
         new(JobsReadAll, "Read jobs of all users", GlobalOnly, true),
         new(JobsCancelAll, "Cancel jobs of all users", GlobalOnly, true),
         new(HostsManage, "Enroll and revoke hosts", GlobalOnly, true, Privileged: true),
+        new(HostFilesRead, "Browse host folders and download files (system folders excluded)", [ScopeType.Global, ScopeType.Cluster, ScopeType.Host], true),
+        new(HostFilesWrite, "Upload files to host folders (system folders excluded)", [ScopeType.Global, ScopeType.Cluster, ScopeType.Host], true),
         new(UsersManage, "Manage users", GlobalOnly, true, Privileged: true),
         new(RolesManage, "Manage roles and role assignments", GlobalOnly, true, Privileged: true),
         new(SettingsManage, "Change security settings", GlobalOnly, true, Privileged: true),

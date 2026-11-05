@@ -32,6 +32,37 @@ public sealed class PowerShellOperationRunner
         {
             return new HvOperationOutcome { Ok = false, Error = "Rejected by agent validation: " + validation };
         }
+        if (operation is HvOperation.ListFolder or HvOperation.ReadFile or HvOperation.WriteFileBegin or HvOperation.WriteFileChunk
+            or HvOperation.WriteFileCommit or HvOperation.WriteFileAbort)
+        {
+            // Host file explorer: plain file-system I/O in-process (no PowerShell).
+            try
+            {
+                object? result = operation switch
+                {
+                    HvOperation.ListFolder => HostFileService.List(HvOperations.FromElement<FileListRequest>(args)!),
+                    HvOperation.ReadFile => HostFileService.Read(HvOperations.FromElement<FileReadRequest>(args)!),
+                    HvOperation.WriteFileBegin => HostFileService.Begin(HvOperations.FromElement<FileWriteBeginRequest>(args)!),
+                    HvOperation.WriteFileChunk => new { written = await HostFileService.ChunkAsync(HvOperations.FromElement<FileWriteChunkRequest>(args)!, ct) },
+                    HvOperation.WriteFileCommit => HostFileService.Commit(HvOperations.FromElement<FileWriteCommitRequest>(args)!),
+                    _ => Aborted(HvOperations.FromElement<FileWriteAbortRequest>(args)!),
+                };
+                return new HvOperationOutcome { Ok = true, Result = HvOperations.ToElement(result) };
+            }
+            catch (Exception ex) when (ex is HostPathException or IOException or UnauthorizedAccessException or FormatException)
+            {
+                return new HvOperationOutcome
+                {
+                    Ok = false,
+                    Error = ex switch
+                    {
+                        UnauthorizedAccessException => "access_denied: access denied for the agent service account.",
+                        FormatException => "invalid_data: chunk is not valid base64.",
+                        _ => ex.Message,
+                    },
+                };
+            }
+        }
         if (operation == HvOperation.BrowseFolders)
         {
             // Plain file-system listing: done in-process (no PowerShell, nothing modified).
@@ -122,6 +153,12 @@ public sealed class PowerShellOperationRunner
         }
     }
 
+    private static object Aborted(FileWriteAbortRequest r)
+    {
+        HostFileService.Abort(r);
+        return new { aborted = true };
+    }
+
     internal static string? Validate(HvOperation operation, JsonElement? args)
     {
         try
@@ -155,6 +192,21 @@ public sealed class PowerShellOperationRunner
                     return null;
                 case HvOperation.BrowseFolders:
                     return HvOperations.FromElement<FolderBrowseRequest>(args) is { } b ? OperationValidation.Validate(b) : "invalid_arguments";
+                case HvOperation.ListFolder:
+                    return HvOperations.FromElement<FileListRequest>(args) is { } lf && HostPaths.IsValidLocalFolder(lf.Path)
+                        ? (HostPaths.IsBlocked(lf.Path) ? "location_not_allowed" : null) : "invalid_path";
+                case HvOperation.ReadFile:
+                    return HvOperations.FromElement<FileReadRequest>(args) is { } rf ? OperationValidation.Validate(rf) : "invalid_arguments";
+                case HvOperation.WriteFileBegin:
+                    return HvOperations.FromElement<FileWriteBeginRequest>(args) is { } wb ? OperationValidation.Validate(wb) : "invalid_arguments";
+                case HvOperation.WriteFileChunk:
+                    return HvOperations.FromElement<FileWriteChunkRequest>(args) is { } wc && wc.UploadId != Guid.Empty && wc.Offset >= 0
+                        && wc.Data is { Length: > 0 and <= FileTransfer.MaxChunkBase64 } ? null : "invalid_chunk";
+                case HvOperation.WriteFileCommit:
+                    return HvOperations.FromElement<FileWriteCommitRequest>(args) is { } cm && cm.UploadId != Guid.Empty
+                        && cm.Sha256 is { Length: 64 } h && h.All(Uri.IsHexDigit) ? null : "invalid_commit";
+                case HvOperation.WriteFileAbort:
+                    return HvOperations.FromElement<FileWriteAbortRequest>(args) is { UploadId: var ua } && ua != Guid.Empty ? null : "invalid_arguments";
                 case HvOperation.ListIsos:
                     return HvOperations.FromElement<IsoListRequest>(args) is { } i && i.Roots.Count <= 16 && i.Roots.All(r => r.Length <= 260) ? null : "invalid_iso_roots";
                 case HvOperation.ListCheckpoints:

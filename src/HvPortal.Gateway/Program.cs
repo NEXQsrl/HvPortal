@@ -226,6 +226,7 @@ namespace HvPortal.Gateway
             VmOperationsEndpoints.Map(app);
             ConsoleEndpoints.Map(app);
             HvPortal.Gateway.VmGroups.VmGroupEndpoints.Map(app);
+            HostFileEndpoints.Map(app);
 
             app.MapGet("/api/v1/system/info", async (HttpContext http, AccessEvaluator access, AgentConnectionManager agents, GatewayPaths paths) =>
             {

@@ -3,11 +3,11 @@
 Browser-based management for Microsoft Hyper-V hosts — standalone or (later) clustered, in a domain or in a
 workgroup — with local accounts, MFA, fine-grained RBAC, persistent jobs and a tamper-evident audit log.
 
-> **Status: v0.3.2 (pre-release, private).** Not published; do not distribute.
+> **Status: v0.3.3 (pre-release, private).** Not published; do not distribute.
 > "Hyper-V", "Windows Server" and "Microsoft Entra" are trademarks of Microsoft. HvPortal is an independent
 > project and is not affiliated with or endorsed by Microsoft. The product name is provisional.
 
-## What works today (v0.3.2)
+## What works today (v0.3.3)
 
 | Area | State |
 |---|---|
@@ -26,6 +26,7 @@ workgroup — with local accounts, MFA, fine-grained RBAC, persistent jobs and a
 | Browser console (hypervisor screen + keyboard/mouse, works before boot; not RDP) | ✅ code + tests; real-host validation pending |
 | VM groups as nested folders with RBAC inheritance and anti-escalation; single inventory tree (Hosts / Groups / All VMs) with drag and drop | ✅ tested |
 | Portal groups mirrored as native Hyper-V VM groups (`Get-VMGroup`), import of existing native groups — agent 0.3.2 | ✅ code + tests; real-host validation pending |
+| Host file explorer (Storage > Files): browse, download, upload with SHA-256 verification — agent 0.3.3 | ✅ code + tests (also against the real agent locally); real-host validation pending |
 | Host folder browser for VM location and ISO files (system folders hidden and refused) — agent 0.3.1 | ✅ code + tests; real-host validation pending |
 | Web UI (React/TypeScript, shadcn/ui): vCenter-like navigator, object tabs, recent tasks, command palette, IT/EN, light/dark, responsive, live updates | ✅ tested with Edge |
 | SQLite | ✅ — PostgreSQL / SQL Server: Milestone 2 |
