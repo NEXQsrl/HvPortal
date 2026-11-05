@@ -1,0 +1,58 @@
+# HvPortal gateway - variant that BUILDS the image on the Docker host (no image to import).
+# Use it when the source is available to Docker:
+#  - Portainer > Stacks > Add stack > Repository: repository URL of HvPortal, compose path docker/docker-compose.build.yml
+#    (private repository: enable authentication with a read-only token);
+#  - or on the Docker host shell, from the repository folder:  docker compose -f docker/docker-compose.build.yml up -d --build
+# The build needs Internet access from the Docker host (base images and NuGet/npm packages) and takes a few minutes.
+# Same settings as docker-compose.yml (see docker/.env.example).
+
+name: hvportal
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      platforms: ["linux/amd64"]
+    image: ${HVP_IMAGE:-hvportal-gateway:0.3.4}
+    pull_policy: build
+    container_name: hvportal-gateway
+    restart: unless-stopped
+    ports:
+      - "${HVP_UI_PORT:-8443}:${HVP_UI_PORT:-8443}"         # web console, REST API (HTTPS)
+      - "${HVP_AGENT_PORT:-8444}:${HVP_AGENT_PORT:-8444}"   # agent channel (mTLS) - never through a TLS-terminating proxy
+    environment:
+      Gateway__UiPort: "${HVP_UI_PORT:-8443}"
+      Gateway__AgentPort: "${HVP_AGENT_PORT:-8444}"
+      HVP_PUBLIC_NAMES: "${HVP_PUBLIC_NAMES:?Set HVP_PUBLIC_NAMES (DNS names and/or IPs of the Docker host, comma separated)}"
+      HVP_KEY_ENCRYPTION_KEY: "${HVP_KEY_ENCRYPTION_KEY:?Set HVP_KEY_ENCRYPTION_KEY (openssl rand -base64 32)}"
+      HVP_PRINT_SETUP_TOKEN: "${HVP_PRINT_SETUP_TOKEN:-true}"
+      Gateway__UiCertificatePath: "${HVP_UI_CERT_PATH:-}"
+      Gateway__UiCertificateKeyPath: "${HVP_UI_CERT_KEY_PATH:-}"
+      Gateway__UiCertificatePassword: "${HVP_UI_CERT_PASSWORD:-}"
+      TZ: "${TZ:-Europe/Rome}"
+    volumes:
+      - hvportal-data:/data
+      - ${HVP_CERTS_DIR:-./certs}:/certs:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "dotnet", "/app/HvPortal.Gateway.dll", "admin", "health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  hvportal-data:
+    name: hvportal-data
