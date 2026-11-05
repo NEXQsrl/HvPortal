@@ -50,6 +50,10 @@ public sealed class JobRunner : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!_options.RunnerEnabled)
+        {
+            return;
+        }
         await RecoverAfterRestartAsync(stoppingToken);
         var lastReconcile = DateTimeOffset.MinValue;
         while (!stoppingToken.IsCancellationRequested)

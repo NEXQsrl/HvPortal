@@ -42,6 +42,8 @@ public sealed class SecurityOptions
 
 public sealed class JobOptions
 {
+    /// <summary>Disable only in tests that drive the runner explicitly.</summary>
+    public bool RunnerEnabled { get; set; } = true;
     public int MaxConcurrentJobs { get; set; } = 8;
     public int PollIntervalMilliseconds { get; set; } = 1000;
     public int HostUnreachableRetries { get; set; } = 3;
