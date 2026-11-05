@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HvPortal.Agent/HvPortal.Agent.csproj" />
+    <Project Path="src/HvPortal.Contracts/HvPortal.Contracts.csproj" />
+    <Project Path="src/HvPortal.Gateway/HvPortal.Gateway.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HvPortal.Agent.Tests/HvPortal.Agent.Tests.csproj" />
+    <Project Path="tests/HvPortal.Gateway.Tests/HvPortal.Gateway.Tests.csproj" />
+  </Folder>
+</Solution>

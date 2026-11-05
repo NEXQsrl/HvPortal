@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <!-- CA2007 (ConfigureAwait) and CA1848 (LoggerMessage) are noise for an ASP.NET Core app. -->
+    <NoWarn>$(NoWarn);CA2007;CA1848;CA1062;CA1515;CA1031;CA1724;CA1716;CA1056;CA1054;CA1305;CA1307;CA1309;CA1310;CA1311;CA1304;CA1822;CA1859;CA1873;CA2227;CA1819;CA1002;CA1034;CA1711;CA1720;CA1707;CA1812;CA5394</NoWarn>
+    <Deterministic>true</Deterministic>
+    <Product>HvPortal</Product>
+    <Company>HvPortal contributors</Company>
+    <Copyright>Copyright (c) HvPortal contributors</Copyright>
+    <Version>0.1.0</Version>
+    <InformationalVersion>0.1.0-m1</InformationalVersion>
+    <!-- Telemetry: nothing in this repository sends telemetry. -->
+  </PropertyGroup>
+</Project>

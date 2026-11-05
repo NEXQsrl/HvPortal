@@ -1,0 +1,22 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{json,yml,yaml,ts,tsx,css,html,md}]
+indent_size = 2
+
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:suggestion
+dotnet_sort_system_directives_first = true
+# Justified cryptography: HMAC-SHA1 is mandated by RFC 6238 (TOTP); SHA-1 is the format of offline breach corpora.
+dotnet_diagnostic.CA5350.severity = none
+# Migrations are generated code.
+[**/Migrations/**.cs]
+generated_code = true
+dotnet_diagnostic.CA1861.severity = none

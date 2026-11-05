@@ -1,0 +1,26 @@
+# Build output
+bin/
+obj/
+artifacts/
+*.user
+.vs/
+.vscode/*
+!.vscode/extensions.json
+TestResults/
+
+# Frontend
+web/node_modules/
+web/dist/
+src/HvPortal.Gateway/wwwroot/
+
+# Local data — never commit databases, keys, tokens or certificates
+*.db
+*.db-shm
+*.db-wal
+*.pfx
+*.p12
+*.key
+*.bin
+setup-token.txt
+recovery-token.txt
+*.hvpx

@@ -1,0 +1,149 @@
+using HvPortal.Contracts.HyperV;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+
+namespace HvPortal.Gateway.Data;
+
+public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) : DbContext(options)
+{
+    public DbSet<User> Users => Set<User>();
+    public DbSet<RecoveryCode> RecoveryCodes => Set<RecoveryCode>();
+    public DbSet<UserSession> Sessions => Set<UserSession>();
+    public DbSet<MfaChallenge> MfaChallenges => Set<MfaChallenge>();
+    public DbSet<LoginThrottle> LoginThrottles => Set<LoginThrottle>();
+    public DbSet<OneTimeToken> OneTimeTokens => Set<OneTimeToken>();
+    public DbSet<Role> Roles => Set<Role>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+    public DbSet<RoleAssignment> RoleAssignments => Set<RoleAssignment>();
+    public DbSet<LogicalGroup> LogicalGroups => Set<LogicalGroup>();
+    public DbSet<LogicalGroupMember> LogicalGroupMembers => Set<LogicalGroupMember>();
+    public DbSet<ManagedHost> Hosts => Set<ManagedHost>();
+    public DbSet<AgentCertificate> AgentCertificates => Set<AgentCertificate>();
+    public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
+    public DbSet<VirtualMachine> VirtualMachines => Set<VirtualMachine>();
+    public DbSet<InventoryEvent> InventoryEvents => Set<InventoryEvent>();
+    public DbSet<Job> Jobs => Set<Job>();
+    public DbSet<JobEvent> JobEvents => Set<JobEvent>();
+    public DbSet<ResourceLock> ResourceLocks => Set<ResourceLock>();
+    public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
+    public DbSet<Setting> Settings => Set<Setting>();
+
+    /// <summary>Optimistic concurrency: entities with a long "Version" property get it incremented on update.</summary>
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        foreach (var entry in ChangeTracker.Entries())
+        {
+            if (entry.State == EntityState.Modified && entry.Metadata.FindProperty("Version") is { ClrType: var t } && t == typeof(long))
+            {
+                var p = entry.Property("Version");
+                p.CurrentValue = (long)p.CurrentValue! + 1;
+            }
+        }
+        return base.SaveChangesAsync(cancellationToken);
+    }
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder b)
+    {
+        // SQLite has no native DateTimeOffset: store as sortable binary (all values are UTC).
+        // PostgreSQL / SQL Server (Milestone 2) keep native types through their own migrations assembly.
+        if (Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite")
+        {
+            b.Properties<DateTimeOffset>().HaveConversion<DateTimeOffsetToBinaryConverter>();
+            b.Properties<DateTimeOffset?>().HaveConversion<DateTimeOffsetToBinaryConverter>();
+        }
+        b.Properties<VmPowerState>().HaveConversion<string>().HaveMaxLength(24);
+        b.Properties<HyperVAccessStatus>().HaveConversion<string>().HaveMaxLength(24);
+        b.Properties<HostStatus>().HaveConversion<string>().HaveMaxLength(16);
+        b.Properties<JobStatus>().HaveConversion<string>().HaveMaxLength(16);
+        b.Properties<ScopeType>().HaveConversion<string>().HaveMaxLength(24);
+        b.Properties<AssignmentEffect>().HaveConversion<string>().HaveMaxLength(8);
+        b.Properties<AuditOutcome>().HaveConversion<string>().HaveMaxLength(8);
+        b.Properties<string>().HaveMaxLength(1024);
+    }
+
+    protected override void OnModelCreating(ModelBuilder m)
+    {
+        m.Entity<User>(e =>
+        {
+            e.HasIndex(x => x.NormalizedUserName).IsUnique();
+            e.HasIndex(x => new { x.ExternalTenantId, x.ExternalObjectId }).IsUnique().HasFilter("ExternalObjectId IS NOT NULL");
+            e.Property(x => x.UserName).HasMaxLength(128);
+            e.Property(x => x.NormalizedUserName).HasMaxLength(128);
+            e.Property(x => x.PasswordHash).HasMaxLength(256);
+            e.Property(x => x.Version).IsConcurrencyToken();
+        });
+        m.Entity<RecoveryCode>().HasIndex(x => x.UserId);
+        m.Entity<UserSession>(e =>
+        {
+            e.HasIndex(x => x.UserId);
+            e.Property(x => x.UserAgent).HasMaxLength(256);
+        });
+        m.Entity<MfaChallenge>().HasIndex(x => x.TokenHash).IsUnique();
+        m.Entity<LoginThrottle>().HasKey(x => x.Key);
+        m.Entity<OneTimeToken>().HasIndex(x => x.TokenHash).IsUnique();
+
+        m.Entity<Role>(e =>
+        {
+            e.HasIndex(x => x.Name).IsUnique();
+            e.HasIndex(x => x.BuiltInKey).IsUnique().HasFilter("BuiltInKey IS NOT NULL");
+            e.HasMany(x => x.Permissions).WithOne().HasForeignKey(x => x.RoleId).OnDelete(DeleteBehavior.Cascade);
+        });
+        m.Entity<RolePermission>().HasKey(x => new { x.RoleId, x.Permission });
+        m.Entity<RoleAssignment>(e =>
+        {
+            e.HasIndex(x => new { x.PrincipalType, x.PrincipalId });
+            e.HasIndex(x => new { x.PrincipalType, x.PrincipalId, x.RoleId, x.ScopeType, x.ScopeId, x.Effect }).IsUnique();
+            e.HasOne(x => x.Role).WithMany().HasForeignKey(x => x.RoleId).OnDelete(DeleteBehavior.Restrict);
+        });
+        m.Entity<LogicalGroup>().HasIndex(x => x.Name).IsUnique();
+        m.Entity<LogicalGroupMember>(e =>
+        {
+            e.HasKey(x => new { x.GroupId, x.VmId });
+            e.HasIndex(x => x.VmId);
+        });
+
+        m.Entity<ManagedHost>(e =>
+        {
+            e.HasIndex(x => x.DisplayName).IsUnique();
+            e.Property(x => x.HostFactsJson).HasMaxLength(16000);
+            e.Property(x => x.InventoryWarningsJson).HasMaxLength(16000);
+            e.Property(x => x.AccessMessage).HasMaxLength(2000);
+        });
+        m.Entity<AgentCertificate>(e =>
+        {
+            e.HasIndex(x => x.ThumbprintSha256).IsUnique();
+            e.HasIndex(x => x.HostId);
+        });
+        m.Entity<EnrollmentToken>().HasIndex(x => x.TokenHash).IsUnique();
+        m.Entity<VirtualMachine>(e =>
+        {
+            e.HasIndex(x => new { x.HostId, x.HyperVId }).IsUnique();
+            e.HasIndex(x => x.Name);
+        });
+        m.Entity<InventoryEvent>().HasIndex(x => new { x.HostId, x.At });
+        m.Entity<InventoryEvent>().HasIndex(x => new { x.VmId, x.At });
+
+        m.Entity<Job>(e =>
+        {
+            e.HasIndex(x => new { x.Status, x.CreatedAt });
+            e.HasIndex(x => new { x.TargetId, x.CreatedAt });
+            e.HasIndex(x => new { x.RequestedByUserId, x.IdempotencyKey }).IsUnique().HasFilter("IdempotencyKey IS NOT NULL");
+            e.Property(x => x.ResultMessage).HasMaxLength(2000);
+            e.Property(x => x.Version).IsConcurrencyToken();
+        });
+        m.Entity<JobEvent>().HasIndex(x => new { x.JobId, x.At });
+        m.Entity<ResourceLock>().HasKey(x => x.ResourceKey);
+
+        m.Entity<AuditEntry>(e =>
+        {
+            e.HasIndex(x => x.TimestampUtc);
+            e.HasIndex(x => new { x.ActorUserId, x.TimestampUtc });
+            e.Property(x => x.DetailsJson).HasMaxLength(4000);
+        });
+        m.Entity<Setting>(e =>
+        {
+            e.HasKey(x => x.Key);
+            e.Property(x => x.Value).HasMaxLength(8000);
+        });
+    }
+}
