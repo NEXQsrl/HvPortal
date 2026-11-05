@@ -106,7 +106,11 @@ public static class InventoryEndpoints
 
     private static object EnrollmentInfo(HttpContext http, InternalCertificateAuthority ca, GatewayOptions options, string token, DateTimeOffset expires)
     {
-        var name = options.PublicNames.FirstOrDefault() ?? http.Request.Host.Host;
+        // Never hand out a loopback address to a remote host: fall back to this machine's DNS name,
+        // which is always included in the internal server certificate.
+        var requestHost = http.Request.Host.Host;
+        var loopback = requestHost is "localhost" or "127.0.0.1" or "::1" or "[::1]";
+        var name = options.PublicNames.FirstOrDefault() ?? (loopback ? MachineDnsName() : requestHost);
         var url = $"https://{name}:{options.AgentPort}";
         return new
         {
@@ -117,6 +121,18 @@ public static class InventoryEndpoints
             command = $"$env:HVP_ENROLLMENT_TOKEN = '<token>'; & 'C:\\Program Files\\HvPortal\\Agent\\HvPortal.Agent.exe' enroll --gateway {url} --ca-sha256 {ca.CaFingerprintSha256}",
             note = "The token is shown only once and expires quickly. Verify the CA fingerprint out of band.",
         };
+    }
+
+    private static string MachineDnsName()
+    {
+        try
+        {
+            return System.Net.Dns.GetHostEntry(Environment.MachineName).HostName;
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return Environment.MachineName;
+        }
     }
 
     private static async Task<IResult> CreateHostAsync(CreateHostRequest req, HttpContext http, PortalDbContext db, EnrollmentService enrollment,
