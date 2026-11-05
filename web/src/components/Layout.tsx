@@ -57,6 +57,7 @@ export function Layout({ children }: { children: ReactNode }) {
           {link('/vms', 'nav.vms')}
           {link('/hosts', 'nav.hosts')}
           {link('/jobs', 'nav.jobs')}
+          {link('/guide', 'nav.guide', can('hosts.manage'))}
           <div className="nav-sep" />
           {link('/networks', 'nav.networks', true, true)}
           {link('/storage', 'nav.storage', true, true)}

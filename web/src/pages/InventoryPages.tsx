@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { get, newIdempotencyKey, post } from '../api/client';
 import { realtime } from '../api/realtime';
 import type { EnrollmentInfo, Host, InventoryEvent, Job, PowerOperation, Vm } from '../api/types';
-import { CopyButton, Dialog, ErrorAlert, formatBytes, formatDuration, JobBadge, Loading, PowerBadge, Progress, useLoad } from '../components/ui';
+import { AgentSetupGuide } from '../components/AgentSetupGuide';
+import { Dialog, ErrorAlert, formatBytes, formatDuration, JobBadge, Loading, PowerBadge, Progress, useLoad } from '../components/ui';
 import { useI18n, type TKey } from '../i18n';
 import { useSession } from '../session';
 
@@ -59,6 +60,7 @@ export function HostsPage() {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [enrollment, setEnrollment] = useState<EnrollmentInfo | null>(null);
+  const [enrollHostId, setEnrollHostId] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
 
   const create = async (e: FormEvent) => {
@@ -67,6 +69,7 @@ export function HostsPage() {
     try {
       const r = await post<{ hostId: string; enrollment: EnrollmentInfo }>('/api/v1/hosts', { displayName: name });
       setEnrollment(r.enrollment);
+      setEnrollHostId(r.hostId);
       setAdding(false);
       setName('');
       hosts.reload();
@@ -108,31 +111,34 @@ export function HostsPage() {
             <input id="host-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} /></div>
         </form>
       </Dialog>
-      <EnrollmentDialog info={enrollment} onClose={() => setEnrollment(null)} />
+      <EnrollmentDialog info={enrollment} host={(hosts.data ?? []).find((h) => h.id === enrollHostId) ?? null} onClose={() => setEnrollment(null)} />
     </>
   );
 }
 
-function EnrollmentDialog({ info, onClose }: { info: EnrollmentInfo | null; onClose: () => void }) {
-  const { t, fmtDate } = useI18n();
+function EnrollmentDialog({ info, host, onClose }: { info: EnrollmentInfo | null; host: Host | null; onClose: () => void }) {
+  const { t } = useI18n();
   if (!info) return null;
-  const cmd = info.command.replace('<token>', info.token);
+  const connection = {
+    gatewayNames: info.gatewayNames,
+    preferredName: new URL(info.gatewayAgentUrl).hostname,
+    agentPort: info.agentPort,
+    gatewayAgentUrl: info.gatewayAgentUrl,
+    caFingerprintSha256: info.caFingerprintSha256,
+    listensOnNetwork: info.listensOnNetwork,
+    bindAddress: info.bindAddress,
+  };
   return (
-    <Dialog open title={t('host.enrollTitle')} onClose={onClose} actions={<button type="button" className="primary" onClick={onClose}>{t('common.close')}</button>}>
-      <p className="muted">{t('host.enrollHelp', { t: fmtDate(info.expiresAt) })}</p>
-      <div className="field"><label>{t('host.token')}</label><div className="row"><div className="secret" style={{ flex: 1 }}>{info.token}</div><CopyButton text={info.token} /></div></div>
-      <div className="field"><label>{t('host.fingerprint')}</label><div className="secret">{info.caFingerprintSha256}</div></div>
-      <pre className="command">{cmd}</pre>
-      <CopyButton text={cmd} />
+    <Dialog open wide title={t('host.enrollTitle') + (host ? ` — ${host.displayName}` : '')} onClose={onClose}
+      actions={<button type="button" className="primary" onClick={onClose}>{t('common.close')}</button>}>
+      <AgentSetupGuide connection={connection} token={info.token} expiresAt={info.expiresAt} host={host} />
     </Dialog>
   );
 }
-
 export function HostDetailPage() {
   const { id } = useParams();
   const { t, fmtDate } = useI18n();
   const { can } = useSession();
-  const navigate = useNavigate();
   const data = useLoad(() => get<{ host: Host; events: InventoryEvent[] }>(`/api/v1/hosts/${id}`), [id]);
   useLive(data.reload);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
@@ -192,7 +198,7 @@ export function HostDetailPage() {
           <button type="button" className="danger" onClick={() => void revoke()}>{t('host.revoke')}</button></>}>
         <p>{t('host.revokeImpact')}</p>
       </Dialog>
-      <EnrollmentDialog info={enrollment} onClose={() => { setEnrollment(null); navigate(0); }} />
+      <EnrollmentDialog info={enrollment} host={h} onClose={() => { setEnrollment(null); data.reload(); }} />
     </>
   );
 }

@@ -43,7 +43,7 @@ foreach ($p in @(@{ Name = 'gateway'; Project = 'src\HvPortal.Gateway' }, @{ Nam
     dotnet list (Join-Path $repo $p.Project) package --include-transitive --format json |
         Out-File -Encoding utf8 "$out\deps\nuget-$($p.Name).json"
 }
-Copy-Item (Join-Path $repo 'installer\*.ps1') -Destination (New-Item -ItemType Directory -Force "$out\installer") -Exclude 'Build-Release.ps1'
+Copy-Item (Join-Path $repo 'installer\*.ps1') -Destination (New-Item -ItemType Directory -Force "$out\installer") -Exclude 'Build-Release.ps1', 'New-AgentPackage.ps1'
 
 if ($SigningCertificateThumbprint) {
     $cert = Get-ChildItem Cert:\LocalMachine\My, Cert:\CurrentUser\My | Where-Object Thumbprint -eq $SigningCertificateThumbprint | Select-Object -First 1
@@ -58,6 +58,9 @@ if ($SigningCertificateThumbprint) {
 } else {
     Write-Warning 'No signing certificate provided: binaries and scripts are UNSIGNED.'
 }
+
+# Downloadable agent package served by the gateway portal (built from the possibly signed agent).
+& (Join-Path $PSScriptRoot 'New-AgentPackage.ps1') -AgentDirectory (Join-Path $out 'agent') -OutputDirectory (Join-Path $out 'gateway\packages')
 
 $sums = Get-ChildItem $out -Recurse -File | Where-Object Name -ne 'SHA256SUMS.txt' | ForEach-Object {
     '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), [IO.Path]::GetRelativePath($out, $_.FullName)

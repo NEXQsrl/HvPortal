@@ -125,6 +125,13 @@ public sealed class InternalCertificateAuthority : IDisposable
 
     public static string Sha256Thumbprint(X509Certificate2 cert) => Convert.ToHexString(SHA256.HashData(cert.RawData));
 
+    /// <summary>DNS names and IP addresses in the agent-facing server certificate (agents must use one of them).</summary>
+    public IReadOnlyList<string> ServerCertificateNames()
+    {
+        var ext = ServerCertificate.Extensions.OfType<X509SubjectAlternativeNameExtension>().FirstOrDefault();
+        return ext is null ? [] : [.. ext.EnumerateDnsNames(), .. ext.EnumerateIPAddresses().Select(i => i.ToString())];
+    }
+
     public void Dispose()
     {
         CaCertificate.Dispose();

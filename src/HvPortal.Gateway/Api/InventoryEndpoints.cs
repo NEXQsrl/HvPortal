@@ -30,6 +30,8 @@ public static class InventoryEndpoints
         hosts.MapPost("/{id:guid}/enrollment-token", NewTokenAsync);
         hosts.MapPost("/{id:guid}/revoke", RevokeHostAsync);
         hosts.MapPost("/{id:guid}/refresh", RefreshHostAsync);
+        hosts.MapGet("/connection-info", async (HttpContext http, InternalCertificateAuthority ca, IOptions<GatewayOptions> options) =>
+            await http.GuardAsync(Permissions.HostsManage, ResourceRef.Global, "hosts.connection_info") ?? Results.Ok(GatewayConnectionInfo(http, ca, options.Value)));
 
         var vms = app.MapGroup("/api/v1/vms").WithTags("Virtual machines");
         vms.MapGet("/", ListVmsAsync);
@@ -104,25 +106,47 @@ public static class InventoryEndpoints
         return Results.Ok(new { host = HostDto(h, agents.IsConnected(id), count, time.GetUtcNow()), events });
     }
 
+    /// <summary>Connection facts an agent needs: names valid in the gateway certificate, port, CA pin, reachability.</summary>
+    public sealed record GatewayConnection(List<string> GatewayNames, string PreferredName, int AgentPort, string GatewayAgentUrl,
+        string CaFingerprintSha256, bool ListensOnNetwork, string BindAddress);
+
+    internal static GatewayConnection GatewayConnectionInfo(HttpContext http, InternalCertificateAuthority ca, GatewayOptions options)
+    {
+        var names = ca.ServerCertificateNames().Where(n => !IsLoopback(n)).ToList();
+        // Prefer: first configured public name, then the name used in the browser (if valid in the certificate), then the machine DNS name.
+        var requestHost = http.Request.Host.Host;
+        var preferred = options.PublicNames.FirstOrDefault(n => !IsLoopback(n))
+                        ?? (names.Contains(requestHost, StringComparer.OrdinalIgnoreCase) && !IsLoopback(requestHost) ? requestHost : null)
+                        ?? names.FirstOrDefault(n => n.Contains('.', StringComparison.Ordinal) && !System.Net.IPAddress.TryParse(n, out _))
+                        ?? names.FirstOrDefault()
+                        ?? MachineDnsName();
+        var bind = System.Net.IPAddress.TryParse(options.BindAddress, out var ip) ? ip : System.Net.IPAddress.Any;
+        // ListensOnNetwork == false: the gateway listens on loopback only and no remote host can connect.
+        return new GatewayConnection(names, preferred, options.AgentPort, $"https://{preferred}:{options.AgentPort}",
+            ca.CaFingerprintSha256, !System.Net.IPAddress.IsLoopback(bind), options.BindAddress);
+    }
+
+    private static bool IsLoopback(string name) =>
+        name is "localhost" or "::1" or "[::1]" || (System.Net.IPAddress.TryParse(name, out var ip) && System.Net.IPAddress.IsLoopback(ip));
+
     private static object EnrollmentInfo(HttpContext http, InternalCertificateAuthority ca, GatewayOptions options, string token, DateTimeOffset expires)
     {
-        // Never hand out a loopback address to a remote host: fall back to this machine's DNS name,
-        // which is always included in the internal server certificate.
-        var requestHost = http.Request.Host.Host;
-        var loopback = requestHost is "localhost" or "127.0.0.1" or "::1" or "[::1]";
-        var name = options.PublicNames.FirstOrDefault() ?? (loopback ? MachineDnsName() : requestHost);
-        var url = $"https://{name}:{options.AgentPort}";
+        var c = GatewayConnectionInfo(http, ca, options);
+        var url = c.GatewayAgentUrl;
         return new
         {
             token,
             expiresAt = expires,
             caFingerprintSha256 = ca.CaFingerprintSha256,
             gatewayAgentUrl = url,
-            command = $"$env:HVP_ENROLLMENT_TOKEN = '<token>'; & 'C:\\Program Files\\HvPortal\\Agent\\HvPortal.Agent.exe' enroll --gateway {url} --ca-sha256 {ca.CaFingerprintSha256}",
+            gatewayNames = c.GatewayNames,
+            agentPort = options.AgentPort,
+            listensOnNetwork = c.ListensOnNetwork,
+            bindAddress = c.BindAddress,
+            command = $"$env:HVP_ENROLLMENT_TOKEN = '<token>'; .\\Install-Agent.ps1 -Source ..\\agent -Gateway {url} -CaSha256 {ca.CaFingerprintSha256}",
             note = "The token is shown only once and expires quickly. Verify the CA fingerprint out of band.",
         };
     }
-
     private static string MachineDnsName()
     {
         try

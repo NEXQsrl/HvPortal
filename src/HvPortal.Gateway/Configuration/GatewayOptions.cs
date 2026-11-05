@@ -17,6 +17,9 @@ public sealed class GatewayOptions
     /// <summary>DNS names / IPs placed in the internal server certificate (agents connect using one of these).</summary>
     public List<string> PublicNames { get; set; } = [];
 
+    /// <summary>Directory with downloadable packages (agent zip + manifest). Default: &lt;install dir&gt;\packages.</summary>
+    public string? PackagesDirectory { get; set; }
+
     /// <summary>Optional: thumbprint of a certificate in LocalMachine\My to use for the browser UI instead of the internal one.</summary>
     public string? UiCertificateThumbprint { get; set; }
 

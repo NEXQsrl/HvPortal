@@ -169,11 +169,35 @@ export interface SecuritySettings {
   localSignIn: 'allowed' | 'break-glass-only';
 }
 
+export interface GatewayConnection {
+  gatewayNames: string[];
+  preferredName: string;
+  agentPort: number;
+  gatewayAgentUrl: string;
+  caFingerprintSha256: string;
+  listensOnNetwork: boolean;
+  bindAddress: string;
+}
+
 export interface EnrollmentInfo {
   token: string;
   expiresAt: string;
   caFingerprintSha256: string;
   gatewayAgentUrl: string;
+  gatewayNames: string[];
+  agentPort: number;
+  listensOnNetwork: boolean;
+  bindAddress: string;
   command: string;
   note: string;
+}
+
+export interface PackageInfo {
+  fileName: string;
+  sizeBytes: number;
+  sha256: string;
+  version: string | null;
+  builtAtUtc: string | null;
+  signed: boolean;
+  signer: string | null;
 }

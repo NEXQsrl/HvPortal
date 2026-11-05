@@ -10,6 +10,7 @@
   Not for production: use installer\Install-Gateway.ps1.
 .EXAMPLE
   .\Start-DevGateway.ps1 -BindAddress 0.0.0.0 -PublicNames gw01.contoso.local,10.0.0.5
+  The downloadable agent package is built into artifacts\packages on first run (or with -BuildAgentPackage).
 #>
 param(
     [string]$DataDirectory = (Join-Path $env:LOCALAPPDATA 'HvPortal\dev-gateway'),
@@ -17,6 +18,8 @@ param(
     [int]$AgentPort = 18444,
     [string]$BindAddress = '127.0.0.1',
     [string[]]$PublicNames = @(),
+    [string]$PackagesDirectory,
+    [switch]$BuildAgentPackage,
     [switch]$Reset
 )
 $ErrorActionPreference = 'Stop'
@@ -24,6 +27,11 @@ $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 if ($Reset -and (Test-Path -LiteralPath $DataDirectory)) {
     Remove-Item -LiteralPath $DataDirectory -Recurse -Force
 }
+if (-not $PackagesDirectory) { $PackagesDirectory = Join-Path $repo 'artifacts\packages' }
+if ($BuildAgentPackage -or -not (Test-Path (Join-Path $PackagesDirectory 'HvPortal.Agent-win-x64.zip'))) {
+    & (Join-Path $repo 'installer\New-AgentPackage.ps1') -OutputDirectory $PackagesDirectory
+}
+$env:Gateway__PackagesDirectory = $PackagesDirectory
 $env:HVP_DATA_DIR = $DataDirectory
 $env:Gateway__UiPort = "$UiPort"
 $env:Gateway__AgentPort = "$AgentPort"

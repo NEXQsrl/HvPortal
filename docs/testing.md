@@ -9,13 +9,23 @@
 | `tests/HvPortal.Gateway.Tests` (integration, real pipeline on TestServer + SQLite) | ~33 | pass | unauthenticated access, CSRF, VM isolation (404), force permission + denied audit, typed confirmation, **revocation enforced at job execution**, sessions revoked after admin reset, re-authentication window, **escalation prevention**, last admin protection, user-name injection, hostile query strings, idempotency keys, **TOTP replay**, MFA challenge brute-force bound, progressive delay without account lockout, **restart before/after dispatch**, reconciliation without re-send, **channel loss**, unreachable host retry/fail, cancellation rules, per-VM lock, OpenAPI generation and protection |
 | `scripts/dev/Invoke-SmokeTest.ps1` (real Kestrel, real TLS, real agent process) | 35 | pass | setup token + ACL, CSRF/Origin, common password, setup once, MFA restriction, TOTP enrollment (local QR), replay, recovery codes single use, generic login errors, port separation, enrollment with wrong pin refused, token single use, **mTLS agent channel**, real inventory reporting `AccessDenied` truthfully, revocation disconnects and blocks reconnection, audit chain verification, denied actions audited |
 | `web` Vitest | 1 | pass | IT/EN dictionaries have identical keys |
-| `web/e2e/ui-smoke.mjs` (Edge headless via playwright-core) | 10 | pass | setup → forced MFA → recovery codes → dashboard; host creation and enrollment dialog; real agent enrollment; **live update via SignalR**; host detail shows real access status; audit verification from UI; language/theme switch; no horizontal scroll at 390 px; **no CSP violations** |
+| `tests/HvPortal.Gateway.Tests` (downloads) | 4 | pass | package download requires `hosts.manage`, missing package reported (no fake), real SHA-256 and manifest signature state, download audited, connection info never offers loopback names |
+| `web/e2e/ui-smoke.mjs` (Edge headless via playwright-core) | 16 | pass | as below, plus: guide with ready-to-paste command never pointing to localhost, token countdown, package download matching the displayed SHA-256, live "agent connected" status in the guide, guide page in Italian and English |
+| (previous run) `web/e2e/ui-smoke.mjs` | 10 | pass | setup → forced MFA → recovery codes → dashboard; host creation and enrollment dialog; real agent enrollment; **live update via SignalR**; host detail shows real access status; audit verification from UI; language/theme switch; no horizontal scroll at 390 px; **no CSP violations** |
 | `installer/Build-Release.ps1 -SkipTests` | — | pass | self-contained publish of gateway and agent, SPA included, dependency inventory, SHA-256 checksums; unsigned (no certificate) |
+
+## Executed on a real Hyper-V host (production, 2026-11-05)
+
+- `Install-Agent.ps1` elevated on a real Hyper-V host: service account, *Hyper-V Administrators* membership,
+  enrollment over the network to a gateway on another machine, mTLS channel, automatic reconnection after gateway
+  restarts. Issues found and fixed: loopback URL in enrollment instructions, gateway bound to loopback only,
+  transient "Access is denied" on first launch of the unsigned executable (antivirus scan), expired token reuse.
+  These pitfalls are now covered by the in-app guide.
 
 ## Not executed yet (requires real hosts or elevation)
 
-- Any Hyper-V operation on real VMs (inventory with VMs, power operations, restart heuristic).
-- Installer scripts (need administrator rights), service accounts, firewall rules, upgrade/rollback, uninstall.
+- Power operations on real VMs and the restart heuristic (inventory accuracy to be compared with Hyper-V Manager).
+- `Install-Gateway.ps1` as a service, firewall rules, upgrade/rollback, uninstall.
 - WS2025 Standard/Datacenter and WS2022 compatibility.
 - Load/performance with many hosts/VMs; SignalR scale.
 

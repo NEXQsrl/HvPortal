@@ -46,12 +46,24 @@ cd <release>\installer
 
 ## 4. Add a Hyper-V host
 
-1. Portal → Hosts → *Add host* → copy the one-time token (15 min) and the CA fingerprint.
-2. On the host (elevated):
+The portal contains a step-by-step guide in the language selected by the user (menu **Guide**, and the
+*Add host* / *New enrollment token* dialogs, where every command is pre-filled with the token, a valid gateway name and
+the CA fingerprint, with a token countdown and the live connection status of the host).
+
+1. Portal → Hosts → *Add host*. The dialog shows the one-time token (15 min) and the CA fingerprint.
+2. **Download the agent package** from the dialog (`HvPortal.Agent-win-x64.zip`, served by the gateway from
+   `<gateway>\packages`, built by `Build-Release.ps1`; requires `hosts.manage`; downloads are audited). The dialog
+   shows the package SHA-256 and whether it is Authenticode-signed.
+3. On the host (elevated): verify `Get-FileHash`, `Unblock-File`, `Expand-Archive`, then check the network with
+   `Test-NetConnection <gateway> -Port 8444`.
+4. Install and enroll:
    ```powershell
+   cd C:\HvPortal\agent-package\installer
    $env:HVP_ENROLLMENT_TOKEN = '<token>'
    .\Install-Agent.ps1 -Source ..\agent -Gateway https://gw01.contoso.local:8444 -CaSha256 <fingerprint>
    ```
+   `-Gateway` must use one of the names in the gateway certificate (listed in the guide); `localhost` never works
+   from another machine. If the gateway listens on loopback only, the guide shows a blocking warning.
    The script installs `HvPortalAgent` as `NT SERVICE\HvPortalAgent`, adds it to *Hyper-V Administrators*, enrolls
    and starts it. No inbound firewall rule is created on the host.
 3. The host turns *online* in the portal within seconds; check *Hyper-V access* = `Ok`.

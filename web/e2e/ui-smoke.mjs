@@ -2,7 +2,7 @@
 // Requires a freshly started gateway (setup not completed) and a built agent.
 // Usage: node e2e/ui-smoke.mjs --url https://localhost:18443 --data <gateway data dir> --agent-data <dir> --agent-exe <path> --out <screenshot dir>
 import { chromium } from 'playwright-core';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -70,19 +70,35 @@ try {
   await page.getByRole('button', { name: 'Aggiungi host' }).click();
   await page.locator('#host-name').fill('hv-lab-01');
   await page.getByRole('button', { name: 'Crea e ottieni il token di registrazione' }).click();
-  await page.getByRole('heading', { name: "Registra l'agente" }).waitFor();
-  const enrollToken = (await page.locator('dialog[open] .secret').nth(0).innerText()).trim();
-  const fingerprint = (await page.locator('dialog[open] .secret').nth(1).innerText()).trim();
-  await shot(page, '03-enrollment-token');
-  check('enrollment token and CA fingerprint displayed', enrollToken.length > 30 && /^[0-9A-F]{64}$/.test(fingerprint));
-  await page.getByRole('button', { name: 'Chiudi' }).click();
+  await page.getByRole('heading', { name: /Registra l'agente/ }).waitFor();
+  const dialog = page.locator('dialog[open]');
+  const installCmd = await dialog.locator('pre.command').filter({ hasText: 'HVP_ENROLLMENT_TOKEN' }).innerText();
+  const enrollToken = /HVP_ENROLLMENT_TOKEN = '([^']+)'/.exec(installCmd)[1];
+  const fingerprint = /-CaSha256 ([0-9A-F]{64})/.exec(installCmd)[1];
+  const gatewayArg = /-Gateway (\S+)/.exec(installCmd)[1];
+  check('guide shows ready-to-paste install command', enrollToken.length > 30 && /^[0-9A-F]{64}$/.test(fingerprint), gatewayArg);
+  check('install command never points to localhost', !/localhost|127\.0\.0\.1/.test(gatewayArg), gatewayArg);
+  check('token countdown visible', (await dialog.getByText(/Token valido ancora per/).count()) === 1);
 
-  // Real agent: enroll + run
+  // Download from the portal and compare with the SHA-256 shown in the guide.
+  await dialog.locator('.pkg-hash').waitFor();
+  const shownHash = (await dialog.locator('.pkg-hash').innerText()).trim();
+  const [download] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('link', { name: /Scarica il pacchetto agente/ }).click()]);
+  const zipPath = join(out, 'downloaded-agent.zip');
+  await download.saveAs(zipPath);
+  const actualHash = createHash('sha256').update(readFileSync(zipPath)).digest('hex').toUpperCase();
+  check('agent package downloads and matches displayed SHA-256', actualHash === shownHash, actualHash.slice(0, 16));
+  await shot(page, '03-enrollment-guide');
+
+  // Real agent: enroll + run (against loopback: the e2e gateway listens locally only)
   rmSync(agentData, { recursive: true, force: true });
   const env = { ...process.env, HVP_AGENT_DATA_DIR: agentData, HVP_ENROLLMENT_TOKEN: enrollToken };
   execFileSync(agentExe, ['enroll', '--gateway', `https://localhost:${agentPort}`, '--ca-sha256', fingerprint], { env, stdio: 'pipe' });
   agent = spawn(agentExe, ['run'], { env: { ...env, HVP_ENROLLMENT_TOKEN: '' }, stdio: 'ignore' });
-
+  await dialog.getByText(/Agente collegato/).waitFor({ timeout: 30000 });
+  check('guide shows live "agent connected" status', true);
+  await shot(page, '03b-enrollment-guide-connected');
+  await page.getByRole('button', { name: 'Chiudi' }).click();
   // Live update: the host row should turn online without reloading the page.
   await page.getByText('online', { exact: true }).waitFor({ timeout: 30000 });
   check('host shows online via live update (SignalR)', true);
@@ -111,13 +127,24 @@ try {
   await page.getByRole('heading', { name: 'Sicurezza' }).waitFor();
   await shot(page, '09-settings');
 
+  await page.getByRole('link', { name: 'Guida' }).click();
+  await page.getByRole('heading', { name: 'Guida: collegare un host Hyper-V' }).waitFor();
+  await page.locator('summary', { hasText: 'Risoluzione dei problemi' }).waitFor();
+  check('guide page available in Italian', true);
+  await shot(page, '09b-guide');
+
   // Theme + language toggles
   await page.getByRole('button', { name: 'English' }).click();
   await page.getByRole('button', { name: 'Toggle light/dark theme' }).click();
-  await page.getByRole('link', { name: 'Hosts' }).click();
+  await page.getByRole('link', { name: 'Hosts', exact: true }).click();
   await page.waitForTimeout(500);
   await shot(page, '10-hosts-dark-en');
   check('language switch to English', (await page.getByRole('heading', { name: 'Hosts' }).count()) > 0);
+  await page.getByRole('link', { name: 'Guide', exact: true }).click();
+  await page.getByRole('heading', { name: 'Guide: connect a Hyper-V host' }).waitFor();
+  await page.locator('summary', { hasText: 'Troubleshooting' }).waitFor();
+  check('guide page available in English', true);
+  await shot(page, '10b-guide-en');
 
   // Mobile layout
   await page.setViewportSize({ width: 390, height: 800 });

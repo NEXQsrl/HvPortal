@@ -54,7 +54,7 @@ dotnet build HvPortal.slnx
 Automated checks:
 
 ```powershell
-dotnet test HvPortal.slnx                           # 121 unit + integration tests
+dotnet test HvPortal.slnx                           # 126 unit + integration tests
 .\scripts\dev\Invoke-SmokeTest.ps1                  # 35 HTTP end-to-end checks against a fresh dev gateway
 cd web; npx vitest run; node e2e/ui-smoke.mjs ...   # UI e2e with the local Edge (see docs/testing.md)
 ```

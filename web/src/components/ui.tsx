@@ -3,8 +3,8 @@ import { ApiError } from '../api/client';
 import type { JobStatus, PowerState } from '../api/types';
 import { useI18n } from '../i18n';
 
-export function Dialog({ open, title, children, actions, onClose }: {
-  open: boolean; title: string; children: ReactNode; actions: ReactNode; onClose: () => void;
+export function Dialog({ open, title, children, actions, onClose, wide }: {
+  open: boolean; title: string; children: ReactNode; actions: ReactNode; onClose: () => void; wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -14,7 +14,7 @@ export function Dialog({ open, title, children, actions, onClose }: {
     if (!open && d.open) d.close();
   }, [open]);
   return (
-    <dialog ref={ref} onClose={onClose} aria-labelledby="dlg-title">
+    <dialog ref={ref} onClose={onClose} aria-labelledby="dlg-title" className={wide ? 'wide' : undefined}>
       <div className="dialog-body">
         <h2 id="dlg-title" style={{ marginTop: 0 }}>{title}</h2>
         {children}

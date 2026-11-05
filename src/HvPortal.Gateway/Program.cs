@@ -213,6 +213,7 @@ namespace HvPortal.Gateway
             InventoryEndpoints.Map(app);
             JobEndpoints.Map(app);
             AgentEndpoints.Map(app);
+            DownloadEndpoints.Map(app);
 
             app.MapGet("/api/v1/system/info", async (HttpContext http, AccessEvaluator access, AgentConnectionManager agents, GatewayPaths paths) =>
             {

@@ -8,6 +8,7 @@ import { I18nProvider } from './i18n';
 import { AccountPage, AuditPage, PlannedPage, SettingsPage, UsersPage } from './pages/AdminPages';
 import { ForcedMfaPage, ForcedPasswordChangePage, LoginPage, SetupPage } from './pages/AuthPages';
 import { DashboardPage, HostDetailPage, HostsPage, JobDetailPage, JobsPage, VmDetailPage, VmListPage } from './pages/InventoryPages';
+import { GuidePage } from './pages/GuidePage';
 import { SessionProvider, useSession } from './session';
 import './styles.css';
 
@@ -32,6 +33,7 @@ function Gate() {
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/account" element={<AccountPage />} />
+        <Route path="/guide" element={<GuidePage />} />
         <Route path="/networks" element={<PlannedPage titleKey="nav.networks" milestone="Milestone 2" />} />
         <Route path="/storage" element={<PlannedPage titleKey="nav.storage" milestone="Milestone 2-4" />} />
         <Route path="/backup" element={<PlannedPage titleKey="nav.backup" milestone="Milestone 3" />} />
