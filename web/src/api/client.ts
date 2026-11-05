@@ -120,3 +120,30 @@ export function uploadFile<T>(path: string, file: Blob, onProgress: (loaded: num
   })();
   return { promise, abort: () => xhr.abort() };
 }
+
+/**
+ * State-changing request with a non-JSON body or response (backup download / restore upload). Same CSRF and
+ * re-authentication handling as api(); returns the raw Response when it is OK.
+ */
+export async function rawRequest(method: string, path: string, body: BodyInit, headers: Record<string, string>, retried = false): Promise<Response> {
+  const r = await fetch(path, {
+    method,
+    headers: { ...headers, 'X-CSRF-TOKEN': await ensureCsrf() },
+    body,
+    credentials: 'same-origin',
+    cache: 'no-store',
+  });
+  if (r.ok) return r;
+  const err = await parseError(r);
+  if (!retried && err.code === 'csrf_invalid') {
+    resetCsrf();
+    return rawRequest(method, path, body, headers, true);
+  }
+  if (!retried && err.code === 'reauthentication_required' && reauthHandler) {
+    if (await reauthHandler()) {
+      resetCsrf();
+      return rawRequest(method, path, body, headers, true);
+    }
+  }
+  throw err;
+}

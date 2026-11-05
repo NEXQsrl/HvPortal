@@ -38,6 +38,9 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 ## v0.3.4 — delivered (code + automated tests; real-tenant validation pending)
 - Microsoft Entra ID sign-in configured from Settings, pre-provisioned Microsoft users, Entra re-authentication
   (ADR-019). New user dialog: type (local / Microsoft), role and scope, MFA at first sign-in for local users.
+- Settings > Backup and restore of the portal (sealed file, staged restore at the next start; ADR-020).
+- VM summary (agent 0.3.4): creation time, path, Hyper-V notes (synchronized, change events), replication
+  mode/state/health, memory assigned and demand. Agent update notice lists only the missing functions.
 
 ## v0.3.3 — delivered (code + automated tests; real-host validation pending)
 - Storage > Files: host file explorer (open folders with one click, download, upload with progress and drag and

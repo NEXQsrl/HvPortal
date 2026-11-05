@@ -97,6 +97,16 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-020 Portal backup and restore from Settings
+- One file for disaster recovery instead of three procedures (DB copy with the service stopped, key export, CA):
+  `KeyRing.Export` seals the key ring plus extra files with the passphrase; the extra files are a manifest, the SQLite
+  online-backup snapshot of the database and the CA/server certificate blobs.
+- Restore never swaps the database under a running process: the decrypted content is staged (keys re-protected with
+  DPAPI, private ACLs) and applied by the next start before the key ring and EF Core open their files; the previous
+  state is moved aside, not deleted. Sessions of the restored database are revoked.
+- Only holders of every privileged permission, with re-authentication, typed confirmation for the restore; every
+  step audited. The passphrase travels in a request header over HTTPS and is never stored or logged.
+
 ## ADR-019 Microsoft Entra ID sign-in and user onboarding
 - Entra ID (OpenID Connect authorization code flow + PKCE, confidential client, single tenant) implemented directly
   on `Microsoft.IdentityModel.Protocols.OpenIdConnect` (metadata + signing keys) and `JsonWebTokenHandler`

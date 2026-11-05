@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { del, get, post, put } from '@/api/client';
 import type { Assignment, AuditEntry, Role, SecuritySettings, UserRow } from '@/api/types';
 import { CopyButton, ErrorAlert, KeyValue, Loading, Notice, PageHeader, Section, StatusBadge } from '@/components/common';
+import { BackupSection } from '@/components/admin/BackupSection';
 import { AddUserDialog, CreatedUserNotice, EntraSettingsSection, type CreatedUser } from '@/components/admin/UserAdmin';
 import { ActionDialog, Field } from '@/components/dialogs';
 import { MicrosoftMark } from '@/components/MicrosoftMark';
@@ -258,6 +259,7 @@ export function SettingsPage() {
           <Button disabled={!draft} onClick={() => void save()}>{t('common.save')}</Button>
         </Section>
         <EntraSettingsSection />
+        <BackupSection />
         <Section title={t('settings.system')} bodyClassName="p-3">
           {info.data && (
             <KeyValue items={[

@@ -271,6 +271,16 @@ public sealed class VirtualMachine
     public string? GuestOperatingSystem { get; set; }
     public bool? ShutdownServiceAvailable { get; set; }
     public string OperationalStatusJson { get; set; } = "[]";
+    /// <summary>Agent 0.3.4+: creation time in Hyper-V, Hyper-V notes (synchronized, read from the host), configuration folder.</summary>
+    public DateTimeOffset? HyperVCreatedAt { get; set; }
+    public string? HyperVNotes { get; set; }
+    public string? ConfigurationPath { get; set; }
+    /// <summary>Dynamic memory only (Msvm_SummaryInformation.MemoryAvailable / AvailableMemoryBuffer, percent).</summary>
+    public int? MemoryAvailablePercent { get; set; }
+    public int? MemoryBufferPercent { get; set; }
+    public int? ReplicationMode { get; set; }
+    public int? ReplicationState { get; set; }
+    public int? ReplicationHealth { get; set; }
     public DateTimeOffset FirstSeenAt { get; set; }
     public DateTimeOffset LastSeenAt { get; set; }
     public DateTimeOffset? StateChangedAt { get; set; }

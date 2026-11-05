@@ -2,7 +2,22 @@
 
 This page covers backing up **HvPortal's own state**. It is unrelated to VM backup (Milestone 3).
 
-## What to back up
+## From the portal (recommended): Settings > Backup and restore
+
+- **Create backup** (platform administrator, re-authentication): choose a passphrase (≥ 20 characters) and download
+  one `.hvpbak` file. It contains a consistent snapshot of the database (SQLite online backup, the service keeps
+  running), the key ring and the internal CA, sealed with the passphrase (same format as `admin export-keys`).
+  Audited with the SHA-256 of the file. Store file and passphrase separately, offline.
+- **Restore**: choose the file, enter the passphrase, **Verify** (shows date, version, gateway and contents; nothing
+  is written), type `RIPRISTINA`, **Prepare restore**. The restore is staged (`restore-pending\`, key ring re-protected
+  with DPAPI on this machine) and applied at the next start of the service, before the database is opened; the
+  previous database, key ring and CA files are kept in `db\pre-restore-<timestamp>\`. After the start every session is
+  revoked and `settings.backup.restore.applied` is written to the (restored) audit log. **Restart the service now**
+  exits the process so the service recovery restarts it (installed by `Install-Gateway.ps1`).
+- A backup made by a newer HvPortal (unknown database migration) is refused: install that version first.
+- Hosts enrolled after the backup must be enrolled again; VM data is not part of this backup.
+
+## What to back up (manual procedure)
 
 | Item | Path (default `C:\ProgramData\HvPortal\Gateway`) | Notes |
 |---|---|---|

@@ -5,7 +5,7 @@ import { get } from '@/api/client';
 import type { InventoryEvent, Job, Vm } from '@/api/types';
 import { ActionsButton } from '@/components/actions';
 import { AgentUpdateNotice } from '@/components/AgentUpdateNotice';
-import { CheckpointIcon, ErrorAlert, GroupIcon, KeyValue, Loading, Notice, PageHeader, PowerBadge, Section, StatCard, StatusBadge, VmIcon } from '@/components/common';
+import { CheckpointIcon, CopyButton, ErrorAlert, GroupIcon, KeyValue, Loading, Notice, PageHeader, PowerBadge, Section, StatCard, StatusBadge, VmIcon } from '@/components/common';
 import { VmConsole } from '@/components/console/VmConsole';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { useOps } from '@/components/ops/OperationsProvider';
@@ -22,6 +22,14 @@ import { formatBytes, formatDuration } from '@/lib/format';
 import { useLive, useLoad } from '@/lib/hooks';
 
 const TABS = ['summary', 'console', 'settings', 'hardware', 'checkpoints', 'events'] as const;
+
+/** Msvm_SummaryInformation.ReplicationHealth: 0 Not applicable, 1 Ok, 2 Warning, 3 Critical. */
+function ReplicationHealth({ value }: { value: number | null | undefined }) {
+  const { t } = useI18n();
+  if (value == null) return <>—</>;
+  const tone = value === 1 ? 'ok' : value === 2 ? 'warn' : value === 3 ? 'danger' : 'muted';
+  return <StatusBadge tone={tone}>{t(('repl.health.' + Math.min(value, 4)) as TKey)}</StatusBadge>;
+}
 type Tab = (typeof TABS)[number];
 
 export function VmPage() {
@@ -85,8 +93,12 @@ export function VmPage() {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard icon={<Cpu className="size-3.5" />} label="CPU" value={`${vm.processorCount ?? '—'} vCPU`} meter={vm.powerState === 'Running' ? vm.processorLoadPercent : null}
             sub={vm.processorLoadPercent != null && vm.powerState === 'Running' ? t('vm.load', { p: vm.processorLoadPercent }) : '—'} />
-          <StatCard icon={<MemoryStick className="size-3.5" />} label={t('vm.memory')} value={vmMemory(vm)}
-            sub={<>{t('vm.startup')}: {vm.memoryStartupMb != null ? formatBytes(vm.memoryStartupMb * 1048576) : '—'} · {t('vm.dynamicMemory')}: {vm.dynamicMemoryEnabled == null ? '—' : vm.dynamicMemoryEnabled ? t('common.yes') : t('common.no')}</>} />
+          <StatCard icon={<MemoryStick className="size-3.5" />} label={vm.powerState === 'Running' ? t('vm.memoryAssigned') : t('vm.memory')} value={vmMemory(vm)}
+            meter={vm.memoryDemandMb != null && vm.memoryAssignedMb ? Math.min(100, Math.round((vm.memoryDemandMb / vm.memoryAssignedMb) * 100)) : null}
+            sub={<>
+              {vm.memoryDemandMb != null && <span className="block">{t('vm.memoryDemand')}: {formatBytes(vm.memoryDemandMb * 1048576)}{vm.memoryBufferPercent != null ? ` · ${t('vm.memoryBuffer')}: ${vm.memoryBufferPercent}%` : ''}</span>}
+              {t('vm.startup')}: {vm.memoryStartupMb != null ? formatBytes(vm.memoryStartupMb * 1048576) : '—'} · {t('vm.dynamicMemory')}: {vm.dynamicMemoryEnabled == null ? '—' : vm.dynamicMemoryEnabled ? t('common.yes') : t('common.no')}
+            </>} />
           <StatCard icon={<Clock className="size-3.5" />} label={t('vm.uptime')} value={vm.powerState === 'Running' ? formatDuration(vm.uptimeMs) : '—'}
             sub={<>{t('vm.shutdownService')}: {vm.shutdownServiceAvailable == null ? '—' : vm.shutdownServiceAvailable ? 'OK' : t('common.no')}</>} />
           <StatCard icon={<Info className="size-3.5" />} label={t('vm.configuration')} value={`Gen ${vm.generation ?? '—'}`}
@@ -109,6 +121,26 @@ export function VmPage() {
                 : <div className="flex flex-wrap gap-1">{groups.map((g) => <Link key={g.id} to={`/groups/${g.id}`}><StatusBadge tone="muted"><GroupIcon className="size-3" />{g.name}</StatusBadge></Link>)}</div>],
               ['Hyper-V ID', <span key="i" className="font-mono text-xs">{vm.hyperVId}</span>],
               [t('common.description'), vm.description ?? <span className="text-muted-foreground">—</span>],
+            ]} />
+          </Section>
+        </div>
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          <Section title={t('vm.general')} bodyClassName="p-3">
+            <KeyValue items={[
+              [t('vm.createdAt'), vm.hyperVCreatedAt ? fmtDate(vm.hyperVCreatedAt) : '—'],
+              [t('vm.path'), vm.configurationPath
+                ? <span key="p" className="flex items-center gap-1"><span className="font-mono text-xs [overflow-wrap:anywhere]">{vm.configurationPath}</span><CopyButton text={vm.configurationPath} /></span>
+                : '—'],
+              [t('vm.notes'), vm.notes ? <span key="n" className="text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">{vm.notes}</span> : <span className="text-muted-foreground">{vm.notes === '' ? t('vm.noNotes') : '—'}</span>],
+            ]} />
+            {vm.hyperVCreatedAt === undefined || (vm.hyperVCreatedAt === null && vm.configurationPath == null)
+              ? <p className="mt-2 text-xs text-muted-foreground">{t('vm.detailsAgent')}</p> : null}
+          </Section>
+          <Section title={t('vm.replication')} bodyClassName="p-3">
+            <KeyValue items={[
+              [t('vm.replicationHealth'), <ReplicationHealth key="h" value={vm.replicationHealth} />],
+              [t('vm.replicationMode'), vm.replicationMode != null ? t(('repl.mode.' + vm.replicationMode) as TKey) : '—'],
+              [t('vm.replicationState'), vm.replicationState != null ? t(('repl.state.' + Math.min(vm.replicationState, 22)) as TKey) : '—'],
             ]} />
           </Section>
         </div>

@@ -132,6 +132,8 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
         m.Entity<EnrollmentToken>().HasIndex(x => x.TokenHash).IsUnique();
         m.Entity<VirtualMachine>(e =>
         {
+            e.Property(x => x.HyperVNotes).HasMaxLength(4000);
+            e.Property(x => x.ConfigurationPath).HasMaxLength(520);
             e.HasIndex(x => new { x.HostId, x.HyperVId }).IsUnique();
             e.Property(x => x.DetailsJson).HasMaxLength(64000);
             e.Property(x => x.Description).HasMaxLength(1000);

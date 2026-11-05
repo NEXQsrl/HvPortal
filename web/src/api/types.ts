@@ -133,6 +133,18 @@ export interface Vm {
   processorLoadPercent: number | null;
   guestOperatingSystem: string | null;
   shutdownServiceAvailable: boolean | null;
+  /** Agent 0.3.4+ (null with older agents). */
+  hyperVCreatedAt?: string | null;
+  /** Hyper-V notes of the VM, read from the host (edit them in Settings > General). */
+  notes?: string | null;
+  configurationPath?: string | null;
+  memoryAvailablePercent?: number | null;
+  memoryBufferPercent?: number | null;
+  /** Dynamic memory, running VM: memory the guest needs now. */
+  memoryDemandMb?: number | null;
+  replicationMode?: number | null;
+  replicationState?: number | null;
+  replicationHealth?: number | null;
   lastSeenAt: string;
   stateChangedAt: string | null;
   isMissing: boolean;

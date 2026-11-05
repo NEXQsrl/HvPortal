@@ -21,7 +21,9 @@ public sealed class WmiHyperVHost : IHyperVHost
     private const uint ReturnCompleted = 0;
     private const uint ReturnJobStarted = 4096;
 
-    private static readonly uint[] SummaryRequest = [0, 1, 4, 101, 103, 104, 105, 106, 109];
+    // Name, ElementName, CreationTime, Notes, NumberOfProcessors, ProcessorLoad, MemoryUsage, Heartbeat, UpTime, GuestOperatingSystem,
+    // HealthState, MemoryAvailable, AvailableMemoryBuffer, ReplicationMode, ReplicationState, ReplicationHealth (GetSummaryInformation docs).
+    private static readonly uint[] SummaryRequest = [0, 1, 2, 3, 4, 101, 103, 104, 105, 106, 109, 112, 113, 114, 115, 116];
 
     private readonly ILogger<WmiHyperVHost> _logger;
     private readonly string _agentVersion;
@@ -631,7 +633,7 @@ public sealed class WmiHyperVHost : IHyperVHost
         // One query for all setting data: the realized one gives generation/version, snapshot ones are counted as checkpoints.
         var checkpoints = vms.Keys.ToDictionary(k => k, _ => 0);
         using (var s = new ManagementObjectSearcher(scope, new ObjectQuery(
-                   "SELECT VirtualSystemIdentifier, VirtualSystemType, VirtualSystemSubType, Version FROM Msvm_VirtualSystemSettingData"), Enumeration()))
+                   "SELECT VirtualSystemIdentifier, VirtualSystemType, VirtualSystemSubType, Version, ConfigurationDataRoot FROM Msvm_VirtualSystemSettingData"), Enumeration()))
         using (var r = s.Get())
         {
             foreach (ManagementBaseObject o in r)
@@ -649,6 +651,7 @@ public sealed class WmiHyperVHost : IHyperVHost
                         {
                             Generation = ParseGeneration(o["VirtualSystemSubType"] as string),
                             ConfigurationVersion = o["Version"] as string,
+                            ConfigurationPath = o["ConfigurationDataRoot"] as string,
                         };
                     }
                     else if (type == "Microsoft:Hyper-V:Snapshot:Realized")
@@ -735,6 +738,14 @@ public sealed class WmiHyperVHost : IHyperVHost
                     UptimeMs = si["UpTime"] is ulong up ? (long)up : vm.UptimeMs,
                     GuestOperatingSystem = si["GuestOperatingSystem"] as string,
                     HealthState = si["HealthState"] as ushort? ?? vm.HealthState,
+                    CreatedUtc = ParseDmtf(si["CreationTime"] as string) ?? vm.CreatedUtc,
+                    Notes = si["Notes"] is string notes ? (notes.Length > 4000 ? notes[..4000] : notes) : null,
+                    // Valid only with dynamic memory (documented); null otherwise.
+                    MemoryAvailablePercent = vm.DynamicMemoryEnabled == true && si["MemoryAvailable"] is int ma ? ma : null,
+                    MemoryBufferPercent = vm.DynamicMemoryEnabled == true && si["AvailableMemoryBuffer"] is int mb ? mb : null,
+                    ReplicationMode = si["ReplicationMode"] as ushort?,
+                    ReplicationState = si["ReplicationState"] as ushort?,
+                    ReplicationHealth = si["ReplicationHealth"] as ushort?,
                 };
             }
         }

@@ -308,6 +308,17 @@ public static class InventoryEndpoints
             v.ProcessorLoadPercent,
             v.GuestOperatingSystem,
             v.ShutdownServiceAvailable,
+            hyperVCreatedAt = v.HyperVCreatedAt,
+            notes = v.HyperVNotes,
+            v.ConfigurationPath,
+            v.MemoryAvailablePercent,
+            v.MemoryBufferPercent,
+            // Memory the guest actually needs (dynamic memory): assigned x (100 - available %) / 100.
+            memoryDemandMb = v.DynamicMemoryEnabled == true && v.MemoryAssignedMb is { } assigned && v.MemoryAvailablePercent is { } avail && v.PowerState == VmPowerState.Running
+                ? (long?)Math.Max(0, assigned * (100 - avail) / 100) : null,
+            v.ReplicationMode,
+            v.ReplicationState,
+            v.ReplicationHealth,
             v.LastSeenAt,
             v.StateChangedAt,
             v.IsMissing,

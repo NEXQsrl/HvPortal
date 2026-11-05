@@ -107,6 +107,19 @@ public sealed class InventoryIngestor
             vm.GuestOperatingSystem = Truncate(v.GuestOperatingSystem, 256);
             vm.ShutdownServiceAvailable = v.ShutdownServiceAvailable;
             vm.CheckpointCount = v.CheckpointCount ?? vm.CheckpointCount;
+            // Agent 0.3.4+ fields (older agents send null: the previous values are kept).
+            if (v.Notes is not null && vm.HyperVNotes is not null && !string.Equals(v.Notes, vm.HyperVNotes, StringComparison.Ordinal))
+            {
+                Event(hostId, vm.Id, "vm.notes.changed", Truncate(v.Notes, 200), now);
+            }
+            vm.HyperVNotes = v.Notes ?? vm.HyperVNotes;
+            vm.HyperVCreatedAt = v.CreatedUtc ?? vm.HyperVCreatedAt;
+            vm.ConfigurationPath = Truncate(v.ConfigurationPath, 520) ?? vm.ConfigurationPath;
+            vm.MemoryAvailablePercent = v.MemoryAvailablePercent;
+            vm.MemoryBufferPercent = v.MemoryBufferPercent;
+            vm.ReplicationMode = v.ReplicationMode ?? vm.ReplicationMode;
+            vm.ReplicationState = v.ReplicationState ?? vm.ReplicationState;
+            vm.ReplicationHealth = v.ReplicationHealth ?? vm.ReplicationHealth;
             vm.OperationalStatusJson = JsonSerializer.Serialize(v.OperationalStatus.Take(8));
             vm.LastSeenAt = now;
             vm.IsMissing = false;

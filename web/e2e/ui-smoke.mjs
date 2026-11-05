@@ -203,6 +203,32 @@ try {
   check('settings have the Microsoft Entra ID section with the redirect URI to register',
     await page.getByText(/\/api\/v1\/auth\/entra\/callback$/).first().waitFor({ timeout: 10000 }).then(() => true, () => false));
   await shot(page, '10-settings');
+  // Portal backup: sealed download, then restore preview (not applied).
+  const maybeReauth = async () => {
+    const dlg = page.getByRole('dialog', { name: 'Conferma la tua identità' });
+    if (await dlg.waitFor({ timeout: 2500 }).then(() => true, () => false)) {
+      await dlg.locator('#reauth-pw').fill(password);
+      await dlg.locator('#reauth-otp-0').fill(totp(secret));
+      await dlg.getByRole('button', { name: 'Conferma' }).click();
+    }
+  };
+  const bkPass = 'e2e backup passphrase long enough 2026';
+  await page.locator('#bk-pass').fill(bkPass);
+  await page.locator('#bk-pass2').fill(bkPass);
+  const bkDownload = page.waitForEvent('download', { timeout: 30000 });
+  await page.getByRole('button', { name: 'Scarica backup' }).click();
+  await maybeReauth();
+  const bk = await bkDownload;
+  const bkPath = join(out, bk.suggestedFilename());
+  await bk.saveAs(bkPath);
+  const bkBytes = readFileSync(bkPath);
+  check('backup downloads as a sealed .hvpbak (not a plain database)', bk.suggestedFilename().endsWith('.hvpbak') && bkBytes.length > 4096 && !bkBytes.includes(Buffer.from('SQLite format 3')));
+  await page.locator('input[type=file][accept=".hvpbak"]').setInputFiles(bkPath);
+  await page.locator('#bk-rpass').fill(bkPass);
+  await page.getByRole('button', { name: 'Verifica backup' }).click();
+  await maybeReauth();
+  check('restore preview shows the backup contents', await page.getByText(/\d+ utenti, 1 host, \d+ VM, \d+ gruppi/).waitFor({ timeout: 15000 }).then(() => true, () => false));
+  await shot(page, '10c-backup-preview');
 
   if (filesDir) {
     // Host file explorer (real agent, real file system of this machine).

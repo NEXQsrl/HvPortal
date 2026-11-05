@@ -12,6 +12,7 @@ const AGENT_FEATURES: { since: string; key: TKey }[] = [
   { since: '0.3.1', key: 'agentfeat.location' },
   { since: '0.3.2', key: 'agentfeat.vmgroups' },
   { since: '0.3.3', key: 'agentfeat.files' },
+  { since: '0.3.4', key: 'agentfeat.summary' },
 ];
 
 /** Functions not available on a host because its agent is too old (empty = nothing missing). */

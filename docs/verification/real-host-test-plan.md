@@ -74,6 +74,8 @@ Record results (date, build, edition, pass/fail, evidence) in a copy of the tabl
 | V24 | Entra: register the app (Web, redirect URI from Settings), enter tenant/client/secret, "Test connection", enable | metadata read; login page shows "Sign in with Microsoft" |
 | V25 | Create a Microsoft user (UPN) with a role, sign in with that account; sign in with a non-provisioned account of the same tenant | first: signed in, user row no longer marked "*"; second: "not enabled in this portal", audit denied |
 | V26 | As the Entra user perform a sensitive action (e.g. create a user) | popup asks to sign in again; action completes; audit `auth.reauthenticate` method entra |
+| V27 | (agent 0.3.4) VM summary of a dynamic-memory VM and of a replicated VM; edit the notes in Hyper-V Manager | creation time / path equal to `Get-VM \| fl CreationTime,Path`; memory demand close to `MemoryDemand`; replication values equal to `Get-VMReplication`; notes updated within one inventory cycle and an event "notes changed" |
+| V28 | Settings > Backup: download, change something, restore the backup, "Restart the service now" (service mode) | service restarts by itself, change is gone, everybody signed out, audit verify OK, `db\pre-restore-*` present |
 | V16 | Console from Edge/Chrome on the production URL (HTTP/2) | the WebSocket opens (no "WebSocket connection failed"); frames and input work |
 
 ## Result log template

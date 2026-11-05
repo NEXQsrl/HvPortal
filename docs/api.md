@@ -68,6 +68,9 @@ message, 501 `agent_outdated`). Changes are jobs (202 + `jobId`), re-authorized 
 | GET `/hosts/{id}/files?path=` | drives (no path) or folders + files of a folder (agent 0.3.3+) | `host.files.read` on host |
 | GET `/hosts/{id}/files/download?path=` | file download (streamed, 4 MB chunks); 409 `file_in_use` for files open for writing | `host.files.read` on host; audited |
 | POST `/hosts/{id}/files/upload?folder=&name=&overwrite=` | raw body (`application/octet-stream`, Content-Length required); 409 `file_exists` unless `overwrite=true`; returns path, size, SHA-256 | `host.files.write` on host; audited |
+| POST `/settings/backup/export` `{passphrase}` | sealed `.hvpbak` (DB snapshot + key ring + CA) | every privileged permission + re-auth; audited |
+| POST `/settings/backup/restore[?apply=true]` | raw body = backup file; headers `X-HvPortal-Passphrase`, `X-HvPortal-Confirm: RIPRISTINA` (apply); preview without `apply` | every privileged permission + re-auth |
+| GET / DELETE `/settings/backup/restore` · POST `/settings/backup/restart` | staged restore state / cancel / restart the service to apply | `settings.manage` (GET) · every privileged permission + re-auth |
 | POST `/vms/{id}/console/tickets` | one-time console ticket (30 s) | `vm.console` |
 | GET `/vms/{id}/console/ws` (WebSocket) | console stream; first message `{"t":"auth","ticket":…}` | session cookie + same Origin + valid ticket ([console.md](console.md)) |
 | GET `/console/sessions` | open console sessions | `audit.read` |

@@ -949,6 +949,10 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.Property<int?>("CheckpointCount")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ConfigurationPath")
+                        .HasMaxLength(520)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ConfigurationVersion")
                         .HasMaxLength(1024)
                         .HasColumnType("TEXT");
@@ -989,7 +993,14 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.Property<Guid>("HostId")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("HyperVCreatedAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<Guid>("HyperVId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("HyperVNotes")
+                        .HasMaxLength(4000)
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("IsCritical")
@@ -1002,6 +1013,12 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasColumnType("INTEGER");
 
                     b.Property<long?>("MemoryAssignedMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MemoryAvailablePercent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MemoryBufferPercent")
                         .HasColumnType("INTEGER");
 
                     b.Property<long?>("MemoryStartupMb")
@@ -1029,6 +1046,15 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasColumnType("INTEGER");
 
                     b.Property<int?>("ProcessorLoadPercent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ReplicationHealth")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ReplicationMode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ReplicationState")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool?>("ShutdownServiceAvailable")

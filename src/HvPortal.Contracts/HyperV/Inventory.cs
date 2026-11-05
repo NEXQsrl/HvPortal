@@ -119,6 +119,25 @@ public sealed record VmSummary
     public DateTimeOffset? TimeOfLastConfigurationChangeUtc { get; init; }
     /// <summary>Number of standard/production checkpoints (VSSD of type Microsoft:Hyper-V:Snapshot:Realized).</summary>
     public int? CheckpointCount { get; init; }
+    /// <summary>Agent 0.3.4+. Msvm_SummaryInformation.CreationTime.</summary>
+    public DateTimeOffset? CreatedUtc { get; init; }
+    /// <summary>Agent 0.3.4+. Hyper-V notes of the VM (Msvm_SummaryInformation.Notes), truncated to 4000 characters.</summary>
+    public string? Notes { get; init; }
+    /// <summary>Agent 0.3.4+. Folder of the VM configuration (Msvm_VirtualSystemSettingData.ConfigurationDataRoot = Get-VM Path).</summary>
+    public string? ConfigurationPath { get; init; }
+    /// <summary>
+    /// Agent 0.3.4+, dynamic memory only: Msvm_SummaryInformation.MemoryAvailable, percentage of the assigned memory that
+    /// the guest does not need (negative = memory pressure). Demand = assigned x (100 - value) / 100.
+    /// </summary>
+    public int? MemoryAvailablePercent { get; init; }
+    /// <summary>Agent 0.3.4+, dynamic memory only: Msvm_SummaryInformation.AvailableMemoryBuffer (percent of the ideal buffer).</summary>
+    public int? MemoryBufferPercent { get; init; }
+    /// <summary>Agent 0.3.4+. Msvm_SummaryInformation.ReplicationMode: 0 None, 1 Primary, 2 Replica, 3 Test replica, 4 Extended replica.</summary>
+    public ushort? ReplicationMode { get; init; }
+    /// <summary>Agent 0.3.4+. ReplicationState: 0 Disabled ... 21 (see Msvm_SummaryInformation).</summary>
+    public ushort? ReplicationState { get; init; }
+    /// <summary>Agent 0.3.4+. ReplicationHealth: 0 Not applicable, 1 Ok, 2 Warning, 3 Critical.</summary>
+    public ushort? ReplicationHealth { get; init; }
 }
 
 public sealed record HostInventory

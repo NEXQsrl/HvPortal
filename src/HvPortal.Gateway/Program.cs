@@ -36,6 +36,11 @@ GatewayHost.ConfigureServices(builder);
 var app = builder.Build();
 GatewayHost.ConfigurePipeline(app);
 await app.Services.GetRequiredService<BootstrapService>().InitializeAsync(CancellationToken.None);
+using (var scope = app.Services.CreateScope())
+{
+    await HvPortal.Gateway.Backup.ConfigBackup.AfterRestoreAsync(app.Services.GetRequiredService<GatewayPaths>(), app.Services.GetRequiredService<HvPortal.Gateway.Audit.AuditLog>(),
+        scope.ServiceProvider.GetRequiredService<HvPortal.Gateway.Data.PortalDbContext>(), TimeProvider.System);
+}
 await app.RunAsync();
 return 0;
 
@@ -61,6 +66,8 @@ namespace HvPortal.Gateway
 
             using var startupLogs = LoggerFactory.Create(b => b.AddConsole());
             var startupLog = startupLogs.CreateLogger("HvPortal.Startup");
+            // A restore staged from Settings is applied before anything opens the key ring or the database.
+            HvPortal.Gateway.Backup.ConfigBackup.ApplyPendingRestore(paths, startupLog);
             var keyRing = KeyRing.LoadOrCreate(paths.Keys);
             var ca = InternalCertificateAuthority.LoadOrCreate(paths.Pki, keyRing, options.PublicNames, startupLog);
 
@@ -229,6 +236,7 @@ namespace HvPortal.Gateway
             ConsoleEndpoints.Map(app);
             HvPortal.Gateway.VmGroups.VmGroupEndpoints.Map(app);
             HostFileEndpoints.Map(app);
+            HvPortal.Gateway.Backup.ConfigBackup.Map(app);
             HvPortal.Gateway.Security.Entra.EntraEndpoints.Map(app);
 
             app.MapGet("/api/v1/system/info", async (HttpContext http, AccessEvaluator access, AgentConnectionManager agents, GatewayPaths paths) =>
