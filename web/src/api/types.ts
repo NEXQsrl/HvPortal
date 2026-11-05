@@ -95,6 +95,10 @@ export interface Host {
   isoLibrary: string[];
   /** Agent 0.3.1+: folder browser for the VM location and ISO files. */
   canBrowseFolders?: boolean;
+  /** Agent 0.3.2+: portal groups mirrored as native Hyper-V VM groups. */
+  nativeVmGroups?: boolean;
+  vmGroupsSyncedAt?: string | null;
+  vmGroupsSyncError?: string | null;
 }
 
 export interface InventoryEvent { id: number; hostId: string; vmId: string | null; kind: string; details: string | null; at: string }

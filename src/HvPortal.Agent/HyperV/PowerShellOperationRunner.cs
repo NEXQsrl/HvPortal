@@ -131,7 +131,10 @@ public sealed class PowerShellOperationRunner
                 case HvOperation.GetHostDefaults:
                 case HvOperation.ListSwitches:
                 case HvOperation.ListHostDisks:
+                case HvOperation.ListVmGroups:
                     return null;
+                case HvOperation.SyncVmGroups:
+                    return HvOperations.FromElement<VmGroupSyncRequest>(args) is { } sync ? OperationValidation.Validate(sync) : "invalid_arguments";
                 case HvOperation.GetVmConfig:
                     return HvOperations.FromElement<VmRef>(args) is { VmId: var id } && id != Guid.Empty ? null : "invalid_vm";
                 case HvOperation.SetVmConfig:

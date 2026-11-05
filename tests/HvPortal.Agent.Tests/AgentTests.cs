@@ -292,6 +292,42 @@ public class HostFolderTests
     }
 }
 
+public class VmGroupValidationTests
+{
+    private static VmGroupSyncItem Vms(Guid g, string name, params Guid[] vms) => new($"{g:D}:vms", name, VmGroupTypes.Vm, null, vms, []);
+
+    [Fact]
+    public void Sync_requests_are_validated_before_powershell_runs()
+    {
+        var g = Guid.NewGuid();
+        var ok = new VmGroupSyncRequest([Vms(g, "Linux", Guid.NewGuid()), new($"{g:D}:mgmt", "Linux", VmGroupTypes.Management, null, [], [$"{g:D}:vms"])], []);
+        Assert.Null(PowerShellOperationRunner.Validate(HvOperation.SyncVmGroups, HvOperations.ToElement(ok)));
+        string? V(VmGroupSyncRequest r) => PowerShellOperationRunner.Validate(HvOperation.SyncVmGroups, HvOperations.ToElement(r));
+        Assert.Equal("invalid_group_name", V(new([Vms(g, "x'; Remove-VM *")], [])));
+        Assert.Equal("invalid_group_key", V(new([Vms(g, "A") with { Key = "not-a-key" }], [])));
+        Assert.Equal("invalid_group_key", V(new([Vms(g, "A"), Vms(g, "B")], [])));
+        Assert.Equal("invalid_group_type", V(new([Vms(g, "A") with { GroupType = "Other" }], [])));
+        // A VM collection cannot contain groups; a management collection cannot contain VMs or unknown keys.
+        Assert.Equal("invalid_group_members", V(new([Vms(g, "A") with { MemberKeys = [$"{g:D}:vms"] }], [])));
+        Assert.Equal("invalid_group_members", V(new([new($"{g:D}:mgmt", "A", VmGroupTypes.Management, null, [], [$"{Guid.NewGuid():D}:vms"])], [])));
+        Assert.Null(PowerShellOperationRunner.Validate(HvOperation.ListVmGroups, null));
+    }
+
+    [Fact]
+    public void Vm_group_operations_need_protocol_4_and_the_script_handles_them()
+    {
+        var cmd = new AgentCommand { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.HyperVOperation, Operation = HvOperation.SyncVmGroups };
+        Assert.Equal(4, AgentProtocol.RequiredVersion(cmd));
+        Assert.Equal(4, AgentProtocol.RequiredVersion(cmd with { Operation = HvOperation.ListVmGroups }));
+        Assert.True(CommandExecutor.IsMutating(cmd));
+        var script = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Ops", "HvPortal.Ops.ps1"));
+        Assert.Contains("'SyncVmGroups'", script);
+        Assert.Contains("'ListVmGroups'", script);
+        // Removal is limited to groups listed as managed by the gateway.
+        Assert.Contains("$managed.Keys | Where-Object { -not $keep.ContainsKey($_) }", script);
+    }
+}
+
 public class GatewayTrustTests
 {
     private static X509Certificate2 Ca(string name, out ECDsa key)

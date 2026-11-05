@@ -79,6 +79,10 @@ public static class InventoryEndpoints
             isoLibrary = Jobs.OperationPolicy.IsoRoots(h),
             // Agent 0.3.1+ (protocol 3): folder browser for the VM location and ISO files.
             canBrowseFolders = connected && h.Access == HyperVAccessStatus.Ok && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 1),
+            // Agent 0.3.2+ (protocol 4): portal groups mirrored as native Hyper-V VM groups.
+            nativeVmGroups = h.Access == HyperVAccessStatus.Ok && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 2),
+            vmGroupsSyncedAt = h.VmGroupsSyncedAt,
+            vmGroupsSyncError = h.VmGroupsSyncError,
         };
     }
 

@@ -47,6 +47,8 @@ public static class HostCapabilities
                 ops && !AgentAtLeast(facts?.AgentVersion, 0, 3, 1) ? "Update the agent to 0.3.1 or later." : "Folder browser for VM location and ISO files (system folders hidden)."),
             new("vm.checkpoints", ops ? "available" : "unavailable", opsNote ?? "Create, apply, delete. Checkpoints are not backups."),
             new("vm.console", ops ? "available" : "unavailable", opsNote ?? "Hypervisor screen capture + keyboard/mouse (not RDP)."),
+            new("vm.groups.native", ops && AgentAtLeast(facts?.AgentVersion, 0, 3, 2) ? "available" : "unavailable",
+                ops && !AgentAtLeast(facts?.AgentVersion, 0, 3, 2) ? "Update the agent to 0.3.2 or later." : "Portal groups mirrored as Hyper-V VM groups (Get-VMGroup)."),
             new("cluster", facts?.ClusterServicePresent == true ? "detected (management in Milestone 3)" : "not detected"),
             new("storage-spaces-direct", datacenter ? "edition allows (Milestone 4)" : "not available in this edition"),
             new("shielded-vms", datacenter ? "edition allows (not managed)" : "not available in this edition"),

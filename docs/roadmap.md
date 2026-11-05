@@ -35,6 +35,11 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 - Agent protocol 3 (agent 0.3.1): `BrowseFolders`, `NewVm.Location`; the gateway never sends them to older agents;
   agents reply `Rejected` to commands they cannot parse instead of dropping the channel.
 
+## v0.3.2 — delivered (code + automated tests; real-host validation pending)
+- Portal groups mirrored automatically as native Hyper-V VM groups (`Get-VMGroup`), nested groups as management
+  collections; host tab "Hyper-V VM groups" with status, "Sync now" and one-time import of existing native groups
+  (ADR-017). Agent protocol 4 (agent 0.3.2).
+
 ## Milestone 2
 - Remaining VM configuration: boot order, TPM on existing VMs, controllers, disk detach/removal with ownership
   checks, online/offline matrix validated on hosts.

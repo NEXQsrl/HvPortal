@@ -60,11 +60,14 @@ public interface IRealtimeNotifier
     Task GroupsChangedAsync();
 }
 
-public sealed class RealtimeNotifier(IHubContext<EventsHub> hub, ConnectedUsers users, IServiceScopeFactory scopes, ILogger<RealtimeNotifier> logger)
+public sealed class RealtimeNotifier(IHubContext<EventsHub> hub, ConnectedUsers users, IServiceScopeFactory scopes, ILogger<RealtimeNotifier> logger,
+    HvPortal.Gateway.VmGroups.VmGroupSyncSignal vmGroupSync)
     : IRealtimeNotifier
 {
     public async Task HostChangedAsync(Guid hostId)
     {
+        // Inventory/connection changes can change which VMs are on the host: re-plan the native VM groups (debounced).
+        vmGroupSync.Request(hostId);
         try
         {
             var targets = users.All;
@@ -90,6 +93,7 @@ public sealed class RealtimeNotifier(IHubContext<EventsHub> hub, ConnectedUsers 
 
     public async Task GroupsChangedAsync()
     {
+        vmGroupSync.Request();
         try
         {
             await hub.Clients.All.SendAsync("groupsChanged", new { });

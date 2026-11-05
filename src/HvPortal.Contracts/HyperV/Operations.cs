@@ -21,6 +21,10 @@ public enum HvOperation
     ListHostDisks,
     /// <summary>Protocol 3. Read-only listing of local fixed drives / sub-folders (and .iso files) for the location and ISO pickers.</summary>
     BrowseFolders,
+    /// <summary>Protocol 4. Native Hyper-V VM groups of the host (Get-VMGroup).</summary>
+    ListVmGroups,
+    /// <summary>Protocol 4. Reconcile the native VM groups owned by the portal with the desired state (VmGroupSyncRequest).</summary>
+    SyncVmGroups,
 }
 
 public static class HvOperations
@@ -127,6 +131,34 @@ public sealed record FolderListing
 }
 
 public sealed record CheckpointRequest(Guid VmId, string? Name, string? CheckpointId, bool IncludeChildren);
+
+/// <summary>Hyper-V VM group types (New-VMGroup -GroupType).</summary>
+public static class VmGroupTypes
+{
+    public const string Vm = "VMCollectionType";
+    public const string Management = "ManagementCollectionType";
+}
+
+/// <summary>
+/// One native group the portal wants on the host. Key = "&lt;portal group id&gt;:vms|mgmt"; Id = native id when already
+/// linked (null = create, the agent creates it with a new id). VmIds = Hyper-V VM ids (VM collections);
+/// MemberKeys = keys of VM collections (management collections).
+/// </summary>
+public sealed record VmGroupSyncItem(string Key, string Name, string GroupType, Guid? Id, IReadOnlyList<Guid> VmIds, IReadOnlyList<string> MemberKeys);
+
+/// <summary>Managed = native ids owned by the portal on this host: only these are modified or removed.</summary>
+public sealed record VmGroupSyncRequest(IReadOnlyList<VmGroupSyncItem> Items, IReadOnlyList<Guid> Managed);
+
+public sealed record VmGroupSyncResult
+{
+    /// <summary>Key -> native id of every desired group that exists after the sync.</summary>
+    public IReadOnlyDictionary<string, Guid> Ids { get; init; } = new Dictionary<string, Guid>();
+    /// <summary>Managed ids that were removed (or found already gone).</summary>
+    public IReadOnlyList<Guid> Removed { get; init; } = [];
+    public IReadOnlyList<string> Errors { get; init; } = [];
+}
+
+public sealed record NativeVmGroup(Guid Id, string Name, string GroupType, IReadOnlyList<Guid> VmIds, IReadOnlyList<Guid> GroupIds);
 
 // ---------------------------------------------------------------- results
 

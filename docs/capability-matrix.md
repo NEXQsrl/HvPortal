@@ -69,9 +69,10 @@ real gateway → agent → PowerShell path on a machine without Hyper-V rights (
 | Console keyboard / Ctrl+Alt+Del / type text | `Msvm_Keyboard.TypeScancodes`, `TypeCtrlAltDel`, `TypeText` | Hyper-V Admins | running VMs | ✅ | ✅ relay | pending |
 | Console mouse | `Msvm_SyntheticMouse.SetAbsolutePosition`, `SetButtonState` | Hyper-V Admins | integration services running | ✅ | ✅ relay | pending |
 | Portal groups (folders), nesting, membership, RBAC inheritance | portal database | `groups.manage` (+`roles.manage` for access changes) | — | ✅ | ✅ | n/a |
+| Native VM groups (mirror of portal groups, import) — agent 0.3.2 | `Get-VMGroup`, `New-VMGroup -Name -GroupType -Id`, `Rename-VMGroup -VMGroup -NewName`, `Add-VMGroupMember` / `Remove-VMGroupMember -VMGroup (-VM \| -VMGroupMember)`, `Remove-VMGroup -VMGroup -Force` (group must be empty). Sources: learn.microsoft.com/powershell/module/hyper-v/{new,get,rename,remove}-vmgroup, {add,remove}-vmgroupmember (WS2016–2025) | Hyper-V Admins (to be confirmed on a real host) | ManagementCollectionType contains only VMCollectionType groups (documented); `VMMembers` / `VMGroupMembers` properties; the id property (`InstanceId`) is read defensively | ✅ | ✅ (fake agent) | pending (V17–V20) |
 
 Not in v0.3 (still research): boot order editing, TPM enable on existing VMs, controller management, VHD removal /
-detach, native Hyper-V VM groups, NAT/QoS/SR-IOV, migration, Replica, backup.
+detach, NAT/QoS/SR-IOV, migration, Replica, backup.
 
 ## Later milestones (research notes; not implemented)
 

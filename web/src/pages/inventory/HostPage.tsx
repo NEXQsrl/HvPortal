@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { HostVmGroups } from '@/components/vm/HostVmGroups';
 import { VmTable } from '@/components/vm/VmTable';
 import { useI18n, type TKey } from '@/i18n';
 import { formatBytes, formatDuration, LIBRARY_PATH, percent } from '@/lib/format';
@@ -22,7 +23,7 @@ import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/session';
 
-const TABS = ['summary', 'vms', 'network', 'storage', 'settings', 'events'] as const;
+const TABS = ['summary', 'vms', 'vmgroups', 'network', 'storage', 'settings', 'events'] as const;
 type Tab = (typeof TABS)[number];
 
 export function HostPage() {
@@ -67,6 +68,7 @@ export function HostPage() {
 
       <TabsContent value="summary" className="min-h-0 overflow-auto p-4"><HostSummary host={h} running={vms.filter((v) => v.powerState === 'Running').length} /></TabsContent>
       <TabsContent value="vms" className="flex min-h-0 flex-col">{tab === 'vms' && <VmTable vms={vms} showHost={false} className="flex-1" />}</TabsContent>
+      <TabsContent value="vmgroups" className="min-h-0 overflow-auto p-4">{tab === 'vmgroups' && <HostVmGroups host={h} />}</TabsContent>
       <TabsContent value="network" className="min-h-0 overflow-auto p-4">{tab === 'network' && <HostSwitches hostId={h.id} />}</TabsContent>
       <TabsContent value="storage" className="min-h-0 overflow-auto p-4">{tab === 'storage' && <HostStorage host={h} />}</TabsContent>
       <TabsContent value="settings" className="min-h-0 overflow-auto p-4">{tab === 'settings' && <HostSettings host={h} onChanged={data.reload} />}</TabsContent>

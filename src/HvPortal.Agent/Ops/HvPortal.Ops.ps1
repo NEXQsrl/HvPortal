@@ -9,7 +9,8 @@
    - VMs are always resolved by Id (names are not unique in Hyper-V);
    - new files are created under the host default folders (Get-VMHost) or, for NewVm, under <location>\<VM name>\ where
      location was validated by the agent (local fixed drive, no system/hidden folders, no junctions or symbolic links);
-   - ISO paths must be inside the allowed library roots provided by the agent.
+   - ISO paths must be inside the allowed library roots provided by the agent;
+   - VM groups (SyncVmGroups): only groups whose id the gateway lists as portal-owned are renamed, re-membered or removed.
 #>
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -55,6 +56,21 @@ function Test-IsoPath([string]$path, $roots) {
     while ($p) {
         if ($p.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'ISO paths through junctions or symbolic links are not allowed.' }
         $p = if ($p -is [IO.FileInfo]) { $p.Directory } else { $p.Parent }
+    }
+}
+
+function Get-GroupId($g) {
+    # The VMGroup object exposes its id as InstanceId (Get-VMGroup -Id / New-VMGroup -Id use the same value).
+    if ($g.InstanceId) { return [string]$g.InstanceId }
+    if ($g.Id) { return [string]$g.Id }
+    throw "Cannot read the id of VM group '$($g.Name)'."
+}
+
+function ConvertTo-GroupInfo($g) {
+    return @{
+        id = (Get-GroupId $g); name = $g.Name; groupType = "$($g.GroupType)"
+        vmIds = @($g.VMMembers | Where-Object { $_ } | ForEach-Object { "$($_.Id)" })
+        groupIds = @($g.VMGroupMembers | Where-Object { $_ } | ForEach-Object { Get-GroupId $_ })
     }
 }
 
@@ -394,6 +410,107 @@ try {
                 }
             }
             Write-Response $true @($list) $null @()
+        }
+
+        'ListVmGroups' {
+            Write-Response $true @(Get-VMGroup | ForEach-Object { ConvertTo-GroupInfo $_ }) $null @()
+        }
+
+        'SyncVmGroups' {
+            # Only groups whose id is in $a.managed (created or imported by the portal) are changed or removed.
+            $errors = New-Object System.Collections.ArrayList
+            $removed = New-Object System.Collections.ArrayList
+            $ids = @{}
+            $managed = @{}
+            foreach ($m in @($a.managed)) { if ($m) { $managed[([string]$m).ToLowerInvariant()] = $true } }
+            $existing = @{}
+            foreach ($g in @(Get-VMGroup)) { $existing[(Get-GroupId $g).ToLowerInvariant()] = $g }
+            $vms = @{}
+            foreach ($v in @(Get-VM)) { $vms["$($v.Id)".ToLowerInvariant()] = $v }
+            $items = @($a.items | Where-Object { $_ })
+
+            # 1. Every desired group exists with the desired name.
+            foreach ($it in $items) {
+                $want = [string]$it.id
+                if ($want) { $want = $want.ToLowerInvariant() }
+                try {
+                    $g = $null
+                    if ($want -and $managed.ContainsKey($want) -and $existing.ContainsKey($want)) { $g = $existing[$want] }
+                    if ($g -and "$($g.GroupType)" -ne [string]$it.groupType) { $g = $null }
+                    if (-not $g) {
+                        $newId = [guid]::NewGuid()
+                        $g = New-VMGroup -Name ([string]$it.name) -GroupType ([string]$it.groupType) -Id $newId
+                        $gid = "$newId".ToLowerInvariant()
+                        $existing[$gid] = $g
+                        $managed[$gid] = $true
+                        [void]$applied.Add("created:$($it.name)")
+                    } else {
+                        $gid = (Get-GroupId $g).ToLowerInvariant()
+                        if ($g.Name -cne [string]$it.name) { Rename-VMGroup -VMGroup $g -NewName ([string]$it.name); [void]$applied.Add("renamed:$($it.name)") }
+                    }
+                    $ids[[string]$it.key] = $gid
+                } catch {
+                    [void]$errors.Add("$($it.name): $($_.Exception.Message)")
+                    # Never treat an existing group as "no longer desired" because an update failed.
+                    if ($want -and $existing.ContainsKey($want)) { $ids[[string]$it.key] = $want }
+                }
+            }
+
+            # 2. Members: VMs of VM collections, VM collections of management collections.
+            foreach ($it in $items) {
+                $gid = $ids[[string]$it.key]
+                if (-not $gid) { continue }
+                try {
+                    $g = Get-VMGroup -Id ([guid]$gid)
+                    if ([string]$it.groupType -eq 'VMCollectionType') {
+                        $want = @{}
+                        foreach ($v in @($it.vmIds)) { if ($v) { $want[([string]$v).ToLowerInvariant()] = $true } }
+                        $have = @{}
+                        foreach ($m in @($g.VMMembers | Where-Object { $_ })) { $have["$($m.Id)".ToLowerInvariant()] = $m }
+                        foreach ($k in @($want.Keys)) {
+                            if (-not $have.ContainsKey($k) -and $vms.ContainsKey($k)) { Add-VMGroupMember -VMGroup $g -VM $vms[$k]; [void]$applied.Add("vm+:$($it.name)") }
+                        }
+                        foreach ($k in @($have.Keys)) {
+                            if (-not $want.ContainsKey($k)) { Remove-VMGroupMember -VMGroup $g -VM $have[$k]; [void]$applied.Add("vm-:$($it.name)") }
+                        }
+                    } else {
+                        $want = @{}
+                        foreach ($mk in @($it.memberKeys)) { if ($mk -and $ids[[string]$mk]) { $want[$ids[[string]$mk]] = $true } }
+                        $have = @{}
+                        foreach ($m in @($g.VMGroupMembers | Where-Object { $_ })) { $have[(Get-GroupId $m).ToLowerInvariant()] = $m }
+                        foreach ($k in @($want.Keys)) {
+                            if (-not $have.ContainsKey($k)) { Add-VMGroupMember -VMGroup $g -VMGroupMember (Get-VMGroup -Id ([guid]$k)); [void]$applied.Add("group+:$($it.name)") }
+                        }
+                        foreach ($k in @($have.Keys)) {
+                            if (-not $want.ContainsKey($k)) { Remove-VMGroupMember -VMGroup $g -VMGroupMember $have[$k]; [void]$applied.Add("group-:$($it.name)") }
+                        }
+                    }
+                } catch { [void]$errors.Add("$($it.name): $($_.Exception.Message)") }
+            }
+
+            # 3. Managed groups no longer desired: detach from managed parents, empty, remove (Remove-VMGroup needs an empty group).
+            $keep = @{}
+            foreach ($v in @($ids.Values)) { $keep[[string]$v] = $true }
+            $toRemove = @($managed.Keys | Where-Object { -not $keep.ContainsKey($_) })
+            foreach ($rid in $toRemove) {
+                if (-not $existing.ContainsKey($rid)) { [void]$removed.Add($rid); continue }
+                try {
+                    foreach ($p in @(Get-VMGroup | Where-Object { "$($_.GroupType)" -eq 'ManagementCollectionType' })) {
+                        $parentId = (Get-GroupId $p).ToLowerInvariant()
+                        if (-not $managed.ContainsKey($parentId)) { continue }
+                        foreach ($m in @($p.VMGroupMembers | Where-Object { $_ })) {
+                            if ((Get-GroupId $m).ToLowerInvariant() -eq $rid) { Remove-VMGroupMember -VMGroup $p -VMGroupMember $m }
+                        }
+                    }
+                    $g = Get-VMGroup -Id ([guid]$rid)
+                    foreach ($m in @($g.VMMembers | Where-Object { $_ })) { Remove-VMGroupMember -VMGroup $g -VM $m }
+                    foreach ($m in @($g.VMGroupMembers | Where-Object { $_ })) { Remove-VMGroupMember -VMGroup $g -VMGroupMember $m }
+                    Remove-VMGroup -VMGroup (Get-VMGroup -Id ([guid]$rid)) -Force
+                    [void]$removed.Add($rid)
+                    [void]$applied.Add("removed:$($g.Name)")
+                } catch { [void]$errors.Add("remove $($rid): $($_.Exception.Message)") }
+            }
+            Write-Response $true @{ ids = $ids; removed = @($removed); errors = @($errors) } $null $applied
         }
 
         default { throw "Unsupported operation." }

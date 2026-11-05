@@ -97,6 +97,27 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-017 Portal groups mirrored as native Hyper-V VM groups (agent protocol 4)
+- Requirement: groups created in the portal must be visible with `Get-VMGroup` on the hosts. The portal stays the
+  source of truth; permissions still come only from portal groups (native groups never grant anything).
+- Mapping per host (`VmGroupPlanner`), within the documented Hyper-V model (a ManagementCollectionType contains only
+  VMCollectionType groups): a portal group with VMs on the host → VM collection with its name; a portal group with VM
+  collections below it → management collection with its name containing its own VM collection and those of **all**
+  descendants (levels deeper than two are flattened). Groups with no VM on a host are not created there.
+- Ownership: `HostVmGroupLinks` stores the native id of every group the portal created or imported. `SyncVmGroups`
+  receives the desired items plus the list of owned ids and only renames, re-members or removes those; anything else
+  in Hyper-V (backup tools, manual groups) is left untouched. New groups are created with `New-VMGroup -Id <guid>`.
+  Removal empties the group first (`Remove-VMGroup` requires it).
+- Triggers: group changes and host changes (inventory, connection) raise a debounced signal; a pass sends only if the
+  plan hash changed; every 30 minutes a forced pass corrects drift made directly in Hyper-V. Hosts without Hyper-V
+  access are skipped; after a failure automatic passes wait 5 minutes. Changes are audited (`hosts.vmgroups.sync`,
+  actor `system`).
+- Import (`hosts.manage` + `groups.manage`, audited): native groups not owned yet become portal groups (management
+  collection → root group, its VM collections → sub-groups, a VM collection with the same name as its parent gives the
+  parent its direct VMs). Existing portal groups are reused only when no role assignment applies to them, otherwise a
+  suffixed group is created, so importing never changes who can access a VM.
+- Protocol 4 (agent 0.3.2): older agents never receive these commands.
+
 ## ADR-016 Host folder browser and VM location (agent protocol 3)
 - The location and ISO pickers need to see the host's folders. `BrowseFolders` is a read-only operation executed
   in-process by the agent (.NET file-system APIs, no PowerShell): only local fixed drives; hidden, system and
@@ -113,8 +134,7 @@ Format: context → decision → consequences. Status of all records: **accepted
 - Protocol 3: older agents would ignore `location` (creating the VM elsewhere) or fail to parse `BrowseFolders`.
   `AgentProtocol.RequiredVersion(command)` is checked before sending; agents 0.3.1+ answer `Rejected` to unknown
   commands so a future gateway cannot break their channel.
-- Portal groups stay logical (ADR-015). They are deliberately **not** created as native Hyper-V VM groups
-  (`New-VMGroup`), which are per host and carry no permissions; native groups will be shown separately (roadmap).
+- (Superseded by ADR-017: portal groups are now mirrored as native Hyper-V VM groups.)
 
 ## ADR-015 Nested logical groups and access-change guard
 - Groups are folders: `LogicalGroup.ParentId`, max depth 16, sibling names unique, cycles refused. Role assignments

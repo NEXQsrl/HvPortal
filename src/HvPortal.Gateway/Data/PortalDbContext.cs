@@ -17,6 +17,7 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
     public DbSet<RoleAssignment> RoleAssignments => Set<RoleAssignment>();
     public DbSet<LogicalGroup> LogicalGroups => Set<LogicalGroup>();
     public DbSet<LogicalGroupMember> LogicalGroupMembers => Set<LogicalGroupMember>();
+    public DbSet<HostVmGroupLink> HostVmGroupLinks => Set<HostVmGroupLink>();
     public DbSet<ManagedHost> Hosts => Set<ManagedHost>();
     public DbSet<AgentCertificate> AgentCertificates => Set<AgentCertificate>();
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
@@ -114,6 +115,14 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.Property(x => x.InventoryWarningsJson).HasMaxLength(16000);
             e.Property(x => x.AccessMessage).HasMaxLength(2000);
             e.Property(x => x.IsoLibraryPathsJson).HasMaxLength(8000);
+            e.Property(x => x.VmGroupsSyncError).HasMaxLength(4000);
+            e.Property(x => x.VmGroupsPlanHash).HasMaxLength(64);
+        });
+        m.Entity<HostVmGroupLink>(e =>
+        {
+            e.HasIndex(x => new { x.HostId, x.NativeId }).IsUnique();
+            e.HasIndex(x => new { x.HostId, x.GroupId, x.Role }).IsUnique();
+            e.Property(x => x.Role).HasMaxLength(8);
         });
         m.Entity<AgentCertificate>(e =>
         {

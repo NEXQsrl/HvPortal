@@ -174,6 +174,40 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.ToTable("EnrollmentTokens");
                 });
 
+            modelBuilder.Entity("HvPortal.Gateway.Data.HostVmGroupLink", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("GroupId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("HostId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("NativeId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HostId", "NativeId")
+                        .IsUnique();
+
+                    b.HasIndex("HostId", "GroupId", "Role")
+                        .IsUnique();
+
+                    b.ToTable("HostVmGroupLinks");
+                });
+
             modelBuilder.Entity("HvPortal.Gateway.Data.InventoryEvent", b =>
                 {
                     b.Property<long>("Id")
@@ -496,6 +530,17 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("VmGroupsPlanHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("VmGroupsSyncError")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("VmGroupsSyncedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 

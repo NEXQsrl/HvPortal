@@ -60,6 +60,9 @@ message, 501 `agent_outdated`). Changes are jobs (202 + `jobId`), re-authorized 
 | GET `/hosts/{id}/switches` · `/hosts/{id}/disks` | virtual switches · VM virtual disks (live) | host visibility; VM names/disks filtered to readable VMs |
 | GET `/hosts/{id}/folders?path=&isos=` | folder browser (agent 0.3.1+): drives when `path` is empty, else sub-folders (system/hidden/linked excluded) and, with `isos=true`, `.iso` files; 501 `agent_outdated` on older agents | folders: `vm.create` on host or `hosts.manage` · ISO files: `hosts.manage` |
 | GET `/hosts/{id}/isos` · PUT `/hosts/{id}/iso-library` `{paths}` | ISO files · library folders (local absolute paths, max 16, no UNC/`..`) | read: host read / `vm.create` / `vm.config.storage` on a VM of the host · write: `hosts.manage` |
+| GET `/hosts/{id}/vm-groups` | native Hyper-V VM groups (Get-VMGroup) with members, owner portal group, mirroring status; `supported:false` before agent 0.3.2 | host read |
+| POST `/hosts/{id}/vm-groups/sync` | force the mirroring now | `groups.manage` |
+| POST `/hosts/{id}/vm-groups/import` | import native groups not owned by the portal as portal groups, then mirror | `hosts.manage` + `groups.manage` |
 | POST `/vms/{id}/console/tickets` | one-time console ticket (30 s) | `vm.console` |
 | GET `/vms/{id}/console/ws` (WebSocket) | console stream; first message `{"t":"auth","ticket":…}` | session cookie + same Origin + valid ticket ([console.md](console.md)) |
 | GET `/console/sessions` | open console sessions | `audit.read` |

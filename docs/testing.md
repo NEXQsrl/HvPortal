@@ -1,5 +1,18 @@
 # Testing
 
+## v0.3.2 run (2026-11-05, development machine, non-administrator)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Agent.Tests` | 68 | pass — adds `SyncVmGroups` argument validation (names, keys, types, members), protocol 4 requirement, script contains the VM group operations and limits removal to managed groups |
+| `tests/HvPortal.Gateway.Tests` | 141 | pass — adds mirroring with native hierarchy (VM + management collections), rename in place, member changes, deletion, **foreign native groups untouched**, unchanged plan not re-sent, protocol-3 agents skipped (`agent_outdated`), import (management → parent + sub-groups, never merging into groups with role assignments, links, idempotent, audited, permissions), planner flattening of deep trees |
+| `web/e2e/ui-smoke.mjs` | 44 | pass — adds the host tab "Gruppi VM Hyper-V" |
+| `scripts/dev/Invoke-SmokeTest.ps1` | 46 | pass (agent protocol 4) |
+| `web` Vitest | 1 | pass |
+
+The ops script was parse-checked with Windows PowerShell 5.1 and PowerShell 7. The VM group cmdlets were **not**
+executed (no Hyper-V rights here): real-host test plan V17–V20.
+
 ## v0.3.1 run (2026-11-05, development machine: Windows 11 Business 26200, non-administrator)
 
 | Suite | Count | Result |

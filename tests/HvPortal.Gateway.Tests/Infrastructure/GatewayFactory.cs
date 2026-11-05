@@ -36,6 +36,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         builder.UseSetting("Gateway:EnforcePortSeparation", "false");
         builder.UseSetting("Gateway:Security:Pbkdf2Iterations", "10000");
         builder.UseSetting("Gateway:Jobs:RunnerEnabled", "false");
+        builder.UseSetting("Gateway:VmGroups:SyncEnabled", "false");
         builder.UseSetting("Gateway:PackagesDirectory", PackagesDirectory);
         builder.ConfigureTestServices(services =>
         {

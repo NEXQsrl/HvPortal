@@ -134,6 +134,7 @@ try {
   check('host page shows volumes and network adapters', (await page.getByRole('heading', { name: 'Volumi' }).count()) === 1 && (await page.getByRole('heading', { name: 'Schede di rete' }).count()) === 1);
   check('host page has vCenter-like tabs', (await page.getByRole('tab').count()) >= 6);
   await shot(page, '05-host-detail');
+  check('host page has the "Gruppi VM Hyper-V" tab', (await page.getByRole('tab', { name: 'Gruppi VM Hyper-V' }).count()) === 1);
   await page.getByRole('tab', { name: 'Impostazioni' }).click();
   await page.getByText('Libreria ISO').first().waitFor();
   check('host settings tab shows the ISO library editor', true);

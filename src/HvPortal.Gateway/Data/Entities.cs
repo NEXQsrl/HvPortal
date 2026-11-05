@@ -163,6 +163,22 @@ public sealed class LogicalGroupMember
     public Guid VmId { get; set; }
 }
 
+/// <summary>
+/// A native Hyper-V VM group (Get-VMGroup) owned by the portal on one host: created by the mirroring of a portal group or
+/// imported from the host. Only linked native groups are ever modified or removed by the portal. No foreign key on
+/// GroupId: when the portal group is deleted the link survives until the sync has removed the native group.
+/// Role "vms" = VMCollectionType with the group's own VMs; "mgmt" = ManagementCollectionType with the VM collections below.
+/// </summary>
+public sealed class HostVmGroupLink
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid HostId { get; set; }
+    public Guid GroupId { get; set; }
+    public required string Role { get; set; }
+    public Guid NativeId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
 // ---------------------------------------------------------------- hosts & inventory
 
 public enum HostStatus
@@ -193,6 +209,10 @@ public sealed class ManagedHost
     public string? InventoryWarningsJson { get; set; }
     /// <summary>JSON array of folders on the host that may be used as ISO library (mount / list).</summary>
     public string? IsoLibraryPathsJson { get; set; }
+    /// <summary>Mirroring of portal groups to native Hyper-V VM groups (agent 0.3.2+): last attempt, errors, plan hash.</summary>
+    public DateTimeOffset? VmGroupsSyncedAt { get; set; }
+    public string? VmGroupsSyncError { get; set; }
+    public string? VmGroupsPlanHash { get; set; }
 }
 
 public sealed class AgentCertificate

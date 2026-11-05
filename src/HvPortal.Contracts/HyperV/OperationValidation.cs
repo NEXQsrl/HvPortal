@@ -30,10 +30,20 @@ public static partial class OperationValidation
     [GeneratedRegex(@"^[\p{L}\p{N}][\p{L}\p{N} ._()\-:]{0,99}$", RegexOptions.CultureInvariant)]
     private static partial Regex CheckpointNameRegex();
 
+    /// <summary>Same character set as portal group names (letters, digits, space . _ ( ) -).</summary>
+    [GeneratedRegex(@"^[\p{L}\p{N}][\p{L}\p{N} ._()\-]{0,99}$", RegexOptions.CultureInvariant)]
+    private static partial Regex VmGroupNameRegex();
+
+    [GeneratedRegex(@"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:(vms|mgmt)$", RegexOptions.CultureInvariant)]
+    private static partial Regex VmGroupKeyRegex();
+
+    public const int MaxVmGroupItems = 2000;
+
     public static bool IsValidVmName(string? name) => name is not null && VmNameRegex().IsMatch(name);
     public static bool IsValidSwitchName(string? name) => name is not null && SwitchNameRegex().IsMatch(name);
     public static bool IsValidIsoPath(string? path) => path is not null && IsoPathRegex().IsMatch(path) && !path.Contains("..", StringComparison.Ordinal);
     public static bool IsValidCheckpointName(string? name) => name is not null && CheckpointNameRegex().IsMatch(name);
+    public static bool IsValidVmGroupName(string? name) => name is not null && VmGroupNameRegex().IsMatch(name);
 
     public static string? Validate(VmConfigChange c)
     {
@@ -86,6 +96,25 @@ public static partial class OperationValidation
         if (r.Notes is { Length: > MaxNotes }) return "notes_too_long";
         if (HostPaths.ValidateLocation(r.Location) is { } loc) return loc;
         if (r.IsoRoots.Count > 16 || r.IsoRoots.Any(x => x.Length > 260)) return "invalid_iso_roots";
+        return null;
+    }
+
+    public static string? Validate(VmGroupSyncRequest r)
+    {
+        if (r.Items.Count > MaxVmGroupItems || r.Managed.Count > MaxVmGroupItems) return "too_many_groups";
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var i in r.Items)
+        {
+            if (!VmGroupKeyRegex().IsMatch(i.Key) || !keys.Add(i.Key)) return "invalid_group_key";
+            if (!VmGroupNameRegex().IsMatch(i.Name)) return "invalid_group_name";
+            var vmType = i.GroupType == VmGroupTypes.Vm;
+            if (!vmType && i.GroupType != VmGroupTypes.Management) return "invalid_group_type";
+            if (i.Key.EndsWith(":vms", StringComparison.Ordinal) != vmType) return "invalid_group_type";
+            if (vmType ? i.MemberKeys.Count > 0 : i.VmIds.Count > 0) return "invalid_group_members";
+            if (i.VmIds.Count > 4096 || i.MemberKeys.Count > MaxVmGroupItems || i.VmIds.Contains(Guid.Empty)) return "invalid_group_members";
+        }
+        var vmKeys = r.Items.Where(i => i.GroupType == VmGroupTypes.Vm).Select(i => i.Key).ToHashSet(StringComparer.Ordinal);
+        if (r.Items.Any(i => i.MemberKeys.Any(k => !vmKeys.Contains(k)))) return "invalid_group_members";
         return null;
     }
 

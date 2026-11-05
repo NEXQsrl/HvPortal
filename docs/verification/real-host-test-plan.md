@@ -64,6 +64,10 @@ Record results (date, build, edition, pass/fail, evidence) in a copy of the tabl
 | V13 | (agent 0.3.1) Wizard → Storage → Browse: drives of the host incl. LUN/mounted volumes; open D:\ | Windows, Users, Program Files, ProgramData, inetpub, PerfLogs, VBRCatalog, ovhupd, Packages, `$Recycle.Bin`, System Volume Information not listed; free space correct |
 | V14 | (agent 0.3.1) Create a VM in `D:\HV-Test` (folder not existing) with a 20 GB dynamic disk | `D:\HV-Test\<name>\Virtual Machines\<id>.vmcx` and `...\Virtual Hard Disks\<name>.vhdx` (verify the exact layout created by `New-VM -Path`); typing `C:\Windows\x` is refused; re-creating with the same name refused (non-empty folder) |
 | V15 | (agent 0.3.1, admin) Wizard → Installation → Browse an ISO outside the library | folder added to the host ISO library (audit `hosts.iso_library.update`), VM boots from the ISO in the console; a VM operator without `hosts.manage` sees no Browse button |
+| V17 | (agent 0.3.2) Portal group "Linux" with 1 VM, sub-group "Ubuntu" with 1 VM; wait ~5 s | `Get-VMGroup` shows VM collections "Linux" and "Ubuntu" and management collection "Linux" containing both; `(Get-VMGroup Ubuntu).VMMembers` = the VM; confirm the id property name (`Get-VMGroup \| Get-Member`) |
+| V18 | Rename "Ubuntu", remove its VM, delete it | renamed in place (same id), then removed; a group created by hand with `New-VMGroup` is untouched |
+| V19 | Create a native group by hand, then Host > Hyper-V VM groups > Import | portal group created with the VMs, row shows "managed"; renaming it in the portal renames it in Hyper-V |
+| V20 | Delete a mirrored group in Hyper-V Manager / PowerShell | recreated at the next forced pass (≤ 30 min) or with "Sync now" |
 | V16 | Console from Edge/Chrome on the production URL (HTTP/2) | the WebSocket opens (no "WebSocket connection failed"); frames and input work |
 
 ## Result log template

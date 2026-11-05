@@ -26,6 +26,7 @@ public sealed class GatewayOptions
     public DatabaseOptions Database { get; set; } = new();
     public SecurityOptions Security { get; set; } = new();
     public JobOptions Jobs { get; set; } = new();
+    public VmGroupOptions VmGroups { get; set; } = new();
 }
 
 public sealed class DatabaseOptions
@@ -53,6 +54,14 @@ public sealed class JobOptions
     public int PollIntervalMilliseconds { get; set; } = 1000;
     public int HostUnreachableRetries { get; set; } = 3;
     public int ReconciliationGiveUpMinutes { get; set; } = 15;
+}
+
+public sealed class VmGroupOptions
+{
+    /// <summary>Mirror portal groups to native Hyper-V VM groups (agent 0.3.2+). Disabled only in tests that drive it explicitly.</summary>
+    public bool SyncEnabled { get; set; } = true;
+    /// <summary>Full re-apply (corrects changes made directly in Hyper-V).</summary>
+    public int PeriodicMinutes { get; set; } = 30;
 }
 
 public sealed class GatewayPaths

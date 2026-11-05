@@ -244,6 +244,11 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                     .Select(kv => new HostDiskInfo(@"D:\VHDs\" + kv.Value.Name + ".vhdx", kv.Key, kv.Value.Name, "SCSI 0:0", "VHDX", "Dynamic", 64L << 30, 10L << 30, null)).ToList());
             case HvOperation.ListIsos:
                 return Ok(new[] { new IsoFile(@"D:\ISO\win.iso", 5L << 30, DateTimeOffset.UtcNow) });
+            case HvOperation.ListVmGroups:
+                return ListVmGroups(hostId);
+            case HvOperation.SyncVmGroups:
+                var syncReq = HvOperations.FromElement<VmGroupSyncRequest>(command.OperationArgs)!;
+                return OperationValidation.Validate(syncReq) is { } bad ? new HvOperationOutcome { Ok = false, Error = bad } : SyncVmGroups(hostId, syncReq);
             case HvOperation.BrowseFolders:
                 var b = HvOperations.FromElement<FolderBrowseRequest>(command.OperationArgs)!;
                 if (b.Path is null)
@@ -264,6 +269,73 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
             default:
                 return new HvOperationOutcome { Ok = false, Error = "Unsupported operation." };
         }
+    }
+
+    /// <summary>Simulated native Hyper-V VM groups per host (Get-VMGroup), same rules as the operations script.</summary>
+    public sealed class NativeGroup
+    {
+        public required string Name { get; set; }
+        public required string GroupType { get; init; }
+        public HashSet<Guid> VmIds { get; } = [];
+        public HashSet<Guid> GroupIds { get; } = [];
+    }
+
+    public ConcurrentDictionary<Guid, ConcurrentDictionary<Guid, NativeGroup>> NativeGroups { get; } = new();
+
+    public ConcurrentDictionary<Guid, NativeGroup> NativeGroupsOf(Guid hostId) => NativeGroups.GetOrAdd(hostId, _ => new());
+
+    private HvOperationOutcome ListVmGroups(Guid hostId) =>
+        new()
+        {
+            Ok = true,
+            Result = HvOperations.ToElement(NativeGroupsOf(hostId).Select(kv => new NativeVmGroup(kv.Key, kv.Value.Name, kv.Value.GroupType, kv.Value.VmIds.ToList(), kv.Value.GroupIds.ToList())).ToList()),
+        };
+
+    private HvOperationOutcome SyncVmGroups(Guid hostId, VmGroupSyncRequest req)
+    {
+        var all = NativeGroupsOf(hostId);
+        var managed = req.Managed.ToHashSet();
+        var ids = new Dictionary<string, Guid>();
+        var applied = new List<string>();
+        var removed = new List<Guid>();
+        foreach (var it in req.Items)
+        {
+            if (it.Id is { } id && managed.Contains(id) && all.TryGetValue(id, out var g) && g.GroupType == it.GroupType)
+            {
+                if (g.Name != it.Name) { g.Name = it.Name; applied.Add("renamed:" + it.Name); }
+                ids[it.Key] = id;
+            }
+            else
+            {
+                var nid = Guid.NewGuid();
+                all[nid] = new NativeGroup { Name = it.Name, GroupType = it.GroupType };
+                managed.Add(nid);
+                ids[it.Key] = nid;
+                applied.Add("created:" + it.Name);
+            }
+        }
+        var hostVms = _vms.Where(kv => kv.Value.HostId == hostId).Select(kv => kv.Key).ToHashSet();
+        foreach (var it in req.Items)
+        {
+            var g = all[ids[it.Key]];
+            if (it.GroupType == VmGroupTypes.Vm)
+            {
+                var want = it.VmIds.Where(hostVms.Contains).ToHashSet();
+                if (!g.VmIds.SetEquals(want)) { g.VmIds.Clear(); g.VmIds.UnionWith(want); applied.Add("vms:" + it.Name); }
+            }
+            else
+            {
+                var want = it.MemberKeys.Where(ids.ContainsKey).Select(k => ids[k]).ToHashSet();
+                if (!g.GroupIds.SetEquals(want)) { g.GroupIds.Clear(); g.GroupIds.UnionWith(want); applied.Add("groups:" + it.Name); }
+            }
+        }
+        foreach (var rid in managed.Where(m => !ids.ContainsValue(m)).ToList())
+        {
+            foreach (var p in all.Values) p.GroupIds.Remove(rid);
+            if (all.TryRemove(rid, out var gone)) applied.Add("removed:" + gone.Name);
+            removed.Add(rid);
+        }
+        return new HvOperationOutcome { Ok = true, Applied = applied, Result = HvOperations.ToElement(new VmGroupSyncResult { Ids = ids, Removed = removed }) };
     }
 
     private static VmSummary Summary(Guid id, (Guid HostId, string Name, VmPowerState State, long UptimeMs) v) =>

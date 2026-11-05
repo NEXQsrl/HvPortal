@@ -76,6 +76,9 @@ namespace HvPortal.Gateway
             builder.Services.AddSingleton<ConsoleTicketStore>();
             builder.Services.AddSingleton<ConsoleSessionRegistry>();
             builder.Services.AddSingleton<IRealtimeNotifier, RealtimeNotifier>();
+            builder.Services.AddSingleton<HvPortal.Gateway.VmGroups.VmGroupSyncSignal>();
+            builder.Services.AddSingleton<HvPortal.Gateway.VmGroups.VmGroupSyncService>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<HvPortal.Gateway.VmGroups.VmGroupSyncService>());
             builder.Services.AddSingleton<AgentConnectionManager>();
             builder.Services.AddSingleton<IAgentDispatcher>(sp => sp.GetRequiredService<AgentConnectionManager>());
             builder.Services.AddSingleton<BootstrapService>();
@@ -222,6 +225,7 @@ namespace HvPortal.Gateway
             GroupEndpoints.Map(app);
             VmOperationsEndpoints.Map(app);
             ConsoleEndpoints.Map(app);
+            HvPortal.Gateway.VmGroups.VmGroupEndpoints.Map(app);
 
             app.MapGet("/api/v1/system/info", async (HttpContext http, AccessEvaluator access, AgentConnectionManager agents, GatewayPaths paths) =>
             {
