@@ -8,6 +8,9 @@ name: hvportal
 services:
   gateway:
     image: ${HVP_IMAGE:-hvportal-gateway:0.3.4}
+    # The image is private (not on Docker Hub): import it on the Docker host first (Portainer > Images > Import,
+    # or docker load). "never" = use the local image, never try to pull it. With a private registry use "missing"/"always".
+    pull_policy: ${HVP_PULL_POLICY:-never}
     container_name: hvportal-gateway
     restart: unless-stopped
     # Same port inside and outside the container: the portal shows these numbers in the agent install commands.

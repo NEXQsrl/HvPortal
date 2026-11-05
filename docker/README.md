@@ -24,6 +24,11 @@ Get the image onto the Docker host used by Portainer:
 
 The repository is private: do not push the image to a public registry.
 
+The compose file uses `pull_policy: ${HVP_PULL_POLICY:-never}`: with an imported image Portainer does not try to
+download it (otherwise: "pull access denied for hvportal-gateway, repository does not exist"). With a private
+registry set `HVP_IMAGE` to the full name and `HVP_PULL_POLICY=missing` (or `always`).
+The image is built for `linux/amd64`; for an ARM Docker host build it with `--platform linux/arm64`.
+
 ## 2. Create the stack in Portainer
 
 1. **Stacks > Add stack > Web editor**: paste `docker/docker-compose.yml`.
