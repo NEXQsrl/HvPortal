@@ -42,6 +42,8 @@ public sealed record HostFacts
     public int? CpuSockets { get; init; }
     public int? CpuCores { get; init; }
     public int? CpuLoadPercent { get; init; }
+    /// <summary>"hypervisor" (all partitions, physical CPU load) or "root-partition" (host OS only).</summary>
+    public string? CpuLoadSource { get; init; }
     public DateTimeOffset? LastBootUtc { get; init; }
     public IReadOnlyList<HostVolume> Volumes { get; init; } = [];
     public IReadOnlyList<NetworkAdapterInfo> NetworkAdapters { get; init; } = [];

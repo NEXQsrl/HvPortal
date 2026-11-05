@@ -66,7 +66,7 @@ public static class InventoryEndpoints
             h.EnrolledAt,
             vmCount,
             os = facts is null ? null : new { facts.OsCaption, facts.OsVersion, facts.OsBuildNumber, facts.Domain, facts.PartOfDomain },
-            hardware = facts is null ? null : new { facts.LogicalProcessorCount, facts.TotalPhysicalMemoryBytes, facts.FreePhysicalMemoryBytes, facts.CpuName, facts.CpuSockets, facts.CpuCores, facts.CpuLoadPercent },
+            hardware = facts is null ? null : new { facts.LogicalProcessorCount, facts.TotalPhysicalMemoryBytes, facts.FreePhysicalMemoryBytes, facts.CpuName, facts.CpuSockets, facts.CpuCores, facts.CpuLoadPercent, facts.CpuLoadSource },
             lastBootUtc = facts?.LastBootUtc,
             volumes = facts?.Volumes ?? [],
             networkAdapters = facts?.NetworkAdapters ?? [],

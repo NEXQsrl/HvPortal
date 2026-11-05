@@ -249,6 +249,7 @@ export function HostDetailPage() {
           <div className="label">CPU</div>
           <div className="value">{hw?.cpuLoadPercent != null ? `${hw.cpuLoadPercent}%` : '—'}</div>
           <Meter used={hw?.cpuLoadPercent} total={100} />
+          {hw?.cpuLoadSource && <div className="small muted" style={{ marginTop: 6 }} title={t(('host.cpuSource.' + hw.cpuLoadSource + '.help') as TKey)}>{t(('host.cpuSource.' + hw.cpuLoadSource) as TKey)}</div>}
           <div className="small muted" style={{ marginTop: 6 }}>{hw?.cpuName ?? '—'}</div>
           <div className="small muted">{t('host.cpuTopology', { s: hw?.cpuSockets ?? '?', c: hw?.cpuCores ?? '?', lp: hw?.logicalProcessorCount ?? '?' })}</div>
         </div>

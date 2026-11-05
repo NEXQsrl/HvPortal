@@ -25,6 +25,7 @@ public sealed class WmiHyperVHost : IHyperVHost
 
     private readonly ILogger<WmiHyperVHost> _logger;
     private readonly string _agentVersion;
+    private readonly CpuSampler _cpu = new();
 
     public WmiHyperVHost(ILogger<WmiHyperVHost> logger)
     {
@@ -299,12 +300,18 @@ public sealed class WmiHyperVHost : IHyperVHost
                 warnings.Add($"Could not read virtual switches: {ex.Message}");
             }
         }
+        var (cpuLoad, cpuSource) = _cpu.Sample();
+        if (cpuLoad is null && loadCount > 0)
+        {
+            (cpuLoad, cpuSource) = (loadSum / loadCount, "root-partition");
+        }
         return facts with
         {
             CpuName = cpuName,
             CpuSockets = sockets > 0 ? sockets : null,
             CpuCores = cores > 0 ? cores : null,
-            CpuLoadPercent = loadCount > 0 ? loadSum / loadCount : null,
+            CpuLoadPercent = cpuLoad,
+            CpuLoadSource = cpuSource,
             LastBootUtc = lastBoot,
             Volumes = volumes.OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase).ToList(),
             NetworkAdapters = adapters,

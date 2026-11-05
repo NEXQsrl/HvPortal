@@ -81,7 +81,7 @@ export interface Host {
   os: { osCaption: string | null; osVersion: string | null; osBuildNumber: string | null; domain: string | null; partOfDomain: boolean } | null;
   hardware: {
     logicalProcessorCount: number | null; totalPhysicalMemoryBytes: number | null; freePhysicalMemoryBytes: number | null;
-    cpuName: string | null; cpuSockets: number | null; cpuCores: number | null; cpuLoadPercent: number | null;
+    cpuName: string | null; cpuSockets: number | null; cpuCores: number | null; cpuLoadPercent: number | null; cpuLoadSource: 'hypervisor' | 'root-partition' | null;
   } | null;
   lastBootUtc: string | null;
   volumes: HostVolume[];
