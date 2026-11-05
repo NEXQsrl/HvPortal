@@ -28,6 +28,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The SPA (built from /web) is served from the executable directory, also when running as a Windows service. -->
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="Security\common-passwords.txt" />
     <InternalsVisibleTo Include="HvPortal.Gateway.Tests" />
   </ItemGroup>
