@@ -193,7 +193,7 @@ export function VmSettings({ vm }: { vm: Vm }) {
 
         <Block icon={<MemoryStick className="size-4" />} title={t('cfg.memory')} disabled={!can.compute}
           badge={memInvalid ? <StatusBadge tone="danger">{t('wiz.memoryInvalid')}</StatusBadge> : undefined}>
-          <Field label={t('cfg.startupMemory')} htmlFor="cfg-mem" hint={formatBytes(draft.startupMb * MB)}>
+          <Field label={t('cfg.startupMemory')} htmlFor="cfg-mem" aside={formatBytes(draft.startupMb * MB)}>
             <Input id="cfg-mem" type="number" min={32} step={2} value={draft.startupMb} onChange={(e) => set({ startupMb: num(e.target.value) })} />
           </Field>
           <Field label={<span className="flex items-center gap-2">{t('cfg.dynamic')}{offBadge}</span>}>

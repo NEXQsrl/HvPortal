@@ -1,9 +1,11 @@
+import { CircleHelp } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { ErrorAlert, Notice } from './common';
@@ -57,12 +59,38 @@ export function ActionDialog({ title, description, children, confirmLabel, onCon
   );
 }
 
-export function Field({ label, htmlFor, hint, children, className, error }: { label: ReactNode; htmlFor?: string; hint?: ReactNode; children: ReactNode; className?: string; error?: ReactNode }) {
+/** "?" next to a title: the explanation is shown on hover/focus, so it never pushes the fields out of line. */
+export function HelpTip({ children, className }: { children: ReactNode; className?: string }) {
+  const { t } = useI18n();
   return (
-    <div className={cn('field grid gap-1.5', className)}>
-      <Label htmlFor={htmlFor} className="text-xs font-medium text-muted-foreground">{label}</Label>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" aria-label={t('common.help')} className={cn('inline-flex shrink-0 rounded-full text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60', className)}>
+          <CircleHelp className="size-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-80 text-xs leading-relaxed">{children}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * Form field: title (+ optional "?" help and a short live value on the right, e.g. "= 4 GB"), control, error.
+ * Nothing but errors goes under the control, and the title area grows so that controls in the same row line up
+ * even when a title wraps.
+ */
+export function Field({ label, htmlFor, hint, aside, children, className, error }: {
+  label: ReactNode; htmlFor?: string; hint?: ReactNode; aside?: ReactNode; children: ReactNode; className?: string; error?: ReactNode;
+}) {
+  return (
+    <div className={cn('field flex min-w-0 flex-col gap-1.5', className)}>
+      <div className="flex flex-1 items-end gap-1.5">
+        <Label htmlFor={htmlFor} className="text-xs leading-4 font-medium text-muted-foreground">{label}</Label>
+        {hint && <HelpTip className="mb-px">{hint}</HelpTip>}
+        {aside != null && aside !== '' && <span className="ml-auto shrink-0 text-xs leading-4 text-muted-foreground tabular">{aside}</span>}
+      </div>
       {children}
-      {error ? <div className="text-xs text-destructive" role="alert">{error}</div> : hint && <div className="hint text-xs text-muted-foreground">{hint}</div>}
+      {error && <div className="text-xs text-destructive" role="alert">{error}</div>}
     </div>
   );
 }
@@ -88,7 +116,7 @@ export function EditDialog({ title, initialName, initialDescription, withName, n
           <Input id="edit-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} autoFocus />
         </Field>
       )}
-      <Field label={t('common.description')} htmlFor="edit-description" hint={`${t('common.descriptionHint')} (${description.length}/1000)`}>
+      <Field label={t('common.description')} htmlFor="edit-description" hint={t('common.descriptionHint')} aside={`${description.length}/1000`}>
         <Textarea id="edit-description" rows={5} maxLength={1000} value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
     </ActionDialog>

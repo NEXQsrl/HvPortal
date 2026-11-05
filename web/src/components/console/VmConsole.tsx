@@ -283,7 +283,7 @@ function TypeTextDialog({ onSend, onClose }: { onSend: (s: string) => void; onCl
   const valid = text.length > 0 && text.length <= 512 && /^[\x20-\x7e\n\t]*$/.test(text);
   return (
     <ActionDialog title={t('con.typeTitle')} confirmLabel={t('con.send')} disabled={!valid} onClose={onClose} onConfirm={async () => onSend(text)}>
-      <Field label={t('con.typeTitle')} htmlFor="con-text" hint={`${t('con.typeHelp')} (${text.length}/512)`}>
+      <Field label={t('con.typeTitle')} htmlFor="con-text" hint={t('con.typeHelp')} aside={`${text.length}/512`}>
         <Textarea id="con-text" rows={4} value={text} onChange={(e) => setText(e.target.value)} autoFocus spellCheck={false} autoComplete="off" className="font-mono" />
       </Field>
     </ActionDialog>

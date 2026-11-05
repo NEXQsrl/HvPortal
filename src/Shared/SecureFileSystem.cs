@@ -4,16 +4,34 @@ using System.Security.Principal;
 namespace HvPortal.Shared;
 
 /// <summary>
-/// Creates directories and files readable only by SYSTEM, BUILTIN\Administrators and the
-/// identity of the current process (e.g. the service virtual account NT SERVICE\HvPortalGateway).
-/// Uses native Windows ACLs; inheritance from the parent is removed.
+/// Creates directories and files readable only by
+///  - Windows: SYSTEM, BUILTIN\Administrators and the identity of the current process (e.g. the service virtual account
+///    NT SERVICE\HvPortalGateway), with native ACLs and no inheritance from the parent;
+///  - Linux (gateway container): the user of the process (directories 0700, files 0600).
 /// </summary>
 internal static class SecureFileSystem
 {
-    private static readonly SecurityIdentifier LocalSystem = new(WellKnownSidType.LocalSystemSid, null);
-    private static readonly SecurityIdentifier Administrators = new(WellKnownSidType.BuiltinAdministratorsSid, null);
+    private const UnixFileMode PrivateDir = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+    private const UnixFileMode PrivateFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static SecurityIdentifier LocalSystem => new(WellKnownSidType.LocalSystemSid, null);
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static SecurityIdentifier Administrators => new(WellKnownSidType.BuiltinAdministratorsSid, null);
 
     public static DirectoryInfo EnsurePrivateDirectory(string path, params SecurityIdentifier[] additionalFullControl)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            var unixDir = Directory.CreateDirectory(path, PrivateDir);
+            File.SetUnixFileMode(unixDir.FullName, PrivateDir);
+            return unixDir;
+        }
+        return EnsurePrivateDirectoryWindows(path, additionalFullControl);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static DirectoryInfo EnsurePrivateDirectoryWindows(string path, SecurityIdentifier[] additionalFullControl)
     {
         var dir = Directory.CreateDirectory(path);
         var security = new DirectorySecurity();
@@ -59,7 +77,12 @@ internal static class SecureFileSystem
     {
         var dir = Path.GetDirectoryName(Path.GetFullPath(path))!;
         var tmp = Path.Combine(dir, "." + Path.GetFileName(path) + "." + Guid.NewGuid().ToString("N") + ".tmp");
-        using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
+        if (!OperatingSystem.IsWindows())
+        {
+            options.UnixCreateMode = PrivateFile;
+        }
+        using (var fs = new FileStream(tmp, options))
         {
             fs.Write(content);
             fs.Flush(flushToDisk: true);
@@ -91,6 +114,7 @@ internal static class SecureFileSystem
     /// </summary>
     public static string? ServiceName { get; set; }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static SecurityIdentifier? ServiceSid()
     {
         if (string.IsNullOrEmpty(ServiceName))
@@ -107,6 +131,7 @@ internal static class SecureFileSystem
         }
     }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static IEnumerable<SecurityIdentifier> Principals(SecurityIdentifier[] additional)
     {
         var set = new HashSet<SecurityIdentifier> { LocalSystem, Administrators, CurrentUser() };
@@ -121,6 +146,7 @@ internal static class SecureFileSystem
         return set;
     }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static SecurityIdentifier CurrentUser()
     {
         using var id = WindowsIdentity.GetCurrent();

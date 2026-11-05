@@ -1,5 +1,19 @@
 # Testing
 
+## v0.3.4 — Docker image and settings UI (2026-11-05)
+
+| Check | Result |
+|---|---|
+| `docker build -f docker/Dockerfile` (SPA + gateway linux + cross-published win-x64 agent package) | ok |
+| Container from `docker/docker-compose.yml` (read-only FS, non-root, cap_drop ALL) | healthy; migrations applied; setup token in the log |
+| `Invoke-SmokeTest.ps1` against the container, **real Windows agent enrolled over mTLS** | 45/46 — the failing check reads the token file of its own copy of the data folder; inside the container the file is removed after setup (verified with `docker exec`) |
+| Inside the container | `/data` 0700, files 0600 (uid 1654), key ring `kek-aesgcm` from the variable (no `kek.bin`), Data Protection keys encrypted with the key ring |
+| Container restart on the same volume | healthy, data readable |
+| `tests/HvPortal.Gateway.Tests` | 153 (adds KEK wrapping: env KEK, id binding, wrong KEK refused, generated KEK flagged, invalid values) |
+| `web/e2e/ui-smoke.mjs` | 58 — adds Settings tabs, inputs aligned in the same row (security, Entra, backup), "?" help with tooltip |
+
+Not executed in the container: restore applied by "Restart now" (restart policy) and Entra sign-in.
+
 ## v0.3.4 run (2026-11-05, development machine)
 
 | Suite | Count | Result |

@@ -5,6 +5,7 @@ import { get, post } from '@/api/client';
 import type { Host } from '@/api/types';
 import { Empty, ErrorAlert, GroupIcon, Loading, Notice, Section, StatusBadge } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
+import { HelpTip } from '@/components/dialogs';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useI18n } from '@/i18n';
@@ -68,7 +69,6 @@ export function HostVmGroups({ host }: { host: Host }) {
 
   return (
     <div className="space-y-3">
-      <Notice kind="info">{t('vmg.help')}</Notice>
       {!d.supported ? (
         <Notice kind="warn">{d.connected ? t('vmg.agent') : t('vmg.offline')}</Notice>
       ) : (
@@ -84,7 +84,7 @@ export function HostVmGroups({ host }: { host: Host }) {
           </div>
           {d.status.error && <Notice kind="danger">{d.status.error}</Notice>}
           <ErrorAlert error={error} />
-          <Section title={<span className="flex items-center gap-2"><FolderTree className="size-4 text-muted-foreground" />Get-VMGroup</span>}>
+          <Section title={<span className="flex items-center gap-2"><FolderTree className="size-4 text-muted-foreground" />Get-VMGroup<HelpTip>{t('vmg.help')}</HelpTip></span>}>
             {d.groups.length === 0 ? <Empty>{t('vmg.none')}</Empty> : (
               <Table>
                 <TableHeader>

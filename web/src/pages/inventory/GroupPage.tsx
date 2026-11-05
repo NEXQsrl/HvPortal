@@ -1,10 +1,11 @@
 import { ChevronDown, FolderPlus, Layers, Plus, Server } from 'lucide-react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ActionsButton, KebabMenu, rowLink, WithContextMenu } from '@/components/actions';
-import { Empty, GroupIcon, Loading, Notice, PageHeader, Section, StatCard } from '@/components/common';
+import { Empty, GroupIcon, Loading, PageHeader, Section, StatCard } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { useOps } from '@/components/ops/OperationsProvider';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
+import { HelpTip } from '@/components/dialogs';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -128,8 +129,7 @@ export function InventoryHome() {
       <TabsContent value="groups" className="min-h-0 overflow-auto">
         {view === 'groups' && (
           <div className="space-y-3 p-4">
-            <Notice kind="info">{t('group.logicalNote')}</Notice>
-            <Section title={t('tree.groups')}>
+            <Section title={<span className="flex items-center gap-1.5">{t('tree.groups')}<HelpTip>{t('group.logicalNote')}</HelpTip></span>}>
               {roots.length === 0 ? <Empty>{t('tree.empty')}</Empty> : (
                 <Table>
                   <TableBody>

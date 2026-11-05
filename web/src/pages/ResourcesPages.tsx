@@ -2,6 +2,7 @@ import { HardDrive, Network } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Empty, HostIcon, Meter, Notice, PageHeader, Section } from '@/components/common';
+import { HelpTip } from '@/components/dialogs';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -90,7 +91,7 @@ export function StoragePage() {
                   {fileHosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)}
                 </NativeSelect>
               )}
-              <span className="text-xs text-muted-foreground">{t('files.help')}</span>
+              <HelpTip>{t('files.help')}</HelpTip>
             </div>
             {fileHost ? <HostFileExplorer key={fileHost.id} host={fileHost} /> : <Notice kind="warn">{t('files.noHosts')}</Notice>}
           </>

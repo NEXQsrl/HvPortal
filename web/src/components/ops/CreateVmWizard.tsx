@@ -164,12 +164,12 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
           </RadioGroup>
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label={t('cfg.vcpu')} htmlFor="wiz-cpu" hint={defaults ? `max ${defaults.defaults.logicalProcessorCount}` : undefined}>
+          <Field label={t('cfg.vcpu')} htmlFor="wiz-cpu" aside={defaults ? `max ${defaults.defaults.logicalProcessorCount}` : undefined}>
             <Input id="wiz-cpu" type="number" min={1} max={defaults?.defaults.logicalProcessorCount ?? 1024} value={spec.processorCount}
               onChange={(e) => set({ processorCount: Number(e.target.value) })} />
           </Field>
           <Field label={t('cfg.startupMemory')} htmlFor="wiz-mem" error={memoryError}
-            hint={memOk(spec.memoryStartupMb) ? `= ${formatBytes(spec.memoryStartupMb * 1048576)}` : undefined}>
+            aside={memOk(spec.memoryStartupMb) ? `= ${formatBytes(spec.memoryStartupMb * 1048576)}` : undefined}>
             <PresetInput id="wiz-mem" value={spec.memoryStartupMb} onChange={(v) => set({ memoryStartupMb: v })} unit="MB" min={32} step={2} invalid={!!memoryError}
               menuLabel={t('wiz.presets')}
               presets={MEMORY_PRESETS.filter((m) => !defaults || m * 1048576 <= defaults.defaults.memoryCapacityBytes).map((m) => ({ value: m, label: formatBytes(m * 1048576) }))} />

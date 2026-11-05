@@ -164,7 +164,8 @@ try {
   await page.getByRole('tab', { name: /Tutte le VM/, selected: true }).waitFor();
   check('"Tutte le VM" opens the all-VMs view of the inventory', true);
   await page.getByRole('tab', { name: /Gruppi/ }).click();
-  check('groups view explains they are not Hyper-V VM groups', (await page.getByText(/Get-VMGroup/).count()) === 1);
+  await page.getByRole('button', { name: 'Aiuto' }).first().hover();
+  check('groups view explains (in the "?" help) the mirroring to Hyper-V VM groups', await page.getByRole('tooltip').filter({ hasText: 'Get-VMGroup' }).first().waitFor({ timeout: 5000 }).then(() => true, () => false));
   await page.goto(new URL('/vms', url).href);
   check('old /vms link redirects to the inventory', await page.waitForURL(/\/inventory\?view=vms/, { timeout: 5000 }).then(() => true, () => false));
   await page.waitForTimeout(800);
@@ -199,7 +200,14 @@ try {
   await shot(page, '09-audit');
   await page.getByRole('link', { name: 'Impostazioni', exact: true }).click();
   await page.getByRole('heading', { name: 'Sicurezza' }).waitFor();
+  check('settings are split in tabs', (await Promise.all(['Sicurezza', 'Microsoft Entra ID', 'Backup e ripristino', 'Sistema'].map((n) => page.getByRole('tab', { name: n }).count()))).every((c) => c === 1));
+  const box = async (id) => page.locator('#' + id).boundingBox();
+  const [idle, abs, pwmin] = [await box('s-idle'), await box('s-abs'), await box('s-pw')];
+  check('inputs in the same row are aligned', !!idle && !!abs && !!pwmin && Math.abs(idle.y - abs.y) < 1 && Math.abs(abs.y - pwmin.y) < 1, `${idle?.y} ${abs?.y} ${pwmin?.y}`);
+  await page.getByRole('tab', { name: 'Microsoft Entra ID' }).click();
   await page.getByRole('heading', { name: 'Microsoft Entra ID' }).waitFor();
+  const [secretBox, cloudBox] = [await box('en-secret'), await box('en-cloud')];
+  check('Entra secret and cloud fields are aligned', !!secretBox && !!cloudBox && Math.abs(secretBox.y - cloudBox.y) < 1, `${secretBox?.y} ${cloudBox?.y}`);
   check('settings have the Microsoft Entra ID section with the redirect URI to register',
     await page.getByText(/\/api\/v1\/auth\/entra\/callback$/).first().waitFor({ timeout: 10000 }).then(() => true, () => false));
   await shot(page, '10-settings');
@@ -213,6 +221,10 @@ try {
     }
   };
   const bkPass = 'e2e backup passphrase long enough 2026';
+  await page.getByRole('tab', { name: 'Backup e ripristino' }).click();
+  await page.locator('#bk-pass').waitFor();
+  const [p1, p2] = [await box('bk-pass'), await box('bk-pass2')];
+  check('backup passphrase fields are aligned', !!p1 && !!p2 && Math.abs(p1.y - p2.y) < 1, `${p1?.y} ${p2?.y}`);
   await page.locator('#bk-pass').fill(bkPass);
   await page.locator('#bk-pass2').fill(bkPass);
   const bkDownload = page.waitForEvent('download', { timeout: 30000 });

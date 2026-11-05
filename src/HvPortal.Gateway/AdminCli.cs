@@ -20,6 +20,21 @@ public static class AdminCli
     public static async Task<int> RunAsync(string[] args)
     {
         var cmd = args.Length > 0 ? args[0].ToLowerInvariant() : "help";
+        if (cmd == "health")
+        {
+            // Container HEALTHCHECK: GET /healthz on the UI port of this process (self-signed certificate accepted, loopback only).
+            var port = Environment.GetEnvironmentVariable("Gateway__UiPort") ?? "8443";
+            using var handler = new HttpClientHandler { ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator };
+            using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+            try
+            {
+                return (await http.GetStringAsync($"https://127.0.0.1:{port}/healthz")).Trim() == "ok" ? 0 : 1;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                return 1;
+            }
+        }
         string? Opt(string name)
         {
             var i = Array.IndexOf(args, name);
@@ -103,7 +118,7 @@ public static class AdminCli
         await audit.WriteAsync(new AuditRecord
         {
             Action = "admin_cli.recover_account",
-            AuthMethod = "local-os-admin:" + WindowsIdentity.GetCurrent().Name,
+            AuthMethod = "local-os-admin:" + (OperatingSystem.IsWindows() ? WindowsIdentity.GetCurrent().Name : Environment.UserName),
             ResourceType = "user",
             ResourceId = user.Id.ToString("D"),
             Details = new { resetMfa },
@@ -182,6 +197,11 @@ public static class AdminCli
 
     private static bool IsAdministrator()
     {
+        // Linux container: running a command inside the container (docker exec) already requires host administration.
+        if (!OperatingSystem.IsWindows())
+        {
+            return true;
+        }
         using var id = WindowsIdentity.GetCurrent();
         return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
     }

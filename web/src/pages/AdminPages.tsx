@@ -1,11 +1,12 @@
-import { Download, KeyRound, Plus, ScrollText, Settings, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { Download, KeyRound, Plus, Save, ScrollText, Settings, ShieldCheck, UserRound, Users } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { del, get, post, put } from '@/api/client';
 import type { Assignment, AuditEntry, Role, SecuritySettings, UserRow } from '@/api/types';
 import { CopyButton, ErrorAlert, KeyValue, Loading, Notice, PageHeader, Section, StatusBadge } from '@/components/common';
 import { BackupSection } from '@/components/admin/BackupSection';
 import { AddUserDialog, CreatedUserNotice, EntraSettingsSection, type CreatedUser } from '@/components/admin/UserAdmin';
-import { ActionDialog, Field } from '@/components/dialogs';
+import { ActionDialog, Field, HelpTip } from '@/components/dialogs';
 import { MicrosoftMark } from '@/components/MicrosoftMark';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { GroupPickerList } from '@/components/ops/GroupDialogs';
@@ -14,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useI18n, type TKey } from '@/i18n';
 import { useLoad } from '@/lib/hooks';
 import { useSession } from '@/session';
@@ -56,8 +58,7 @@ export function UsersPage() {
       )}
       {created && <CreatedUserNotice user={created} onClose={() => setCreated(null)} />}
       {can('users.manage') && (
-        <Section title={t('users.title')} actions={<Button size="sm" onClick={() => setAdding(true)}><Plus />{t('users.add')}</Button>}>
-          <p className="px-3 pt-2 text-xs text-muted-foreground">{t('users.noRole')}</p>
+        <Section title={<span className="flex items-center gap-1.5">{t('users.title')}<HelpTip>{t('users.noRole')}</HelpTip></span>} actions={<Button size="sm" onClick={() => setAdding(true)}><Plus />{t('users.add')}</Button>}>
           {users.loading && !users.data ? <Loading /> : (
             <Table containerClassName="max-h-[45vh]">
               <TableHeader><TableRow><TableHead>{t('login.user')}</TableHead><TableHead>{t('users.enabled')}</TableHead><TableHead>{t('users.mfa')}</TableHead><TableHead>{t('users.lastLogin')}</TableHead><TableHead /></TableRow></TableHeader>
@@ -95,8 +96,7 @@ export function UsersPage() {
 
       {can('roles.manage') && (
         <>
-          <Section title={t('roles.assignments')} actions={<Button size="sm" onClick={() => setAssigning(true)}><Plus />{t('roles.assign')}</Button>}>
-            <p className="px-3 pt-2 text-xs text-muted-foreground">{t('roles.denyHelp')} {t('group.inheritHelp')}</p>
+          <Section title={<span className="flex items-center gap-1.5">{t('roles.assignments')}<HelpTip>{t('roles.denyHelp')} {t('group.inheritHelp')}</HelpTip></span>} actions={<Button size="sm" onClick={() => setAssigning(true)}><Plus />{t('roles.assign')}</Button>}>
             <Table containerClassName="max-h-[45vh]">
               <TableHeader><TableRow><TableHead>{t('login.user')}</TableHead><TableHead>{t('roles.role')}</TableHead><TableHead>{t('roles.scope')}</TableHead><TableHead>{t('roles.effect')}</TableHead><TableHead /></TableRow></TableHeader>
               <TableBody>
@@ -221,58 +221,83 @@ export function AuditPage() {
   );
 }
 
+const SETTINGS_TABS = ['security', 'entra', 'backup', 'system'] as const;
+type SettingsTab = (typeof SETTINGS_TABS)[number];
+
+/** Settings in tabs: each area has its own page width and save button. */
 export function SettingsPage() {
   const { t } = useI18n();
+  const [params, setParams] = useSearchParams();
+  const tab: SettingsTab = (SETTINGS_TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as SettingsTab) : 'security';
+  return (
+    <Tabs value={tab} onValueChange={(v) => setParams(v === 'security' ? {} : { tab: v }, { replace: true })} className="flex h-full min-h-0 flex-col gap-0">
+      <PageHeader icon={<Settings className="size-5" />} title={t('nav.settings')}>
+        <TabsList variant="line" className="-mb-px h-9 w-full justify-start overflow-x-auto rounded-none bg-transparent p-0">
+          {SETTINGS_TABS.map((x) => <TabsTrigger key={x} value={x} className="flex-none px-3">{t(('settings.tab.' + x) as TKey)}</TabsTrigger>)}
+        </TabsList>
+      </PageHeader>
+      <TabsContent value="security" className="min-h-0 overflow-auto p-4">{tab === 'security' && <div className="max-w-4xl"><SecuritySettingsSection /></div>}</TabsContent>
+      <TabsContent value="entra" className="min-h-0 overflow-auto p-4">{tab === 'entra' && <div className="max-w-4xl"><EntraSettingsSection /></div>}</TabsContent>
+      <TabsContent value="backup" className="min-h-0 overflow-auto p-4">{tab === 'backup' && <div className="max-w-4xl"><BackupSection /></div>}</TabsContent>
+      <TabsContent value="system" className="min-h-0 overflow-auto p-4">{tab === 'system' && <div className="max-w-4xl"><SystemInfoSection /></div>}</TabsContent>
+    </Tabs>
+  );
+}
+
+function SecuritySettingsSection() {
+  const { t } = useI18n();
   const settings = useLoad(() => get<SecuritySettings>('/api/v1/settings/security'));
-  const info = useLoad(() => get<{ version: string; milestone: string; database: string; telemetry: string; dataDirectory: string | null; internetRequired: string }>('/api/v1/system/info'));
   const [draft, setDraft] = useState<SecuritySettings | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
   const s = draft ?? settings.data;
-  if (!s) return settings.error ? <div className="p-4"><ErrorAlert error={settings.error} /></div> : <Loading />;
+  if (!s) return settings.error ? <ErrorAlert error={settings.error} /> : <Loading />;
   const set = (p: Partial<SecuritySettings>) => { setDraft({ ...s, ...p }); setSaved(false); };
   const save = async () => {
     setError(null);
     try { await put('/api/v1/settings/security', s); setSaved(true); setDraft(null); settings.reload(); } catch (e) { setError(e); }
   };
   return (
-    <Page icon={<Settings className="size-5" />} title={t('nav.settings')}>
+    <Section title={t('settings.security')} bodyClassName="space-y-4 p-4">
       <ErrorAlert error={error} />
       {saved && <Notice kind="ok">{t('settings.saved')}</Notice>}
-      <div className="grid gap-3 xl:grid-cols-2">
-        <Section title={t('settings.security')} bodyClassName="space-y-3 p-3">
-          <Field label={t('settings.mfaFor')} htmlFor="s-mfa">
-            <NativeSelect id="s-mfa" value={s.mfaRequiredFor} onChange={(e) => set({ mfaRequiredFor: e.target.value as SecuritySettings['mfaRequiredFor'] })}>
-              {(['None', 'Privileged', 'All'] as const).map((v) => <option key={v} value={v}>{t(('settings.mfa.' + v) as TKey)}</option>)}
-            </NativeSelect>
-          </Field>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label={t('settings.idle')} htmlFor="s-idle"><Input id="s-idle" type="number" min={5} max={240} value={s.sessionIdleMinutes} onChange={(e) => set({ sessionIdleMinutes: Number(e.target.value) })} /></Field>
-            <Field label={t('settings.absolute')} htmlFor="s-abs"><Input id="s-abs" type="number" min={1} max={72} value={s.sessionAbsoluteHours} onChange={(e) => set({ sessionAbsoluteHours: Number(e.target.value) })} /></Field>
-            <Field label={t('settings.pwmin')} htmlFor="s-pw"><Input id="s-pw" type="number" min={15} max={128} value={s.passwordMinLength} onChange={(e) => set({ passwordMinLength: Number(e.target.value) })} /></Field>
-          </div>
-          <Field label={t('settings.localSignIn')} htmlFor="s-local">
-            <NativeSelect id="s-local" value={s.localSignIn} onChange={(e) => set({ localSignIn: e.target.value as SecuritySettings['localSignIn'] })}>
-              <option value="allowed">{t('settings.localSignIn.allowed')}</option><option value="break-glass-only">{t('settings.localSignIn.breakGlass')}</option>
-            </NativeSelect>
-          </Field>
-          <Button disabled={!draft} onClick={() => void save()}>{t('common.save')}</Button>
-        </Section>
-        <EntraSettingsSection />
-        <BackupSection />
-        <Section title={t('settings.system')} bodyClassName="p-3">
-          {info.data && (
-            <KeyValue items={[
-              ['Version', `${info.data.version} (${info.data.milestone})`],
-              ['Database', info.data.database],
-              [t('settings.telemetry'), info.data.telemetry],
-              [t('settings.offline'), info.data.internetRequired],
-              ...(info.data.dataDirectory ? [['Data', <code key="d" className="font-mono text-xs">{info.data.dataDirectory}</code>] as [ReactNode, ReactNode]] : []),
-            ]} />
-          )}
-        </Section>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label={t('settings.mfaFor')} htmlFor="s-mfa" hint={t('settings.mfaForHelp')}>
+          <NativeSelect id="s-mfa" value={s.mfaRequiredFor} onChange={(e) => set({ mfaRequiredFor: e.target.value as SecuritySettings['mfaRequiredFor'] })}>
+            {(['None', 'Privileged', 'All'] as const).map((v) => <option key={v} value={v}>{t(('settings.mfa.' + v) as TKey)}</option>)}
+          </NativeSelect>
+        </Field>
+        <Field label={t('settings.localSignIn')} htmlFor="s-local" hint={t('settings.localSignInHelp')}>
+          <NativeSelect id="s-local" value={s.localSignIn} onChange={(e) => set({ localSignIn: e.target.value as SecuritySettings['localSignIn'] })}>
+            <option value="allowed">{t('settings.localSignIn.allowed')}</option><option value="break-glass-only">{t('settings.localSignIn.breakGlass')}</option>
+          </NativeSelect>
+        </Field>
       </div>
-    </Page>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label={t('settings.idle')} htmlFor="s-idle" aside="5–240"><Input id="s-idle" type="number" min={5} max={240} value={s.sessionIdleMinutes} onChange={(e) => set({ sessionIdleMinutes: Number(e.target.value) })} /></Field>
+        <Field label={t('settings.absolute')} htmlFor="s-abs" aside="1–72"><Input id="s-abs" type="number" min={1} max={72} value={s.sessionAbsoluteHours} onChange={(e) => set({ sessionAbsoluteHours: Number(e.target.value) })} /></Field>
+        <Field label={t('settings.pwmin')} htmlFor="s-pw" aside="15–128"><Input id="s-pw" type="number" min={15} max={128} value={s.passwordMinLength} onChange={(e) => set({ passwordMinLength: Number(e.target.value) })} /></Field>
+      </div>
+      <div className="flex justify-end border-t pt-3"><Button disabled={!draft} onClick={() => void save()}><Save />{t('common.save')}</Button></div>
+    </Section>
+  );
+}
+
+function SystemInfoSection() {
+  const { t } = useI18n();
+  const info = useLoad(() => get<{ version: string; milestone: string; database: string; telemetry: string; dataDirectory: string | null; internetRequired: string }>('/api/v1/system/info'));
+  return (
+    <Section title={t('settings.system')} bodyClassName="p-4">
+      {info.error ? <ErrorAlert error={info.error} /> : !info.data ? <Loading /> : (
+        <KeyValue items={[
+          ['Version', `${info.data.version} (${info.data.milestone})`],
+          ['Database', info.data.database],
+          [t('settings.telemetry'), info.data.telemetry],
+          [t('settings.offline'), info.data.internetRequired],
+          ...(info.data.dataDirectory ? [['Data', <code key="d" className="font-mono text-xs">{info.data.dataDirectory}</code>] as [ReactNode, ReactNode]] : []),
+        ]} />
+      )}
+    </Section>
   );
 }
 

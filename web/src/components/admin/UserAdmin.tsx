@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { get, post, put } from '@/api/client';
 import type { Role } from '@/api/types';
 import { CopyButton, ErrorAlert, Loading, Notice, Section } from '@/components/common';
-import { Field } from '@/components/dialogs';
+import { Field, HelpTip } from '@/components/dialogs';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { MicrosoftMark } from '@/components/MicrosoftMark';
 import { GroupPickerList } from '@/components/ops/GroupDialogs';
@@ -114,7 +114,7 @@ export function AddUserDialog({ roles, onCreated, onClose }: { roles: Role[]; on
           {source === 'local' ? (
             <label className="flex items-start gap-2 text-sm">
               <Checkbox checked={requireMfa} onCheckedChange={(c) => setRequireMfa(!!c)} className="mt-0.5" />
-              <span>{t('users.requireMfa')}<span className="block text-xs text-muted-foreground">{t('users.requireMfaHelp')}</span></span>
+              <span className="flex items-center gap-1.5">{t('users.requireMfa')}<HelpTip>{t('users.requireMfaHelp')}</HelpTip></span>
             </label>
           ) : <Notice kind="info">{t('users.entraMfa')}</Notice>}
           {canAssign ? (
@@ -208,8 +208,8 @@ export function EntraSettingsSection() {
   };
 
   return (
-    <Section title={<span className="flex items-center gap-2"><MicrosoftMark />{t('entra.title')}</span>} bodyClassName="space-y-3 p-3">
-      <p className="text-xs text-muted-foreground">{t('entra.help')}</p>
+    <Section title={<span className="flex items-center gap-2"><MicrosoftMark />{t('entra.title')}<HelpTip>{t('entra.help')}</HelpTip></span>} bodyClassName="space-y-4 p-4">
+      <h3 className="text-sm font-medium">{t('entra.setupTitle')}</h3>
       <ol className="list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
         <li>{t('entra.step1')}</li>
         <li>{t('entra.step2')}
@@ -220,11 +220,11 @@ export function EntraSettingsSection() {
       </ol>
       <ErrorAlert error={error} />
       {notice && <Notice kind="ok">{notice}</Notice>}
-      <label className="flex items-center gap-2 text-sm"><Switch checked={d.enabled} onCheckedChange={(c) => set({ enabled: c })} />{t('entra.enabled')}</label>
+      <label className="flex items-center gap-2 border-t pt-4 text-sm"><Switch checked={d.enabled} onCheckedChange={(c) => set({ enabled: c })} />{t('entra.enabled')}<HelpTip>{t('entra.mfaNote')}</HelpTip></label>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label={t('entra.tenant')} htmlFor="en-tenant"><Input id="en-tenant" value={d.tenantId} onChange={(e) => set({ tenantId: e.target.value })} placeholder="00000000-0000-0000-0000-000000000000" className="font-mono text-xs" /></Field>
         <Field label={t('entra.client')} htmlFor="en-client"><Input id="en-client" value={d.clientId} onChange={(e) => set({ clientId: e.target.value })} placeholder="00000000-0000-0000-0000-000000000000" className="font-mono text-xs" /></Field>
-        <Field label={t('entra.secret')} htmlFor="en-secret" hint={v.hasClientSecret ? t('entra.secretSet') : t('entra.secretMissing')}>
+        <Field label={t('entra.secret')} htmlFor="en-secret" hint={t('entra.secretHelp')} aside={v.hasClientSecret ? t('entra.secretStored') : t('entra.secretNone')}>
           <Input id="en-secret" type="password" autoComplete="new-password" value={secret} onChange={(e) => { setSecret(e.target.value); setNotice(null); }} placeholder={v.hasClientSecret ? '••••••••' : ''} />
         </Field>
         <Field label={t('entra.cloud')} htmlFor="en-cloud">
@@ -239,7 +239,6 @@ export function EntraSettingsSection() {
         {v.complete && v.enabled && <span className="flex items-center gap-1 text-xs text-success"><CheckCircle2 className="size-3.5" />{t('entra.active')}</span>}
         {v.updatedAt && <span className="ml-auto text-xs text-muted-foreground"><KeyRound className="mr-1 inline size-3" />{fmtDate(v.updatedAt)}</span>}
       </div>
-      <p className="text-xs text-muted-foreground">{t('entra.mfaNote')}</p>
     </Section>
   );
 }

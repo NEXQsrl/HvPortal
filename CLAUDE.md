@@ -28,6 +28,9 @@ npx vite build
 # Browser e2e (Edge headless via playwright-core) against a fresh gateway with a real agent
 node web\e2e\ui-smoke.mjs --url https://localhost:28443 --data <gw-data> --agent-data <agent-data> --agent-exe <HvPortal.Agent.exe> --agent-port 28444 --out <screenshots>
 
+# Docker (gateway only; the agent stays a Windows service)
+docker build -f docker/Dockerfile -t hvportal-gateway:0.3.4 .      # compose + .env example in docker/
+
 # Packaging / release
 .\installer\New-AgentPackage.ps1 -OutputDirectory artifacts\packages   # zip served by the gateway (/api/v1/downloads)
 .\installer\Build-Release.ps1 [-SkipTests]

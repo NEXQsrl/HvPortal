@@ -97,6 +97,18 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-021 Gateway also as a Linux container
+- The gateway targets `net10.0` (was `net10.0-windows`) and runs either as a Windows service or in a Linux container
+  (`docker/`); the agent stays Windows-only. Platform-specific parts are selected at run time:
+  key ring wrapping DPAPI vs AES-256-GCM with a key-encryption key (`HVP_KEY_ENCRYPTION_KEY[_FILE]`, generated in the
+  volume with a warning if missing), Data Protection keys DPAPI vs sealed with the key ring, private files NTFS ACLs
+  vs POSIX 0700/0600, UI certificate from the Windows store (thumbprint) vs PFX/PEM file.
+- The key file records its protection (`dpapi` / `kek-aesgcm`); a DPAPI key ring cannot be opened in a container:
+  migration uses the portal backup/restore (keys are re-wrapped for the target).
+- Image: multi-stage (Node for the SPA, .NET SDK for the gateway and the cross-published win-x64 agent package),
+  runtime `aspnet:10.0`, non-root, read-only root file system, no capabilities, `admin health` as HEALTHCHECK.
+  Authenticode cannot be checked on Linux: a package built in the image is reported as unsigned.
+
 ## ADR-020 Portal backup and restore from Settings
 - One file for disaster recovery instead of three procedures (DB copy with the service stopped, key export, CA):
   `KeyRing.Export` seals the key ring plus extra files with the passphrase; the extra files are a manifest, the SQLite

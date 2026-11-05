@@ -94,5 +94,11 @@ public sealed class BootstrapService
             token + "\r\n");
         _logger.LogWarning("Initial setup required. Open the portal and use the one-time setup token stored in {Path} " +
                            "(readable by local administrators only).", _paths.SetupTokenFile);
+        // Containers (Portainer): HVP_PRINT_SETUP_TOKEN=true also writes it to the container log, which only host
+        // administrators can read. Never enabled by default; the token is single-use and becomes useless after setup.
+        if (string.Equals(Environment.GetEnvironmentVariable("HVP_PRINT_SETUP_TOKEN"), "true", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("HvPortal setup token (single use, 24 h): " + token);
+        }
     }
 }

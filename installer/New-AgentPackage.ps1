@@ -24,15 +24,19 @@ $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..')
 $version = ([xml](Get-Content (Join-Path $repo 'Directory.Build.props'))).Project.PropertyGroup.Version
 $staging = Join-Path ([IO.Path]::GetTempPath()) ("hvp-agent-pkg-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force "$staging\agent", "$staging\installer", $OutputDirectory | Out-Null
+# Join-Path everywhere: the script also runs in PowerShell on Linux (Docker image build).
+$agentStage = Join-Path $staging 'agent'
+$installerStage = Join-Path $staging 'installer'
+New-Item -ItemType Directory -Force $agentStage, $installerStage, $OutputDirectory | Out-Null
 try {
     if ($AgentDirectory) {
-        Copy-Item -Path (Join-Path $AgentDirectory '*') -Destination "$staging\agent" -Recurse
+        Copy-Item -Path (Join-Path $AgentDirectory '*') -Destination $agentStage -Recurse
     } else {
-        dotnet publish (Join-Path $repo 'src\HvPortal.Agent') -c $Configuration -r $Runtime --self-contained true -p:DebugType=none -o "$staging\agent"
+        dotnet publish (Join-Path (Join-Path $repo 'src') 'HvPortal.Agent') -c $Configuration -r $Runtime --self-contained true -p:DebugType=none -p:EnableWindowsTargeting=true -o $agentStage
         if ($LASTEXITCODE -ne 0) { throw 'Agent publish failed.' }
     }
-    Copy-Item (Join-Path $repo 'installer\Common.ps1'), (Join-Path $repo 'installer\Install-Agent.ps1'), (Join-Path $repo 'installer\Uninstall-HvPortal.ps1') "$staging\installer"
+    $inst = Join-Path $repo 'installer'
+    Copy-Item (Join-Path $inst 'Common.ps1'), (Join-Path $inst 'Install-Agent.ps1'), (Join-Path $inst 'Uninstall-HvPortal.ps1') $installerStage
 
     $readmeIt = @"
 HvPortal Agent $version
@@ -76,15 +80,17 @@ Updating an installed agent (in the portal: Guide > Update the Windows services)
 
 Uninstall:  .\Uninstall-HvPortal.ps1 -Component Agent   (then remove the host in the portal)
 "@
-    Set-Content -Path "$staging\LEGGIMI.txt" -Value $readmeIt -Encoding utf8
-    Set-Content -Path "$staging\README.txt" -Value $readmeEn -Encoding utf8
+    Set-Content -Path (Join-Path $staging 'LEGGIMI.txt') -Value $readmeIt -Encoding utf8
+    Set-Content -Path (Join-Path $staging 'README.txt') -Value $readmeEn -Encoding utf8
 
-    $sig = Get-AuthenticodeSignature (Join-Path $staging 'agent\HvPortal.Agent.exe')
-    $signed = $sig.Status -eq 'Valid'
+    # Authenticode can be verified only on Windows: elsewhere the package is reported as unsigned (never assumed).
+    $sig = $null
+    if (Get-Command Get-AuthenticodeSignature -ErrorAction SilentlyContinue) { $sig = Get-AuthenticodeSignature (Join-Path $agentStage 'HvPortal.Agent.exe') }
+    $signed = $null -ne $sig -and $sig.Status -eq 'Valid'
     $zip = Join-Path $OutputDirectory 'HvPortal.Agent-win-x64.zip'
     $tmpZip = "$zip.tmp"
     if (Test-Path $tmpZip) { Remove-Item $tmpZip -Force }
-    Compress-Archive -Path "$staging\*" -DestinationPath $tmpZip -CompressionLevel Optimal
+    Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $tmpZip -CompressionLevel Optimal
     Move-Item $tmpZip $zip -Force
     [ordered]@{
         version    = $version

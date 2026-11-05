@@ -37,6 +37,10 @@ public static class ConfigBackup
     private sealed record Pending(Manifest Manifest, DateTimeOffset StagedAt, string StagedBy);
 
     private static string PendingDir(GatewayPaths p) => Path.Combine(p.Root, "restore-pending");
+
+    /// <summary>Windows service (recovery actions) or container (restart policy, DOTNET_RUNNING_IN_CONTAINER set by the .NET images).</summary>
+    private static bool CanSelfRestart =>
+        WindowsServiceHelpers.IsWindowsService() || string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase);
     private static string AppliedMarker(GatewayPaths p) => Path.Combine(p.Root, "restore-applied.json");
 
     public static void Map(WebApplication app)
@@ -230,7 +234,7 @@ public static class ConfigBackup
         SecureFileSystem.WriteAllTextAtomic(Path.Combine(dir, "pending.json"), JsonSerializer.Serialize(pending));
         await http.WriteAuditAsync("settings.backup.restore.staged", AuditOutcome.Success, details: new { opened.manifest.CreatedAt, opened.manifest.ProductVersion, opened.manifest.Machine,
             opened.manifest.Users, opened.manifest.Hosts, opened.manifest.Vms });
-        return Results.Ok(new { staged = true, manifest = opened.manifest, runningAsService = WindowsServiceHelpers.IsWindowsService() });
+        return Results.Ok(new { staged = true, manifest = opened.manifest, runningAsService = CanSelfRestart });
     }
 
     private static async Task<IResult> PendingAsync(HttpContext http, AccessEvaluator access, GatewayPaths paths)
@@ -245,7 +249,7 @@ public static class ConfigBackup
         {
             pending = File.Exists(file) ? JsonSerializer.Deserialize<Pending>(await File.ReadAllTextAsync(file)) : null,
             lastApplied = File.Exists(applied) ? JsonSerializer.Deserialize<JsonElement>(await File.ReadAllTextAsync(applied)) : (JsonElement?)null,
-            runningAsService = WindowsServiceHelpers.IsWindowsService(),
+            runningAsService = CanSelfRestart,
         });
     }
 
@@ -270,13 +274,13 @@ public static class ConfigBackup
         {
             return denied;
         }
-        if (!WindowsServiceHelpers.IsWindowsService())
+        if (!CanSelfRestart)
         {
-            return ApiSupport.Conflict("not_a_service", "The gateway is not running as a Windows service: restart it manually.");
+            return ApiSupport.Conflict("not_a_service", "The gateway is not running as a Windows service or in a container: restart it manually.");
         }
         await http.WriteAuditAsync("settings.backup.restart");
         logs.CreateLogger("HvPortal.Backup").LogWarning("Restart requested to apply a staged restore");
-        // Non-zero exit: the service recovery actions configured by Install-Gateway.ps1 restart the service.
+        // Non-zero exit: the service recovery actions configured by Install-Gateway.ps1 (or the container restart policy) restart it.
         _ = Task.Run(async () =>
         {
             await Task.Delay(TimeSpan.FromSeconds(1));

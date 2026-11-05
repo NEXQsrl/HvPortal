@@ -2,7 +2,7 @@ import { DatabaseBackup, Download, RotateCcw, Upload, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { del, get, post, rawRequest } from '@/api/client';
 import { ErrorAlert, KeyValue, Notice, Section } from '@/components/common';
-import { Field } from '@/components/dialogs';
+import { Field, HelpTip } from '@/components/dialogs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useI18n } from '@/i18n';
@@ -73,8 +73,7 @@ export function BackupSection() {
 
   const pending = state.data?.pending;
   return (
-    <Section title={<span className="flex items-center gap-2"><DatabaseBackup className="size-4 text-muted-foreground" />{t('backup.title')}</span>} bodyClassName="space-y-4 p-3">
-      <p className="text-xs text-muted-foreground">{t('backup.help')}</p>
+    <Section title={<span className="flex items-center gap-2"><DatabaseBackup className="size-4 text-muted-foreground" />{t('backup.title')}<HelpTip>{t('backup.help')}</HelpTip></span>} bodyClassName="space-y-4 p-4">
       <ErrorAlert error={error ?? state.error} />
 
       {pending && (
@@ -92,17 +91,16 @@ export function BackupSection() {
         <Notice kind="info">{t('backup.lastApplied', { date: fmtDate(state.data.lastApplied.appliedAt), path: state.data.lastApplied.previousStateKeptIn })}</Notice>
       )}
 
-      <div className="space-y-2 rounded-lg border p-3">
-        <h3 className="text-sm font-medium">{t('backup.create')}</h3>
+      <div className="space-y-3 rounded-lg border p-4">
+        <h3 className="flex items-center gap-1.5 text-sm font-medium">{t('backup.create')}<HelpTip>{t('backup.storeSafely')}</HelpTip></h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={t('backup.passphrase')} htmlFor="bk-pass" hint={t('backup.passHint', { n: MIN })}><Input id="bk-pass" type="password" autoComplete="new-password" value={pass} onChange={(e) => setPass(e.target.value)} /></Field>
           <Field label={t('backup.passphrase2')} htmlFor="bk-pass2" error={pass2 && pass2 !== pass ? t('backup.mismatch') : null}><Input id="bk-pass2" type="password" autoComplete="new-password" value={pass2} onChange={(e) => setPass2(e.target.value)} /></Field>
         </div>
         <Button size="sm" disabled={pass.length < MIN || pass !== pass2 || !!busy} onClick={() => void exportBackup()}><Download />{t('backup.download')}</Button>
-        <p className="text-xs text-muted-foreground">{t('backup.storeSafely')}</p>
       </div>
 
-      <div className="space-y-2 rounded-lg border p-3">
+      <div className="space-y-3 rounded-lg border p-4">
         <h3 className="text-sm font-medium">{t('backup.restore')}</h3>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="outline" onClick={() => input.current?.click()}><Upload />{t('backup.chooseFile')}</Button>

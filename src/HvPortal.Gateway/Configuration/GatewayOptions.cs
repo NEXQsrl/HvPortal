@@ -22,6 +22,12 @@ public sealed class GatewayOptions
 
     /// <summary>Optional: thumbprint of a certificate in LocalMachine\My to use for the browser UI instead of the internal one.</summary>
     public string? UiCertificateThumbprint { get; set; }
+    /// <summary>Linux/container alternative to the thumbprint: PFX file, or PEM certificate (+ UiCertificateKeyPath).</summary>
+    public string? UiCertificatePath { get; set; }
+    public string? UiCertificateKeyPath { get; set; }
+    public string? UiCertificatePassword { get; set; }
+    /// <summary>File containing the PFX password (Docker secret).</summary>
+    public string? UiCertificatePasswordFile { get; set; }
 
     public DatabaseOptions Database { get; set; } = new();
     public SecurityOptions Security { get; set; } = new();

@@ -27,6 +27,7 @@ workgroup — with local accounts, MFA, fine-grained RBAC, persistent jobs and a
 | VM groups as nested folders with RBAC inheritance and anti-escalation; single inventory tree (Hosts / Groups / All VMs) with drag and drop | ✅ tested |
 | Portal groups mirrored as native Hyper-V VM groups (`Get-VMGroup`), import of existing native groups — agent 0.3.2 | ✅ code + tests; real-host validation pending |
 | Microsoft Entra ID sign-in (Settings), Microsoft and local users created with role; MFA at first sign-in | ✅ code + tests (test IdP); real-tenant validation pending |
+| Gateway as a Linux container (Docker / Portainer): `docker/` | ✅ image built and smoke-tested with a real Windows agent |
 | Portal backup and restore from Settings (sealed file, staged restore) | ✅ code + tests; service-restart path to validate on a server |
 | Host file explorer (Storage > Files): browse, download, upload with SHA-256 verification — agent 0.3.3 | ✅ code + tests (also against the real agent locally); real-host validation pending |
 | Host folder browser for VM location and ISO files (system folders hidden and refused) — agent 0.3.1 | ✅ code + tests; real-host validation pending |

@@ -48,7 +48,7 @@ function PasswordFields({ value, onChange, confirm, onConfirm, minLength, label 
   const { t } = useI18n();
   return (
     <>
-      <Field label={label} htmlFor="pw-new" hint={<>{t('pw.rules', { n: minLength })} {value.length > 0 && `(${[...value].length})`}</>}>
+      <Field label={label} htmlFor="pw-new" hint={t('pw.rules', { n: minLength })} aside={value.length > 0 ? `${[...value].length}` : undefined}>
         <Input id="pw-new" type="password" autoComplete="new-password" value={value} maxLength={256} onChange={(e) => onChange(e.target.value)} />
       </Field>
       <Field label={t('setup.confirm')} htmlFor="pw-confirm" error={confirm && value !== confirm ? t('pw.mismatch') : undefined}>

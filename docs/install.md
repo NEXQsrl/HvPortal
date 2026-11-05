@@ -1,5 +1,10 @@
 # Installation guide
 
+## Docker (Linux container, e.g. Portainer)
+
+The gateway can also run as a container: see [docker/README.md](../docker/README.md) (`docker/docker-compose.yml`,
+`docker/.env.example`). The Hyper-V hosts keep the Windows agent.
+
 ## Topologies
 
 | Topology | Gateway | Agent | Notes |

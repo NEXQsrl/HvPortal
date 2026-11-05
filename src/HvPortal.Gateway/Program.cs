@@ -53,6 +53,13 @@ namespace HvPortal.Gateway
             var section = builder.Configuration.GetSection(GatewayOptions.Section);
             var options = section.Get<GatewayOptions>() ?? new GatewayOptions();
             builder.Services.Configure<GatewayOptions>(section);
+            // Containers: HVP_PUBLIC_NAMES="gw01.contoso.local,10.0.10.5" (one variable instead of Gateway__PublicNames__0..n).
+            if (Environment.GetEnvironmentVariable("HVP_PUBLIC_NAMES") is { Length: > 0 } namesVar)
+            {
+                var names = namesVar.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                options.PublicNames = [.. options.PublicNames.Concat(names).Distinct(StringComparer.OrdinalIgnoreCase)];
+                builder.Services.PostConfigure<GatewayOptions>(o => o.PublicNames = [.. o.PublicNames.Concat(names).Distinct(StringComparer.OrdinalIgnoreCase)]);
+            }
 
             var paths = new GatewayPaths(options.DataDirectory ?? GatewayPaths.DefaultRoot());
             if (SecureFileSystem.ContainsReparsePoint(paths.Root))
@@ -69,6 +76,11 @@ namespace HvPortal.Gateway
             // A restore staged from Settings is applied before anything opens the key ring or the database.
             HvPortal.Gateway.Backup.ConfigBackup.ApplyPendingRestore(paths, startupLog);
             var keyRing = KeyRing.LoadOrCreate(paths.Keys);
+            if (KeyWrap.KekGeneratedLocally)
+            {
+                startupLog.LogWarning("No key-encryption key provided (HVP_KEY_ENCRYPTION_KEY_FILE): generated {Path}. Keys are protected only by the file permissions of the data volume; "
+                    + "provide the KEK as a Docker secret for production.", Path.Combine(paths.Keys, "kek.bin"));
+            }
             var ca = InternalCertificateAuthority.LoadOrCreate(paths.Pki, keyRing, options.PublicNames, startupLog);
 
             builder.Services.AddSingleton(paths);
@@ -110,10 +122,19 @@ namespace HvPortal.Gateway
             var connectionString = options.Database.ConnectionString ?? $"Data Source={Path.Combine(paths.Database, "hvportal.db")};Foreign Keys=True";
             builder.Services.AddDbContext<PortalDbContext>(o => o.UseSqlite(connectionString));
 
-            builder.Services.AddDataProtection()
+            var dataProtection = builder.Services.AddDataProtection()
                 .SetApplicationName("HvPortal")
-                .PersistKeysToFileSystem(new DirectoryInfo(paths.DataProtectionKeys))
-                .ProtectKeysWithDpapi(protectToLocalMachine: true);
+                .PersistKeysToFileSystem(new DirectoryInfo(paths.DataProtectionKeys));
+            if (OperatingSystem.IsWindows())
+            {
+                dataProtection.ProtectKeysWithDpapi(protectToLocalMachine: true);
+            }
+            else
+            {
+                // Linux (container): no DPAPI; keys are sealed with the gateway key ring (KEK-protected).
+                builder.Services.Configure<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>(o =>
+                    o.XmlEncryptor = new KeyRingXmlEncryptor(keyRing));
+            }
 
             builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
                 .AddCookie(o =>
@@ -267,9 +288,21 @@ namespace HvPortal.Gateway
 
         private static X509Certificate2? LoadUiCertificate(GatewayOptions options)
         {
+            if (!string.IsNullOrWhiteSpace(options.UiCertificatePath))
+            {
+                // PFX (password from UiCertificatePassword or the file in UiCertificatePasswordFile) or PEM certificate + key.
+                var password = options.UiCertificatePasswordFile is { Length: > 0 } pf ? File.ReadAllText(pf).Trim() : options.UiCertificatePassword;
+                return options.UiCertificatePath.EndsWith(".pem", StringComparison.OrdinalIgnoreCase) || options.UiCertificatePath.EndsWith(".crt", StringComparison.OrdinalIgnoreCase)
+                    ? X509Certificate2.CreateFromPemFile(options.UiCertificatePath, options.UiCertificateKeyPath)
+                    : X509CertificateLoader.LoadPkcs12FromFile(options.UiCertificatePath, password);
+            }
             if (string.IsNullOrWhiteSpace(options.UiCertificateThumbprint))
             {
                 return null;
+            }
+            if (!OperatingSystem.IsWindows())
+            {
+                throw new InvalidOperationException("UiCertificateThumbprint (Windows certificate store) is not available on this platform: use UiCertificatePath.");
             }
             using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
             store.Open(OpenFlags.ReadOnly);
