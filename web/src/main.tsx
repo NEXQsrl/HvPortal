@@ -26,8 +26,19 @@ import { applyTheme, readTheme } from './theme';
 
 applyTheme(readTheme());
 
+/** Target of the Entra re-authentication popup: tell the opener and close. */
+function ReauthDone() {
+  const status = new URLSearchParams(window.location.search).get('status') ?? 'error';
+  if (window.opener) {
+    window.opener.postMessage({ type: 'hvp-reauth', status }, window.location.origin);
+    window.close();
+  }
+  return <div className="flex h-dvh items-center justify-center p-6 text-center text-sm text-muted-foreground">{status === 'ok' ? 'OK' : status}</div>;
+}
+
 function Gate() {
   const { state, me, loading } = useSession();
+  if (window.location.pathname === '/auth/reauth-done') return <ReauthDone />;
   if (loading) return <div className="flex h-dvh items-center justify-center"><Loading /></div>;
   if (state?.setupRequired) return <SetupPage />;
   if (!me) return <LoginPage />;

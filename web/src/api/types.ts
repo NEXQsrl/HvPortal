@@ -12,6 +12,8 @@ export interface AuthState {
   setupRequired: boolean;
   authenticated: boolean;
   providers: string[];
+  /** "allowed" or "break-glass-only" (local sign-in reserved to emergency accounts). */
+  localSignIn?: string;
   version: string;
 }
 
@@ -19,6 +21,8 @@ export interface Me {
   id: string;
   userName: string;
   displayName: string | null;
+  /** "local" or "entra" (Microsoft account: no portal password, MFA by Entra ID). */
+  authSource?: string;
   restriction: 'password_change' | 'mfa_enrollment' | null;
   mfaEnabled: boolean;
   mfaRequired: boolean;
@@ -197,6 +201,8 @@ export interface UserRow {
   isBreakGlass: boolean;
   createdAt: string;
   lastLoginAt: string | null;
+  entraBound?: boolean;
+  mfaEnrollmentRequired?: boolean;
 }
 
 export interface Role { id: string; name: string; description: string | null; isBuiltIn: boolean; builtInKey: string | null; permissions: string[] }

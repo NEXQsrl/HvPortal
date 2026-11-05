@@ -35,6 +35,10 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 - Agent protocol 3 (agent 0.3.1): `BrowseFolders`, `NewVm.Location`; the gateway never sends them to older agents;
   agents reply `Rejected` to commands they cannot parse instead of dropping the channel.
 
+## v0.3.4 — delivered (code + automated tests; real-tenant validation pending)
+- Microsoft Entra ID sign-in configured from Settings, pre-provisioned Microsoft users, Entra re-authentication
+  (ADR-019). New user dialog: type (local / Microsoft), role and scope, MFA at first sign-in for local users.
+
 ## v0.3.3 — delivered (code + automated tests; real-host validation pending)
 - Storage > Files: host file explorer (open folders with one click, download, upload with progress and drag and
   drop, overwrite confirmation), permissions `host.files.read` / `host.files.write`, audited (ADR-018). Agent

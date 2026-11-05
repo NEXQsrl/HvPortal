@@ -71,6 +71,9 @@ Record results (date, build, edition, pass/fail, evidence) in a copy of the tabl
 | V21 | (agent 0.3.3) Storage > Files: open D:\, upload a 6 GB ISO, then mount it from the ISO library | progress to 100 %, file appears only at the end, audit `host.files.upload` with SHA-256 equal to `Get-FileHash` on the host |
 | V22 | Download the VHDX of a running VM and of a stopped VM | running: refused "file in use"; stopped: downloads, SHA-256 matches |
 | V23 | Upload into a folder the agent account cannot write (e.g. an ACL-protected folder) | `access_denied`, nothing left behind (no `.hvpart` file) |
+| V24 | Entra: register the app (Web, redirect URI from Settings), enter tenant/client/secret, "Test connection", enable | metadata read; login page shows "Sign in with Microsoft" |
+| V25 | Create a Microsoft user (UPN) with a role, sign in with that account; sign in with a non-provisioned account of the same tenant | first: signed in, user row no longer marked "*"; second: "not enabled in this portal", audit denied |
+| V26 | As the Entra user perform a sensitive action (e.g. create a user) | popup asks to sign in again; action completes; audit `auth.reauthenticate` method entra |
 | V16 | Console from Edge/Chrome on the production URL (HTTP/2) | the WebSocket opens (no "WebSocket connection failed"); frames and input work |
 
 ## Result log template

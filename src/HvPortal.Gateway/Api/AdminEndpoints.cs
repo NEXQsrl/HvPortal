@@ -18,7 +18,11 @@ namespace HvPortal.Gateway.Api;
 /// </summary>
 public static class AdminEndpoints
 {
-    public sealed record CreateUserRequest(string UserName, string? DisplayName);
+    /// <param name="AuthSource">"local" (default, temporary password) or "entra" (Microsoft account of the configured tenant, no password).</param>
+    /// <param name="RequireMfa">Local users: enroll an authenticator at first sign-in (default true).</param>
+    /// <param name="RoleId">Optional role assigned at creation (needs roles.manage and the role's permissions on the scope).</param>
+    public sealed record CreateUserRequest(string UserName, string? DisplayName, string? AuthSource = null, bool? RequireMfa = null,
+        Guid? RoleId = null, ScopeType? ScopeType = null, string? ScopeId = null);
     public sealed record RoleRequest(string Name, string? Description, string[] Permissions);
     public sealed record AssignmentRequest(Guid UserId, Guid RoleId, ScopeType ScopeType, string? ScopeId, AssignmentEffect Effect);
 
@@ -67,21 +71,32 @@ public static class AdminEndpoints
         }
         var list = await db.Users.AsNoTracking().OrderBy(u => u.UserName).Select(u => new
         {
-            u.Id, u.UserName, u.DisplayName, u.AuthSource, u.IsEnabled, mfaEnabled = u.TotpEnabled, u.MustChangePassword,
+            u.Id, u.UserName, u.DisplayName, u.AuthSource, u.IsEnabled, mfaEnabled = u.TotpEnabled, u.MustChangePassword, u.MfaEnrollmentRequired,
+            entraBound = u.ExternalObjectId != null,
             u.IsBreakGlass, u.CreatedAt, u.LastLoginAt,
         }).ToListAsync(http.RequestAborted);
         return Results.Ok(list);
     }
 
-    private static async Task<IResult> CreateUserAsync(CreateUserRequest req, HttpContext http, PortalDbContext db, PasswordHasher hasher, TimeProvider time)
+    private static async Task<IResult> CreateUserAsync(CreateUserRequest req, HttpContext http, PortalDbContext db, PasswordHasher hasher, TimeProvider time,
+        AccessEvaluator access, HvPortal.Gateway.Security.Entra.EntraConfigStore entra)
     {
         if ((await http.GuardAsync(Permissions.UsersManage, ResourceRef.Global, "users.create") ?? await http.RequireRecentReauthAsync()) is { } denied)
         {
             return denied;
         }
+        var source = req.AuthSource ?? "local";
+        if (source is not ("local" or "entra"))
+        {
+            return ApiSupport.BadRequest("invalid_auth_source");
+        }
         if (req.UserName is null || !ApiSupport.UserNameRegex().IsMatch(req.UserName))
         {
             return ApiSupport.BadRequest("invalid_user_name", "3-64 characters: letters, digits, '.', '_', '-', '@'.");
+        }
+        if (source == "entra" && !req.UserName.Contains('@', StringComparison.Ordinal))
+        {
+            return ApiSupport.BadRequest("invalid_user_name", "Microsoft accounts are identified by their user principal name (name@contoso.com).");
         }
         if (req.DisplayName is { Length: > 0 } dn && !ApiSupport.DisplayNameRegex().IsMatch(dn))
         {
@@ -92,21 +107,92 @@ public static class AdminEndpoints
         {
             return ApiSupport.Conflict("user_exists");
         }
-        var temp = ApiSupport.TemporaryPassword();
+        string? tenant = null;
+        if (source == "entra")
+        {
+            var cfg = await entra.GetAsync(http.RequestAborted);
+            if (!cfg.IsComplete)
+            {
+                return ApiSupport.BadRequest("entra_not_configured", "Configure Microsoft Entra ID in Settings first.");
+            }
+            tenant = cfg.TenantId;
+        }
+
+        // Optional role at creation: same rules as POST /role-assignments (roles.manage, no permission amplification).
+        Role? role = null;
+        ResourceRef? scope = null;
+        var actor = http.User.UserId();
+        if (req.RoleId is { } roleId)
+        {
+            if (await http.GuardAsync(Permissions.RolesManage, ResourceRef.Global, "role_assignments.create") is { } noRoles)
+            {
+                return noRoles;
+            }
+            role = await db.Roles.AsNoTracking().Include(r => r.Permissions).FirstOrDefaultAsync(r => r.Id == roleId, http.RequestAborted);
+            if (role is null)
+            {
+                return ApiSupport.BadRequest("unknown_role");
+            }
+            scope = await ResolveScopeAsync(req.ScopeType ?? ScopeType.Global, req.ScopeId, db, http.RequestAborted);
+            if (scope is null)
+            {
+                return ApiSupport.BadRequest("invalid_scope", "Supported scopes in this version: Global, Host, Vm, Group (existing resources only).");
+            }
+            if (!await access.HoldsAllAsync(actor, role.Permissions.Select(p => p.Permission), scope.Value, http.RequestAborted))
+            {
+                await http.WriteAuditAsync("users.create", AuditOutcome.Denied, "user", null,
+                    new { req.UserName, reason = "permission amplification", role = role.Name, scope = scope.Value.ToString() });
+                return ApiSupport.Forbidden("permission_amplification", "You can only grant roles whose permissions you hold on that scope.");
+            }
+        }
+
+        var temp = source == "local" ? ApiSupport.TemporaryPassword() : null;
         var user = new User
         {
             UserName = req.UserName,
             NormalizedUserName = normalized,
             DisplayName = req.DisplayName,
-            PasswordHash = hasher.Hash(temp),
-            MustChangePassword = true,
+            AuthSource = source,
+            ExternalTenantId = tenant,
+            PasswordHash = temp is null ? null : hasher.Hash(temp),
+            MustChangePassword = temp is not null,
+            MfaEnrollmentRequired = source == "local" && req.RequireMfa != false,
             CreatedAt = time.GetUtcNow(),
         };
         db.Users.Add(user);
+        if (role is not null)
+        {
+            db.RoleAssignments.Add(new RoleAssignment
+            {
+                PrincipalId = user.Id.ToString("D"),
+                RoleId = role.Id,
+                ScopeType = scope!.Value.Type,
+                ScopeId = scope.Value.Id,
+                Effect = AssignmentEffect.Allow,
+                CreatedAt = time.GetUtcNow(),
+                CreatedByUserId = actor,
+            });
+        }
         await db.SaveChangesAsync(http.RequestAborted);
-        await http.WriteAuditAsync("users.create", resourceType: "user", resourceId: user.Id.ToString("D"), details: new { user.UserName });
-        // New users have no role: default deny until a role is explicitly assigned.
-        return Results.Ok(new { user.Id, user.UserName, temporaryPassword = temp, note = "Shown once. The user must change it at first sign-in." });
+        access.Invalidate();
+        await http.WriteAuditAsync("users.create", resourceType: "user", resourceId: user.Id.ToString("D"),
+            details: new { user.UserName, source, mfaAtFirstSignIn = user.MfaEnrollmentRequired, role = role?.Name, scope = scope?.ToString() });
+        if (role is not null)
+        {
+            await http.WriteAuditAsync("role_assignments.create", resourceType: "user", resourceId: user.Id.ToString("D"),
+                details: new { role = role.Name, scope = scope!.Value.ToString(), effect = nameof(AssignmentEffect.Allow) });
+        }
+        // Without a role the user has no permission (default deny) until one is assigned.
+        return Results.Ok(new
+        {
+            user.Id,
+            user.UserName,
+            authSource = source,
+            temporaryPassword = temp,
+            note = temp is not null
+                ? "Shown once. The user must change it at first sign-in" + (user.MfaEnrollmentRequired ? " and then set up an authenticator app." : ".")
+                : "The user signs in with Microsoft (Entra ID); no password is stored in the portal.",
+        });
     }
 
     private static async Task<IResult?> GuardTargetAsync(HttpContext http, AccessEvaluator access, Guid targetId, string action)

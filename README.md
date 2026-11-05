@@ -26,11 +26,12 @@ workgroup — with local accounts, MFA, fine-grained RBAC, persistent jobs and a
 | Browser console (hypervisor screen + keyboard/mouse, works before boot; not RDP) | ✅ code + tests; real-host validation pending |
 | VM groups as nested folders with RBAC inheritance and anti-escalation; single inventory tree (Hosts / Groups / All VMs) with drag and drop | ✅ tested |
 | Portal groups mirrored as native Hyper-V VM groups (`Get-VMGroup`), import of existing native groups — agent 0.3.2 | ✅ code + tests; real-host validation pending |
+| Microsoft Entra ID sign-in (Settings), Microsoft and local users created with role; MFA at first sign-in | ✅ code + tests (test IdP); real-tenant validation pending |
 | Host file explorer (Storage > Files): browse, download, upload with SHA-256 verification — agent 0.3.3 | ✅ code + tests (also against the real agent locally); real-host validation pending |
 | Host folder browser for VM location and ISO files (system folders hidden and refused) — agent 0.3.1 | ✅ code + tests; real-host validation pending |
 | Web UI (React/TypeScript, shadcn/ui): vCenter-like navigator, object tabs, recent tasks, command palette, IT/EN, light/dark, responsive, live updates | ✅ tested with Edge |
 | SQLite | ✅ — PostgreSQL / SQL Server: Milestone 2 |
-| Entra ID, PostgreSQL/SQL Server, switch management, templates, clusters/migration, backup, Replica, S2D | ⏳ see [roadmap](docs/roadmap.md) |
+| PostgreSQL/SQL Server, switch management, templates, clusters/migration, backup, Replica, S2D | ⏳ see [roadmap](docs/roadmap.md) |
 
 See [what was tested and how](docs/testing.md) and the [compatibility matrix](docs/compatibility-matrix.md).
 

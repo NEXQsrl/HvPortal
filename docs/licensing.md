@@ -20,6 +20,7 @@ until publication is authorized.
 | .NET runtime, ASP.NET Core, EF Core, SQLite provider, System.Management, Hosting.WindowsServices, ProtectedData, OpenApi | gateway/agent | MIT (.NET Foundation) |
 | SQLitePCLRaw + SQLite (e_sqlite3) | gateway | Apache-2.0 / public domain |
 | QRCoder | gateway (local QR) | MIT |
+| Microsoft.IdentityModel.Protocols.OpenIdConnect 8.16.0 (+ JsonWebTokens, Tokens, Logging, Abstractions) | gateway (Entra ID sign-in: metadata, keys, id_token validation) | MIT |
 | React, React DOM, React Router | web | MIT |
 | @microsoft/signalr | web | MIT |
 | shadcn/ui components (source vendored in `web/src/components/ui`), radix-ui 1.8, cmdk, react-resizable-panels, get-nonce, cn | web | MIT |

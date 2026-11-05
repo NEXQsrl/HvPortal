@@ -27,6 +27,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
 {
     public string DataDirectory { get; } = Path.Combine(Path.GetTempPath(), "hvp-tests", Guid.NewGuid().ToString("N"));
     public FakeAgentDispatcher Agent { get; } = new();
+    public FakeEntraClient Entra { get; } = new();
     public string PackagesDirectory => Path.Combine(DataDirectory, "packages-test");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -42,6 +43,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<IAgentDispatcher>();
             services.AddSingleton<IAgentDispatcher>(Agent);
+            services.RemoveAll<HvPortal.Gateway.Security.Entra.IEntraClient>();
+            services.AddSingleton<HvPortal.Gateway.Security.Entra.IEntraClient>(Entra);
         });
     }
 

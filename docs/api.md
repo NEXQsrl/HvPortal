@@ -22,7 +22,9 @@
 | GET `/auth/sessions` · DELETE `/auth/sessions/{id}` | own sessions | full session |
 | POST `/mfa/totp/enroll` · `/mfa/totp/confirm` | TOTP enrollment | any session + recent re-auth |
 | POST `/mfa/totp/disable` · `/mfa/recovery-codes` | MFA management | full session + recent re-auth |
-| GET/POST `/users`, POST `/users/{id}/{disable,enable,reset-password,reset-mfa}` | users | `users.manage` (+ re-auth for writes) |
+| GET/POST `/users`, POST `/users/{id}/{disable,enable,reset-password,reset-mfa}` | users; POST accepts `authSource` (`local`/`entra`), `requireMfa` (local, default true), `roleId` + `scopeType`/`scopeId` | `users.manage` (+ re-auth for writes); role at creation also `roles.manage` and no permission amplification |
+| GET/PUT `/settings/entra`, POST `/settings/entra/test` | Entra ID app registration (tenant, client id, write-only client secret, cloud); metadata test | `settings.manage` (+ re-auth for PUT) |
+| GET `/auth/entra/start?returnUrl=&mode=reauth` · GET `/auth/entra/callback` | Entra ID sign-in / re-authentication (authorization code + PKCE) | anonymous; state cookie |
 | GET `/permissions`, GET/POST/PUT/DELETE `/roles` | roles | `roles.manage` (+ re-auth) |
 | GET/POST/DELETE `/role-assignments` | assignments | `roles.manage` (+ re-auth), anti-escalation |
 | GET/PUT `/settings/security` | security policy | `settings.manage` (+ re-auth) |

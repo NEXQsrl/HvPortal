@@ -172,6 +172,24 @@ try {
   await page.getByRole('link', { name: 'Utenti e ruoli' }).click();
   await page.getByRole('heading', { name: 'Assegnazioni dei ruoli' }).waitFor();
   await shot(page, '08-users');
+  // New user: type (Microsoft disabled until Entra is configured), role, MFA at first sign-in.
+  await page.getByRole('button', { name: 'Aggiungi utente' }).click();
+  const addDlg = page.getByRole('dialog');
+  check('new user dialog asks type, role and MFA at first sign-in', (await addDlg.getByRole('radio', { name: /Microsoft/ }).isDisabled())
+    && (await addDlg.getByLabel('Ruolo').count()) === 1 && (await addDlg.getByRole('checkbox', { name: /autenticazione al primo accesso/ }).isChecked()));
+  await addDlg.locator('#nu-name').fill('mario.rossi');
+  await addDlg.getByLabel('Ruolo').selectOption({ label: 'Read only' });
+  await addDlg.getByRole('button', { name: 'Crea utente' }).click();
+  const reauthDlg = page.getByRole('dialog', { name: 'Conferma la tua identità' });
+  if (await reauthDlg.waitFor({ timeout: 3000 }).then(() => true, () => false)) {
+    check('re-authentication says it needs YOUR credentials', (await reauthDlg.getByText(/TUO account/).count()) === 1);
+    await reauthDlg.locator('#reauth-pw').fill(password);
+    await reauthDlg.locator('#reauth-otp-0').fill(totp(secret));
+    await reauthDlg.getByRole('button', { name: 'Conferma' }).click();
+  }
+  await page.getByText(/Al primo accesso l'utente imposta una nuova password e poi configura/).waitFor({ timeout: 15000 });
+  check('user created with role and temporary password', (await page.locator('tr', { hasText: 'mario.rossi' }).count()) >= 2);
+  await shot(page, '08b-user-created');
   await page.getByRole('link', { name: 'Audit' }).click();
   check('audit is paginated', (await page.locator('.pager').count()) === 1);
   check('page itself does not scroll (only panels)', await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1));
@@ -181,6 +199,9 @@ try {
   await shot(page, '09-audit');
   await page.getByRole('link', { name: 'Impostazioni', exact: true }).click();
   await page.getByRole('heading', { name: 'Sicurezza' }).waitFor();
+  await page.getByRole('heading', { name: 'Microsoft Entra ID' }).waitFor();
+  check('settings have the Microsoft Entra ID section with the redirect URI to register',
+    await page.getByText(/\/api\/v1\/auth\/entra\/callback$/).first().waitFor({ timeout: 10000 }).then(() => true, () => false));
   await shot(page, '10-settings');
 
   if (filesDir) {

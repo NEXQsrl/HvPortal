@@ -97,6 +97,25 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-019 Microsoft Entra ID sign-in and user onboarding
+- Entra ID (OpenID Connect authorization code flow + PKCE, confidential client, single tenant) implemented directly
+  on `Microsoft.IdentityModel.Protocols.OpenIdConnect` (metadata + signing keys) and `JsonWebTokenHandler`
+  (signature RS256, issuer of the configured tenant, audience, lifetime, nonce, `tid`). The configuration lives in
+  Settings (no restart): tenant, client id, cloud instance (global / US Gov / China only), client secret encrypted
+  with the key ring and never returned or logged. Outbound HTTPS to Microsoft only when Entra is enabled.
+- Users are **pre-provisioned** (Users > New user > Microsoft, by UPN) and bound to the Entra object id at their first
+  sign-in; later sign-ins match the object id only (a recreated account with the same UPN is refused). No password
+  is stored for them; local password sign-in is refused. Roles are assigned in the portal as for local users.
+- MFA for Entra users is delegated to Entra ID (Conditional Access): the portal does not enroll a local authenticator.
+  Sensitive actions re-authenticate them with Entra (`prompt=login`, `max_age=0`) in a popup that marks the session.
+- State, nonce and PKCE verifier are kept in a data-protected, 10-minute, `SameSite=Lax` cookie scoped to
+  `/api/v1/auth/entra` (Lax is required for the top-level redirect back from Microsoft); the session cookie stays
+  `Strict`. "Local sign-in: only emergency accounts" turns the portal into Entra-only with a break-glass exit.
+- New local users get a temporary password and, by default, `MfaEnrollmentRequired`: after the forced password
+  change they must enroll an authenticator before using the portal, regardless of the global MFA policy. The creation
+  dialog also takes the role and its scope (same anti-escalation rules as role assignments). The re-authentication
+  dialog states explicitly that it asks for the **administrator's own** password and code.
+
 ## ADR-018 Host file explorer: browse, download, upload (agent protocol 5)
 - Need: copy ISOs and other files to/from hosts from the browser (Storage > Files), without RDP or SMB shares.
 - Typed, in-process agent operations (no PowerShell): `ListFolder`, `ReadFile`, `WriteFileBegin/Chunk/Commit/Abort`.

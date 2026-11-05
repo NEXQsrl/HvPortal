@@ -17,6 +17,8 @@ public sealed class User
     public string? PasswordHash { get; set; }
     public bool IsEnabled { get; set; } = true;
     public bool MustChangePassword { get; set; }
+    /// <summary>Local users: MFA must be enrolled at first sign-in regardless of the global policy (set when created).</summary>
+    public bool MfaEnrollmentRequired { get; set; }
     /// <summary>Emergency access account: exempt from external IdP policy, every use raises an alert-level audit event.</summary>
     public bool IsBreakGlass { get; set; }
     /// <summary>Changes on password reset, MFA change, disable: invalidates every existing session.</summary>

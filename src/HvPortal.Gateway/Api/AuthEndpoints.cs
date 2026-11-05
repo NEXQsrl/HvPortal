@@ -27,11 +27,12 @@ public static class AuthEndpoints
     {
         var g = app.MapGroup("/api/v1").WithTags("Authentication");
 
-        g.MapGet("/auth/state", async (PortalDbContext db, HttpContext http) => Results.Ok(new
+        g.MapGet("/auth/state", async (PortalDbContext db, HttpContext http, Security.Entra.EntraConfigStore entra, SettingsStore settings) => Results.Ok(new
         {
             setupRequired = !await db.Users.AnyAsync(http.RequestAborted),
             authenticated = http.User.Identity?.IsAuthenticated == true,
-            providers = new[] { "local" },
+            providers = (await entra.GetAsync(http.RequestAborted)).IsActive ? new[] { "local", "entra" } : new[] { "local" },
+            localSignIn = (await settings.GetSecurityAsync(http.RequestAborted)).LocalSignIn,
             version = ProductInfo.Version,
         })).AllowAnonymous();
 
@@ -307,6 +308,7 @@ public static class AuthEndpoints
             userName = user.UserName,
             displayName = user.DisplayName,
             restriction = http.User.FindFirst(PortalClaims.Restriction)?.Value,
+            authSource = user.AuthSource,
             mfaEnabled = user.TotpEnabled,
             mfaRequired = await SessionService.IsMfaRequiredAsync(user, security, access, http.RequestAborted),
             recoveryCodesRemaining = await db.RecoveryCodes.CountAsync(r => r.UserId == uid && r.UsedAt == null, http.RequestAborted),

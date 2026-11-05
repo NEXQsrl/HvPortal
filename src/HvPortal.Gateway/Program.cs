@@ -76,6 +76,8 @@ namespace HvPortal.Gateway
             builder.Services.AddSingleton<ConsoleTicketStore>();
             builder.Services.AddSingleton<ConsoleSessionRegistry>();
             builder.Services.AddSingleton<IRealtimeNotifier, RealtimeNotifier>();
+            builder.Services.AddScoped<HvPortal.Gateway.Security.Entra.EntraConfigStore>();
+            builder.Services.AddSingleton<HvPortal.Gateway.Security.Entra.IEntraClient, HvPortal.Gateway.Security.Entra.EntraClient>();
             builder.Services.AddSingleton<HvPortal.Gateway.VmGroups.VmGroupSyncSignal>();
             builder.Services.AddSingleton<HvPortal.Gateway.VmGroups.VmGroupSyncService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<HvPortal.Gateway.VmGroups.VmGroupSyncService>());
@@ -227,6 +229,7 @@ namespace HvPortal.Gateway
             ConsoleEndpoints.Map(app);
             HvPortal.Gateway.VmGroups.VmGroupEndpoints.Map(app);
             HostFileEndpoints.Map(app);
+            HvPortal.Gateway.Security.Entra.EntraEndpoints.Map(app);
 
             app.MapGet("/api/v1/system/info", async (HttpContext http, AccessEvaluator access, AgentConnectionManager agents, GatewayPaths paths) =>
             {
@@ -240,7 +243,7 @@ namespace HvPortal.Gateway
                     connectedAgents = agents.ConnectedHosts.Count,
                     telemetry = "disabled (no telemetry is implemented)",
                     dataDirectory = admin ? paths.Root : null,
-                    internetRequired = "No. Only Entra ID sign-in (Milestone 2) needs connectivity to Microsoft endpoints.",
+                    internetRequired = "No. Only Microsoft Entra ID sign-in, when enabled, needs HTTPS to Microsoft endpoints.",
                 });
             }).WithTags("System");
             app.MapGet("/healthz", () => Results.Text("ok")).AllowAnonymous().ExcludeFromDescription();

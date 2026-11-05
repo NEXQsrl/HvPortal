@@ -1,5 +1,14 @@
 # Testing
 
+## v0.3.4 run (2026-11-05, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 148 | pass — adds user creation with role (anti-escalation: amplification refused, user not created), MFA enrollment forced after the first password change, Entra settings validation and encrypted secret (not in DB plain text nor audit), **Entra flow with a test identity provider**: PKCE/state/nonce in the authorize request, not-provisioned / foreign-signature / bad-nonce / other-tenant / forged-state refused, binding by object id, same UPN with another object id refused, no password sign-in for Entra users, Entra re-authentication of the session |
+| `web/e2e/ui-smoke.mjs` | 52 | pass — adds new-user dialog (type, role, MFA at first sign-in), user created with role, Entra section with redirect URI in Settings |
+
+Not executed: sign-in against a real Entra tenant (needs an app registration): real-host test plan V24–V26.
+
 ## v0.3.3 run (2026-11-05, development machine, non-administrator)
 
 | Suite | Count | Result |

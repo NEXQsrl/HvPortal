@@ -3,7 +3,9 @@ import { useState, type ReactNode } from 'react';
 import { del, get, post, put } from '@/api/client';
 import type { Assignment, AuditEntry, Role, SecuritySettings, UserRow } from '@/api/types';
 import { CopyButton, ErrorAlert, KeyValue, Loading, Notice, PageHeader, Section, StatusBadge } from '@/components/common';
+import { AddUserDialog, CreatedUserNotice, EntraSettingsSection, type CreatedUser } from '@/components/admin/UserAdmin';
 import { ActionDialog, Field } from '@/components/dialogs';
+import { MicrosoftMark } from '@/components/MicrosoftMark';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { GroupPickerList } from '@/components/ops/GroupDialogs';
 import { Pager } from '@/components/OtpInput';
@@ -33,6 +35,7 @@ export function UsersPage() {
   const assignments = useLoad(() => (can('roles.manage') ? get<Assignment[]>('/api/v1/role-assignments') : Promise.resolve([] as Assignment[])));
   const [error, setError] = useState<unknown>(null);
   const [temp, setTemp] = useState<{ name: string; password: string } | null>(null);
+  const [created, setCreated] = useState<CreatedUser | null>(null);
   const [adding, setAdding] = useState(false);
   const [assigning, setAssigning] = useState(false);
 
@@ -50,6 +53,7 @@ export function UsersPage() {
             <CopyButton text={temp.password} /><Button size="sm" variant="ghost" onClick={() => setTemp(null)}>{t('common.close')}</Button></div>
         </Notice>
       )}
+      {created && <CreatedUserNotice user={created} onClose={() => setCreated(null)} />}
       {can('users.manage') && (
         <Section title={t('users.title')} actions={<Button size="sm" onClick={() => setAdding(true)}><Plus />{t('users.add')}</Button>}>
           <p className="px-3 pt-2 text-xs text-muted-foreground">{t('users.noRole')}</p>
@@ -61,18 +65,22 @@ export function UsersPage() {
                   <TableRow key={u.id}>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1"><span className="font-medium">{u.userName}</span>{u.displayName && <span className="text-muted-foreground">· {u.displayName}</span>}
+                        {u.authSource === 'entra'
+                          ? <StatusBadge tone="info" title={u.entraBound ? undefined : t('users.entraNotBound')}><MicrosoftMark className="size-3" />Microsoft{!u.entraBound && ' *'}</StatusBadge>
+                          : <StatusBadge tone="muted">{t('users.typeLocal')}</StatusBadge>}
                         {u.mustChangePassword && <StatusBadge tone="warn">pw</StatusBadge>}{u.isBreakGlass && <StatusBadge tone="danger">break-glass</StatusBadge>}</div>
                     </TableCell>
                     <TableCell>{u.isEnabled ? t('common.yes') : <StatusBadge tone="danger">{t('common.no')}</StatusBadge>}</TableCell>
-                    <TableCell>{u.mfaEnabled ? <StatusBadge tone="ok">TOTP</StatusBadge> : '—'}</TableCell>
+                    <TableCell>{u.authSource === 'entra' ? <span className="text-xs text-muted-foreground">Entra ID</span>
+                      : u.mfaEnabled ? <StatusBadge tone="ok">TOTP</StatusBadge> : u.mfaEnrollmentRequired ? <StatusBadge tone="warn">{t('users.mfaPending')}</StatusBadge> : '—'}</TableCell>
                     <TableCell className="text-xs whitespace-nowrap tabular">{u.lastLoginAt ? fmtDate(u.lastLoginAt) : t('common.never')}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">{u.id !== me?.id && (
                       <div className="flex justify-end gap-1">
                         <Button size="xs" variant="outline" onClick={() => void act(() => post(`/api/v1/users/${u.id}/${u.isEnabled ? 'disable' : 'enable'}`))}>{u.isEnabled ? t('users.disable') : t('users.enable')}</Button>
-                        <Button size="xs" variant="outline" onClick={() => void act(async () => {
+                        {u.authSource !== 'entra' && <Button size="xs" variant="outline" onClick={() => void act(async () => {
                           const r = await post<{ temporaryPassword: string }>(`/api/v1/users/${u.id}/reset-password`);
                           setTemp({ name: u.userName, password: r.temporaryPassword });
-                        })}>{t('users.resetPassword')}</Button>
+                        })}>{t('users.resetPassword')}</Button>}
                         {u.mfaEnabled && <Button size="xs" variant="outline" onClick={() => void act(() => post(`/api/v1/users/${u.id}/reset-mfa`))}>{t('users.resetMfa')}</Button>}
                       </div>
                     )}</TableCell>
@@ -119,20 +127,9 @@ export function UsersPage() {
         </>
       )}
       {adding && (
-        <AddUserDialog onClose={() => setAdding(false)} onCreated={(name, password) => { setTemp({ name, password }); users.reload(); }} />
+        <AddUserDialog roles={roles.data ?? []} onClose={() => setAdding(false)} onCreated={(u) => { setCreated(u); users.reload(); assignments.reload(); }} />
       )}
     </Page>
-  );
-}
-
-function AddUserDialog({ onCreated, onClose }: { onCreated: (name: string, password: string) => void; onClose: () => void }) {
-  const { t } = useI18n();
-  const [name, setName] = useState('');
-  return (
-    <ActionDialog title={t('users.add')} confirmLabel={t('common.save')} disabled={!name} onClose={onClose}
-      onConfirm={async () => { const r = await post<{ userName: string; temporaryPassword: string }>('/api/v1/users', { userName: name }); onCreated(r.userName, r.temporaryPassword); }}>
-      <Field label={t('login.user')} htmlFor="new-user"><Input id="new-user" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
-    </ActionDialog>
   );
 }
 
@@ -255,11 +252,12 @@ export function SettingsPage() {
           </div>
           <Field label={t('settings.localSignIn')} htmlFor="s-local">
             <NativeSelect id="s-local" value={s.localSignIn} onChange={(e) => set({ localSignIn: e.target.value as SecuritySettings['localSignIn'] })}>
-              <option value="allowed">allowed</option><option value="break-glass-only">break-glass-only</option>
+              <option value="allowed">{t('settings.localSignIn.allowed')}</option><option value="break-glass-only">{t('settings.localSignIn.breakGlass')}</option>
             </NativeSelect>
           </Field>
           <Button disabled={!draft} onClick={() => void save()}>{t('common.save')}</Button>
         </Section>
+        <EntraSettingsSection />
         <Section title={t('settings.system')} bodyClassName="p-3">
           {info.data && (
             <KeyValue items={[
@@ -286,6 +284,9 @@ export function AccountPage() {
   return (
     <Page icon={<UserRound className="size-5" />} title={t('nav.account')}>
       <ErrorAlert error={error} />
+      {me.authSource === 'entra' ? (
+        <Notice kind="info" title={t('account.entraTitle')}>{t('account.entraHelp')}</Notice>
+      ) : (
       <div className="grid gap-3 xl:grid-cols-2">
         <Section title={t('login.mfaTitle')} bodyClassName="space-y-3 p-3">
           {me.mfaEnabled ? (
@@ -304,6 +305,7 @@ export function AccountPage() {
         </Section>
         <Section title={t('pw.changeTitle')} bodyClassName="p-3"><ChangePasswordForm /></Section>
       </div>
+      )}
       <Section title={t('account.sessions')}>
         <Table>
           <TableBody>

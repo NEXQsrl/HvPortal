@@ -3,10 +3,12 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { ApiError, post, resetCsrf } from '@/api/client';
 import { BrandLogo, CopyButton, ErrorAlert, Notice } from '@/components/common';
 import { Field } from '@/components/dialogs';
+import { MicrosoftMark } from '@/components/MicrosoftMark';
 import { OtpInput } from '@/components/OtpInput';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useI18n } from '@/i18n';
+import { useI18n, type TKey } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { useSession } from '@/session';
 import { useTheme } from '@/theme';
 
@@ -96,10 +98,25 @@ export function SetupPage() {
   );
 }
 
+const ENTRA_ERRORS = ['not_configured', 'not_provisioned', 'disabled', 'denied', 'state', 'invalid_token', 'wrong_tenant', 'unreachable', 'token_redemption_failed', 'session_expired'];
+
 export function LoginPage() {
   const { t } = useI18n();
-  const { refresh } = useSession();
+  const { refresh, state } = useSession();
+  const entra = !!state?.providers.includes('entra');
+  const localAllowed = state?.localSignIn !== 'break-glass-only';
+  const [tab, setTab] = useState<'local' | 'entra'>(entra && !localAllowed ? 'entra' : 'local');
   const [mode, setMode] = useState<'login' | 'recover'>('login');
+  const entraError = (() => {
+    const e = new URLSearchParams(window.location.search).get('error');
+    if (!e?.startsWith('entra_')) return null;
+    const code = e.slice(6);
+    return t(ENTRA_ERRORS.includes(code) ? (`login.entraError.${code}` as TKey) : 'login.entraError.denied');
+  })();
+  const signInWithMicrosoft = () => {
+    const back = window.location.pathname.startsWith('/login') ? '/' : window.location.pathname + window.location.search;
+    window.location.href = '/api/v1/auth/entra/start?returnUrl=' + encodeURIComponent(back);
+  };
   const [userName, setUserName] = useState('');
   const [password, setPassword] = useState('');
   const [challenge, setChallenge] = useState<string | null>(null);
@@ -156,12 +173,19 @@ export function LoginPage() {
     <AuthFrame title={challenge ? t('login.mfaTitle') : t('login.title')} icon={challenge ? <ShieldCheck className="size-5 text-primary" /> : undefined}>
       {!challenge && (
         <div className="mb-4 grid grid-cols-2 rounded-lg bg-muted p-1 text-sm" role="tablist">
-          <button type="button" role="tab" aria-selected className="rounded-md bg-card py-1.5 font-medium shadow-sm">{t('login.local')}</button>
-          <button type="button" role="tab" aria-selected={false} disabled title={t('login.entraLater')} className="py-1.5 text-muted-foreground opacity-60">{t('login.entra')}</button>
+          <button type="button" role="tab" aria-selected={tab === 'local'} onClick={() => setTab('local')}
+            className={cn('rounded-md py-1.5', tab === 'local' ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground')}>{t('login.local')}</button>
+          <button type="button" role="tab" aria-selected={tab === 'entra'} disabled={!entra} title={entra ? undefined : t('login.entraOff')} onClick={() => setTab('entra')}
+            className={cn('rounded-md py-1.5', tab === 'entra' ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground', !entra && 'opacity-60')}>{t('login.entra')}</button>
         </div>
       )}
-      {error && <Notice kind="danger" className="mb-3">{error}</Notice>}
-      {!challenge ? (
+      {(error ?? entraError) && <Notice kind="danger" className="mb-3">{error ?? entraError}</Notice>}
+      {!challenge && tab === 'entra' ? (
+        <div className="space-y-3">
+          <Button type="button" className="w-full" onClick={signInWithMicrosoft}><MicrosoftMark />{t('login.withMicrosoft')}</Button>
+          <p className="text-center text-xs text-muted-foreground">{t('login.entraHelp')}</p>
+        </div>
+      ) : !challenge ? (
         <form onSubmit={submitPassword} className="space-y-3">
           <Field label={t('login.user')} htmlFor="login-user"><Input id="login-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} autoFocus /></Field>
           <Field label={t('login.password')} htmlFor="login-pw"><Input id="login-pw" type="password" autoComplete="current-password" value={password} maxLength={1024} onChange={(e) => setPassword(e.target.value)} /></Field>

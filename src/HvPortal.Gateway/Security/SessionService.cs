@@ -146,8 +146,13 @@ public sealed class SessionService
         context.ShouldRenew = false;
     }
 
+    /// <summary>
+    /// Local MFA (TOTP). Entra ID accounts never enroll a local authenticator: MFA is the identity provider's job
+    /// (Conditional Access), see ADR-019.
+    /// </summary>
     public static async Task<bool> IsMfaRequiredAsync(User user, SecuritySettings settings, AccessEvaluator access, CancellationToken ct) =>
-        settings.MfaRequiredFor switch
+        user.AuthSource != "local" ? false
+        : user.MfaEnrollmentRequired || settings.MfaRequiredFor switch
         {
             MfaRequirement.All => true,
             MfaRequirement.Privileged => user.IsBreakGlass || await access.IsPrivilegedAsync(user.Id, ct),

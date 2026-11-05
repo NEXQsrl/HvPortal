@@ -17,6 +17,8 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.14" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.14" />
     <PackageReference Include="QRCoder" Version="1.8.1" />
+    <!-- Entra ID sign-in: OpenID Connect metadata/keys and id_token validation (Microsoft, MIT). -->
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.16.0" />
   </ItemGroup>
 
   <ItemGroup>

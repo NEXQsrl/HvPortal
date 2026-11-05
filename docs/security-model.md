@@ -4,7 +4,7 @@
 
 | Identity | Used by | Privileges |
 |---|---|---|
-| Portal users (local accounts in the DB; Entra ID in M2) | people | only what RBAC grants; independent of Windows accounts |
+| Portal users (local accounts in the DB, or Microsoft Entra ID accounts pre-provisioned in the portal) | people | only what RBAC grants; independent of Windows accounts |
 | `NT SERVICE\HvPortalGateway` | gateway service | non-admin virtual account; read/execute on binaries; full control on its data directory only |
 | `NT SERVICE\HvPortalAgent` | agent service | member of *Hyper-V Administrators* (S-1-5-32-578); not a local administrator; no domain account |
 | Agent certificate (CN=hvportal-host-&lt;id&gt;, EKU clientAuth) | agent → gateway | identifies one host; revocable |

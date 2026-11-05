@@ -822,6 +822,9 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.Property<long?>("LastLoginAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("MfaEnrollmentRequired")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("MustChangePassword")
                         .HasColumnType("INTEGER");
 
