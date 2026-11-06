@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, CircleCheck, LifeBuoy, PlugZap, RefreshCw, Server, Unplug } from 'lucide-react';
+import { ArrowRight, BookOpen, CircleCheck, KeyRound, LifeBuoy, PlugZap, RefreshCw, Server, Settings, Unplug, UserRound } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { get } from '@/api/client';
@@ -22,6 +22,7 @@ export const GUIDE_PAGES: GuidePage[] = [
   { to: '/guide/connect', title: 'guide.page.connect.title', desc: 'guide.page.connect.desc', icon: PlugZap },
   { to: '/guide/update', title: 'guide.page.update.title', desc: 'guide.page.update.desc', icon: RefreshCw },
   { to: '/guide/remove', title: 'guide.page.remove.title', desc: 'guide.page.remove.desc', icon: Unplug },
+  { to: '/guide/entra', title: 'guide.page.entra.title', desc: 'guide.page.entra.desc', icon: KeyRound },
   { to: '/guide/troubleshooting', title: 'guide.trouble.title', desc: 'guide.page.trouble.desc', icon: LifeBuoy },
 ];
 
@@ -268,6 +269,58 @@ export function GuideRemove() {
           </Step>
         </Steps>
       </Section>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- Microsoft Entra ID
+
+const TROUBLE_ENTRA = ['enRedirect', 'enSecret', 'enAssign', 'enConsent', 'enProvision', 'enTenant', 'enReach'] as const;
+
+export function GuideEntra() {
+  const { t } = useI18n();
+  const { can } = useSession();
+  // Same formula as the gateway (https://<host as typed in the browser>/api/v1/auth/entra/callback).
+  const redirect = `https://${window.location.host}/api/v1/auth/entra/callback`;
+  return (
+    <>
+      <p className="text-sm text-muted-foreground">{t('guide.entra.intro')}</p>
+      <Section bodyClassName="p-5">
+        <Steps>
+          <Step n={1} id="en-1" title={t('guide.entra.e1.title')}>
+            <Bullets items={[t('guide.entra.e1.b1'), t('guide.entra.e1.b2'), t('guide.entra.e1.b3')]} />
+          </Step>
+          <Step n={2} id="en-2" title={t('guide.entra.e2.title')}>
+            <p className="text-muted-foreground">{t('guide.entra.e2.help')}</p>
+            <Bullets items={[t('guide.entra.e2.b1'), t('guide.entra.e2.b2'), t('guide.entra.e2.b3')]} />
+            <Command text={redirect} />
+            <p className="text-muted-foreground">{t('guide.entra.e2.redirectNote')}</p>
+          </Step>
+          <Step n={3} id="en-3" title={t('guide.entra.e3.title')}>
+            <p className="text-muted-foreground">{t('guide.entra.e3.help')}</p>
+            <Notice kind="warn">{t('guide.entra.e3.expiry')}</Notice>
+          </Step>
+          <Step n={4} id="en-4" title={t('guide.entra.e4.title')}>
+            <p className="text-muted-foreground">{t('guide.entra.e4.help')}</p>
+          </Step>
+          <Step n={5} id="en-5" title={t('guide.entra.e5.title')}>
+            <Bullets items={[t('guide.entra.e5.b1'), t('guide.entra.e5.b2'), t('guide.entra.e5.b3')]} />
+          </Step>
+          <Step n={6} id="en-6" title={t('guide.entra.e6.title')}>
+            <p className="text-muted-foreground">{t('guide.entra.e6.help')}</p>
+            {can('settings.manage') && <Button size="sm" variant="outline" asChild><Link to="/settings?tab=entra"><Settings />{t('guide.entra.e6.go')}</Link></Button>}
+          </Step>
+          <Step n={7} id="en-7" title={t('guide.entra.e7.title')}>
+            <p className="text-muted-foreground">{t('guide.entra.e7.help')}</p>
+            {can('users.manage') && <Button size="sm" variant="outline" asChild><Link to="/users"><UserRound />{t('guide.entra.e7.go')}</Link></Button>}
+          </Step>
+          <Step n={8} id="en-8" title={t('guide.entra.e8.title')}>
+            <p className="text-muted-foreground">{t('guide.entra.e8.help')}</p>
+            <Notice kind="info">{t('guide.entra.e8.breakGlass')}</Notice>
+          </Step>
+        </Steps>
+      </Section>
+      <Section title={t('guide.trouble.entra')}><TroubleshootingTable keys={TROUBLE_ENTRA} port="" /></Section>
     </>
   );
 }

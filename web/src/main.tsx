@@ -15,7 +15,7 @@ import { AccountPage, AuditPage, PlannedPage, SettingsPage, UsersPage } from './
 import { ForcedMfaPage, ForcedPasswordChangePage, LoginPage, SetupPage } from './pages/AuthPages';
 import { ConsolePage } from './pages/ConsolePage';
 import { DashboardPage } from './pages/DashboardPage';
-import { GuideConnect, GuideHome, GuideLayout, GuideRemove, GuideTroubleshooting, GuideUpdate } from './pages/guide/GuidePages';
+import { GuideConnect, GuideEntra, GuideHome, GuideLayout, GuideRemove, GuideTroubleshooting, GuideUpdate } from './pages/guide/GuidePages';
 import { GroupPage, InventoryHome } from './pages/inventory/GroupPage';
 import { HostPage } from './pages/inventory/HostPage';
 import { VmPage } from './pages/inventory/VmPage';
@@ -70,6 +70,7 @@ function Gate() {
               <Route path="connect" element={<GuideConnect />} />
               <Route path="update" element={<GuideUpdate />} />
               <Route path="remove" element={<GuideRemove />} />
+              <Route path="entra" element={<GuideEntra />} />
               <Route path="troubleshooting" element={<GuideTroubleshooting />} />
             </Route>
             <Route path="/backup" element={<PlannedPage titleKey="nav.backup" milestone="Milestone 3" />} />

@@ -49,6 +49,25 @@ if ($upgrade) {
     }
 }
 
+if ($UiPort -eq $AgentPort) { throw 'UiPort and AgentPort must be different.' }
+# The ports must be free (e.g. 443 is often taken by IIS or another HTTP.sys listener, shown as process "System").
+foreach ($p in $UiPort, $AgentPort) {
+    $listener = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($listener) {
+        $proc = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
+        if (-not $proc -or $proc.Name -ne 'HvPortal.Gateway') {
+            throw "TCP port $p is already in use by $(if ($proc) { "$($proc.Name) (PID $($proc.Id))" } else { "PID $($listener.OwningProcess)" }). Free it or choose another port."
+        }
+    }
+}
+$uiCert = $null
+if ($UiCertificateThumbprint) {
+    $UiCertificateThumbprint = $UiCertificateThumbprint -replace '\s', ''
+    $uiCert = Get-Item "Cert:\LocalMachine\My\$UiCertificateThumbprint" -ErrorAction SilentlyContinue
+    if (-not $uiCert) { throw "Certificate $UiCertificateThumbprint not found in LocalMachine\My (import the PFX first: Import-PfxCertificate -CertStoreLocation Cert:\LocalMachine\My)." }
+    if (-not $uiCert.HasPrivateKey) { throw "Certificate $UiCertificateThumbprint has no private key (import the .pfx, not the .cer)." }
+}
+
 $backup = Install-ServiceBinaries -Source $Source -InstallPath $InstallPath -ServiceName $service
 Register-HvPortalService -ServiceName $service -DisplayName 'HvPortal Gateway' -Description 'HvPortal web gateway and control plane' -Exe $exe
 Set-PrivateAcl -Path $InstallPath -ExtraAccounts @("NT SERVICE\$service") -ReadOnlyForExtra
@@ -66,7 +85,9 @@ $serviceEnv = @{
 for ($i = 0; $i -lt $PublicNames.Count; $i++) { $serviceEnv["Gateway__PublicNames__$i"] = $PublicNames[$i] }
 if ($UiCertificateThumbprint) {
     $serviceEnv['Gateway__UiCertificateThumbprint'] = $UiCertificateThumbprint
-    Write-Warning "Grant NT SERVICE\$service read access to the private key of certificate $UiCertificateThumbprint (certlm.msc > Manage Private Keys)."
+    if (-not (Grant-PrivateKeyRead -Certificate $uiCert -Account "NT SERVICE\$service")) {
+        Write-Warning "Grant NT SERVICE\$service read access to the private key of certificate $UiCertificateThumbprint (certlm.msc > Manage Private Keys)."
+    }
 }
 Set-ServiceEnvironment -ServiceName $service -Variables $serviceEnv
 

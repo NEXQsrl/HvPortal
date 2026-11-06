@@ -12,6 +12,11 @@
     portal with the credentials stored there (WMI/DCOM, WinRM, SMB administrative shares). The service account is
     NOT added to "Hyper-V Administrators". Use an enrollment token of a *management agent* (portal: Hosts ->
     Management agents); the role comes from the gateway, the switch only adjusts the local setup.
+  - -ServiceAccount <name>: run the service as a dedicated LOCAL user instead of the virtual account. The user is
+    created (or, if created earlier by this script, reset) with a random 40-character password nobody knows, never
+    expires, gets only "Log on as a service", is denied local, Remote Desktop, network and batch logon, and is added to
+    "Hyper-V Administrators" (not Administrators). Same rights as the default account, but a named identity.
+    Upgrades without -ServiceAccount keep the account the service already uses.
 .EXAMPLE
   $env:HVP_ENROLLMENT_TOKEN = '<token>'; .\Install-Agent.ps1 -Source ..\agent -Gateway https://gw01.contoso.local:8444 -CaSha256 <fingerprint>
 #>
@@ -24,7 +29,8 @@ param(
     [string]$CaSha256,
     [string]$EnrollmentToken = $env:HVP_ENROLLMENT_TOKEN,
     [switch]$ForceReenroll,
-    [switch]$Management
+    [switch]$Management,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$')][string]$ServiceAccount
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
@@ -45,24 +51,69 @@ if ($policy -eq 'AllSigned') {
 if (-not (Test-Path (Join-Path $Source 'Ops\HvPortal.Ops.ps1'))) { throw "Ops\HvPortal.Ops.ps1 not found in $Source (incomplete package)." }
 if ($Management -and -not (Test-Path (Join-Path $Source 'Ops\HvPortal.Remote.ps1'))) { throw "Ops\HvPortal.Remote.ps1 not found in $Source (package older than 0.4.0)." }
 
-if (Get-Service $service -ErrorAction SilentlyContinue) { Stop-Service $service -Force }
+$virtual = "NT SERVICE\$service"
+$previousLogon = $null
+if (Get-Service $service -ErrorAction SilentlyContinue) {
+    $previousLogon = Get-ServiceStartName $service
+    Stop-Service $service -Force
+}
+# Upgrade of a service already running as a dedicated local account: keep it (its password is not known here).
+$keepLogon = (-not $ServiceAccount) -and $previousLogon -and $previousLogon -notlike 'NT SERVICE\*' -and $previousLogon -ne 'LocalSystem'
 $backup = Install-ServiceBinaries -Source $Source -InstallPath $InstallPath -ServiceName $service
-Register-HvPortalService -ServiceName $service -DisplayName 'HvPortal Agent' -Description 'HvPortal Hyper-V host agent (typed operations only)' -Exe $exe
-Set-PrivateAcl -Path $InstallPath -ExtraAccounts @("NT SERVICE\$service") -ReadOnlyForExtra
+Register-HvPortalService -ServiceName $service -DisplayName 'HvPortal Agent' -Description 'HvPortal Hyper-V host agent (typed operations only)' -Exe $exe -KeepLogon:$keepLogon
+
+$runAs = $virtual
+if ($ServiceAccount) {
+    $plain = New-RandomPassword
+    $secure = ConvertTo-SecureString $plain -AsPlainText -Force
+    $user = Get-LocalUser -Name $ServiceAccount -ErrorAction SilentlyContinue
+    if ($user) {
+        # Never take over an existing user (e.g. Administrator): only accounts created by this script are reset.
+        if ($user.Description -ne $HvPortalServiceAccountMarker) { throw "The local user '$ServiceAccount' already exists and was not created by HvPortal: choose another name." }
+        Set-LocalUser -Name $ServiceAccount -Password $secure -PasswordNeverExpires $true -AccountNeverExpires
+        Enable-LocalUser -Name $ServiceAccount
+    } else {
+        New-LocalUser -Name $ServiceAccount -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
+            -Description $HvPortalServiceAccountMarker | Out-Null
+    }
+    $sid = (Get-LocalUser -Name $ServiceAccount).SID.Value
+    Set-AccountUserRights -Sid $sid -Add $HvPortalServiceAccountRights
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$service'"
+    # Win32_Service.Change keeps the password off the command line (sc.exe obj= ... password= would expose it).
+    $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ StartName = ".\$ServiceAccount"; StartPassword = $plain }
+    $plain = $null
+    $secure = $null
+    if ($r.ReturnValue -ne 0) { throw "Could not set the service account (Win32_Service.Change returned $($r.ReturnValue))." }
+    $runAs = "$env:COMPUTERNAME\$ServiceAccount"
+    Write-Host "Service account: $runAs (random password, only 'Log on as a service'; local, RDP, network and batch logon denied)."
+} elseif ($keepLogon) {
+    $runAs = if ($previousLogon.StartsWith('.\')) { "$env:COMPUTERNAME\" + $previousLogon.Substring(2) } else { $previousLogon }
+    Write-Host "Keeping the service account $runAs."
+}
+$accounts = @($virtual)
+if ($runAs -ne $virtual) { $accounts += $runAs }
+Set-PrivateAcl -Path $InstallPath -ExtraAccounts $accounts -ReadOnlyForExtra
 New-Item -ItemType Directory -Force -Path $DataPath | Out-Null
-Set-PrivateAcl -Path $DataPath -ExtraAccounts @("NT SERVICE\$service")
+Set-PrivateAcl -Path $DataPath -ExtraAccounts $accounts
 Register-EventSource 'HvPortal Agent'
 Set-ServiceEnvironment -ServiceName $service -Variables @{ HVP_AGENT_DATA_DIR = $DataPath }
 
 # Least privilege for Hyper-V: membership in the built-in "Hyper-V Administrators" group (SID S-1-5-32-578).
 # A management agent needs no local Hyper-V rights: it uses the credentials of each remote host.
+$hvAdmins = (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-578').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
+$hvMembers = @(Get-LocalGroupMember -SID 'S-1-5-32-578' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+if ($runAs -ne $virtual -and $hvMembers -contains $virtual) {
+    # Dedicated account: the Hyper-V rights belong to it only.
+    & net.exe localgroup "$hvAdmins" "$virtual" /delete | Out-Null
+}
 if (-not $Management) {
-    $hvAdmins = (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-578').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
-    $member = "NT SERVICE\$service"
-    $already = Get-LocalGroupMember -SID 'S-1-5-32-578' -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $member }
-    if (-not $already) {
-        & net.exe localgroup "$hvAdmins" "$member" /add | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "Could not add $member to '$hvAdmins'." }
+    if ($hvMembers -notcontains $runAs) {
+        & net.exe localgroup "$hvAdmins" "$runAs" /add 2>$null | Out-Null
+        $addCode = $LASTEXITCODE
+        # Get-LocalGroupMember fails on groups with orphaned SIDs: "already a member" is fine.
+        # (net.exe lists local users without the computer prefix.)
+        $listed = @(& net.exe localgroup "$hvAdmins")
+        if ($addCode -ne 0 -and -not ($listed -contains $runAs -or $listed -contains $runAs.Split('\')[-1])) { throw "Could not add $runAs to '$hvAdmins'." }
     }
 } else {
     Write-Host 'Management agent: remote hosts need WMI/DCOM (TCP 135 + dynamic RPC), WinRM (5985, or 5986 with -UseHttps in the portal) and SMB (445) from this server.'
@@ -89,7 +140,7 @@ if ($Gateway -and $CaSha256 -and $EnrollmentToken) {
     if ($null -eq $code) { throw 'The agent executable could not be started. Check antivirus / application control policies.' }
     Remove-Item Env:\HVP_ENROLLMENT_TOKEN -ErrorAction SilentlyContinue
     if ($code -ne 0) { throw 'Enrollment failed (see message above). The service was installed but not started.' }
-    Set-PrivateAcl -Path $DataPath -ExtraAccounts @("NT SERVICE\$service")
+    Set-PrivateAcl -Path $DataPath -ExtraAccounts $accounts
 } elseif (-not (Test-Path (Join-Path $DataPath 'agent.json'))) {
     Write-Warning 'Agent installed but not enrolled. Re-run with -Gateway, -CaSha256 and the one-time token.'
     return

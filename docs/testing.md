@@ -10,8 +10,13 @@
 | Follow-up (same day): `tests/HvPortal.Gateway.Tests` | 158 | pass — off-only fields extended (automatic stop action; Generation 1 NIC/disk hot-add) in `FieldsRequiringOff`; agent package manifest `selfSigned` reported as such (and never when `signed` is false) |
 | `installer/Build-Release.ps1 -SigningCertificateThumbprint <self-signed NEXQ S.r.l.>` (full, with tests) | 97 + 158 | pass — 12 files (gateway/agent `HvPortal.*.exe/.dll`, every `.ps1`) carry the NEXQ S.r.l. signature (`Get-AuthenticodeSignature`: `UnknownError` = untrusted root on the build machine, expected until the `.cer` is imported); `installer\HvPortal-CodeSigning.cer` in the release and in the agent zip, whose installer scripts are now the signed ones; manifest `signed: true, selfSigned: true` |
 
+| Installer scripts (PowerShell 5.1 and 7 parser, all `installer\*.ps1`) | — | pass; `Edit-UserRightsInf` checked on a sample `secedit` export: adds the SID to the 5 rights, idempotent, removal clears only that SID (rights left empty are written empty), other rights untouched; `New-RandomPassword` 40 chars with all four classes |
+| `web`: guide page *Microsoft Entra ID sign-in* — `tsc -b`, `vitest` (IT/EN keys), `vite build` | — | pass |
+
 Not executed: anything that needs a real remote Hyper-V host (WMI/DCOM, WinRM, SMB with credentials): real-host test
-plan V29–V34; VM settings rules on a running VM: V35. Effect of the self-signed signature on Defender/SmartScreen or
+plan V29–V34; VM settings rules on a running VM: V35. Not executable on the development machine (no elevation):
+`Install-Agent.ps1 -ServiceAccount` (user creation, `secedit`, `Win32_Service.Change`, uninstall cleanup) — V36; the
+gateway port check and private-key grant with a CA PFX on port 443 — V37. Effect of the self-signed signature on Defender/SmartScreen or
 other antivirus products after importing the certificate was not observed. `web/e2e/ui-smoke.mjs` was not re-run.
 
 ## v0.3.4 — Docker image and settings UI (2026-11-05)

@@ -91,6 +91,28 @@ the CA fingerprint, with a token countdown and the live connection status of the
    and starts it. No inbound firewall rule is created on the host.
 3. The host turns *online* in the portal within seconds; check *Hyper-V access* = `Ok`.
 
+### 4a. Optional: a named local service account for the agent
+
+By default the agent runs as the virtual account `NT SERVICE\HvPortalAgent`, which is already least privilege (no
+password, cannot sign in, member of *Hyper-V Administrators* only). If your policies require a named account (audit,
+antivirus or application-control rules by user), add `-ServiceAccount`:
+```powershell
+.\Install-Agent.ps1 -Source ..\agent -Gateway https://gw01.contoso.local:8444 -CaSha256 <fingerprint> -ServiceAccount svc-hvportal
+```
+The installer creates the **local** user (or resets one it created earlier; it refuses to take over any other user) with:
+- a random 40-character password that nobody sees, set on the service through `Win32_Service.Change` (never on a
+  command line) and never expiring; re-running the installer with `-ServiceAccount` rotates it;
+- membership of *Hyper-V Administrators* only (not *Administrators*); the virtual account is removed from that group;
+- user rights: *Log on as a service* only; *Deny log on locally*, *through Remote Desktop Services*, *from the network*
+  and *as a batch job* (local security policy, applied with `secedit` and verified);
+- the same private ACLs as the virtual account: binaries read-only, data directory (agent identity) full control.
+
+The rights are the same as the default account's, so the same limits apply: to create VMs or upload files in a folder,
+the account needs NTFS *Modify* on it (e.g. `icacls D:\Hyper-V /grant "svc-hvportal:(OI)(CI)M"`). Upgrades without
+`-ServiceAccount` keep the account. `Uninstall-HvPortal.ps1 -Component Agent` removes the user, its rights and profile.
+On domain-joined hosts a Group Policy that sets the same user rights overrides the local policy (the installer reports
+it); use the virtual account there or add the account to the GPO.
+
 ## 4b. Alternative: remote hosts through a management agent (ADR-022)
 
 Optional, for hosts on which nothing should be installed (typically workgroup hosts). A **management agent** runs on a
@@ -134,6 +156,39 @@ Ports from the management server to each host: TCP 135 + dynamic RPC (WMI/DCOM),
 
 Users & roles → *Assign role*. New users have no permissions. Prefer scoped roles (host or VM) over global ones.
 
+## 6. UI port 443 and a certificate from your CA (PFX)
+
+1. Import the PFX into the computer store (elevated; the private key stays non-exportable):
+   ```powershell
+   $cert = Import-PfxCertificate -FilePath C:\temp\hvportal.pfx -CertStoreLocation Cert:\LocalMachine\My -Password (Read-Host -AsSecureString 'PFX password')
+   $cert | Format-List Subject, DnsNameList, NotAfter, Thumbprint
+   ```
+   The certificate must contain the name users type in the browser (Subject Alternative Name), and the issuing CA
+   must be trusted by the clients (domain-joined clients usually get it from AD).
+2. Re-run `Install-Gateway.ps1` from the installed release with **all** the parameters used at installation (the
+   service environment is rewritten; current values:
+   `(Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\HvPortalGateway).Environment`) plus:
+   ```powershell
+   .\Install-Gateway.ps1 -Source ..\gateway -PublicNames hvportal.contoso.com,10.0.10.5 -OpenFirewall `
+       -UiPort 443 -UiCertificateThumbprint $cert.Thumbprint
+   ```
+   The installer refuses ports already in use (443 is often taken by IIS or another HTTP.sys listener, shown as
+   process *System*), checks that the certificate is in `LocalMachine\My` with its private key and grants
+   `NT SERVICE\HvPortalGateway` read access to that key. With `-OpenFirewall` the UI rule is recreated on the new port.
+3. Open `https://hvportal.contoso.com` (no port). Agents keep using port 8444 and the internal CA: nothing changes on the
+   hosts. With Entra ID sign-in, add the new address as a redirect URI (section 7).
+4. Renewal: import the new PFX and re-run step 2 with the new thumbprint.
+
+## 7. Microsoft Entra ID sign-in (optional)
+
+The portal has a step-by-step page: **Guide → Microsoft Entra ID sign-in** (with the redirect URI of the address in
+use). In short: register a single-tenant *Web* application with redirect URI
+`https://<portal address>/api/v1/auth/entra/callback` (one per address/port users open), create a client secret (copy
+its *Value*), then Settings → Microsoft Entra ID: tenant ID, client ID, secret, *Test connection*, enable. Create each
+Microsoft user in Users & roles (type *Microsoft*, exact UPN, role); require MFA with Conditional Access; keep a local
+break-glass administrator before setting *Local sign-in* to emergency accounts only. The gateway needs outbound HTTPS
+to `login.microsoftonline.com`.
+
 ## Upgrade
 
 The portal has a step-by-step page with the commands for your installation: **Guide → Update the Windows services**
@@ -166,4 +221,5 @@ The portal has a step-by-step page with the commands for your installation: **Gu
 | 8443/tcp | browsers → gateway | UI, REST API, SignalR |
 | 8444/tcp | agents → gateway | enrollment and agent channel (mTLS) |
 
-Internet access is not required. Entra ID (M2) will need outbound HTTPS to Microsoft identity endpoints.
+Internet access is not required. Entra ID sign-in (section 7) needs outbound HTTPS from the gateway to
+`login.microsoftonline.com` (or the national cloud endpoint).

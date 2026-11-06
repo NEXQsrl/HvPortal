@@ -7,6 +7,7 @@
 | Portal users (local accounts in the DB, or Microsoft Entra ID accounts pre-provisioned in the portal) | people | only what RBAC grants; independent of Windows accounts |
 | `NT SERVICE\HvPortalGateway` | gateway service | non-admin virtual account; read/execute on binaries; full control on its data directory only |
 | `NT SERVICE\HvPortalAgent` | agent service | member of *Hyper-V Administrators* (S-1-5-32-578); not a local administrator; no domain account |
+| optional local user (`Install-Agent.ps1 -ServiceAccount`) | agent service instead of the virtual account | same group and ACLs as the virtual account (which leaves *Hyper-V Administrators*); random 40-char password unknown to anyone, set via `Win32_Service.Change`; only *Log on as a service*, local/RDP/network/batch logon denied; removed by the uninstaller |
 | Agent certificate (CN=hvportal-host-&lt;id&gt;, EKU clientAuth) | agent → gateway | identifies one host; revocable |
 | Local OS administrator of the gateway server | operator | can read keys/DB and run the admin CLI — trusted by design |
 
