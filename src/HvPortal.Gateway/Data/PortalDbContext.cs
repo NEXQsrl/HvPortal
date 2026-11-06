@@ -19,6 +19,7 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
     public DbSet<LogicalGroupMember> LogicalGroupMembers => Set<LogicalGroupMember>();
     public DbSet<HostVmGroupLink> HostVmGroupLinks => Set<HostVmGroupLink>();
     public DbSet<ManagedHost> Hosts => Set<ManagedHost>();
+    public DbSet<ManagementAgent> ManagementAgents => Set<ManagementAgent>();
     public DbSet<AgentCertificate> AgentCertificates => Set<AgentCertificate>();
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
     public DbSet<VirtualMachine> VirtualMachines => Set<VirtualMachine>();
@@ -55,6 +56,7 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
         b.Properties<VmPowerState>().HaveConversion<string>().HaveMaxLength(24);
         b.Properties<HyperVAccessStatus>().HaveConversion<string>().HaveMaxLength(24);
         b.Properties<HostStatus>().HaveConversion<string>().HaveMaxLength(16);
+        b.Properties<HostConnectionMode>().HaveConversion<string>().HaveMaxLength(16);
         b.Properties<JobStatus>().HaveConversion<string>().HaveMaxLength(16);
         b.Properties<ScopeType>().HaveConversion<string>().HaveMaxLength(24);
         b.Properties<AssignmentEffect>().HaveConversion<string>().HaveMaxLength(8);
@@ -117,6 +119,16 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.Property(x => x.IsoLibraryPathsJson).HasMaxLength(8000);
             e.Property(x => x.VmGroupsSyncError).HasMaxLength(4000);
             e.Property(x => x.VmGroupsPlanHash).HasMaxLength(64);
+            e.Property(x => x.RemoteComputerName).HasMaxLength(253);
+            e.Property(x => x.RemoteUserName).HasMaxLength(256);
+            e.HasIndex(x => x.ManagementAgentId);
+        });
+        m.Entity<ManagementAgent>(e =>
+        {
+            e.HasIndex(x => x.DisplayName).IsUnique();
+            e.Property(x => x.Description).HasMaxLength(1000);
+            e.Property(x => x.MachineName).HasMaxLength(63);
+            e.Property(x => x.AgentVersion).HasMaxLength(32);
         });
         m.Entity<HostVmGroupLink>(e =>
         {

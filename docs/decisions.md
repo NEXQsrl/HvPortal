@@ -16,7 +16,8 @@ Format: context → decision → consequences. Status of all records: **accepted
 - **Alternatives**: WinRM/PowerShell remoting (needs Kerberos/TrustedHosts or HTTPS+NTLM, credentials on gateway);
   gateway→agent HTTPS (inbound port on every host); gRPC (more dependencies, same security).
 - **Consequences**: no credentials for hosts stored on the gateway; only outbound 8444 from hosts; revocation is
-  immediate (socket closed + DB check on connect + watchdog).
+  immediate (socket closed + DB check on connect + watchdog). Exception, opt-in per host: remote hosts reached by a
+  management agent with credentials stored in the portal (ADR-022).
 
 ## ADR-003 Local channel for same-server installation
 - **Decision (M1)**: the same mTLS channel over loopback is used when gateway and agent share a machine: processes and
@@ -96,6 +97,43 @@ Format: context → decision → consequences. Status of all records: **accepted
   (`/` and client routes) is rendered by `SpaShell` which writes the same nonce into
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
+
+## ADR-022 Management agents: remote hosts reached with stored credentials (agent protocol 6)
+- **Context**: some Hyper-V hosts are in a workgroup and the administrators prefer not to install anything on them;
+  a management server with the Windows administration tools is available. ADR-002 keeps host credentials off the
+  gateway; this is an **optional** second mode, the agent on the host stays the recommended one.
+- **Decision**: a *management agent* is the same agent binary installed with `-Management` on a server that needs no
+  Hyper-V. It is enrolled like a host agent (one-time token, CA pin, own certificate) but its subject is a
+  `ManagementAgent` row, not a host; the gateway returns `Role = Management` at enrollment. Remote hosts
+  (`ManagedHost.ConnectionMode = Remote`) are created in the portal with management agent, computer name (DNS or IPv4,
+  never loopback or IPv6 literals), user name, password and WinRM transport. One management agent serves many hosts.
+  - Credentials: the password is encrypted with the gateway key ring (AES-256-GCM, purpose bound to the host id),
+    write-only in the API (never returned, never audited: audit entries record computer, user, transport and
+    `passwordChanged`), deleted with the host. Requires `hosts.manage` at global scope and a recent re-authentication.
+  - Channel: after `Hello` the gateway sends `TargetsConfiguration` (the agent's remote hosts with decrypted
+    credentials) over the mutual-TLS channel, again after every change (create, edit, move, revoke, delete). The
+    agent keeps it in memory only (SecureString) and drops it when the channel closes. Every command to a remote host
+    is stamped by the gateway with `TargetHostId`; inventories come back as `TargetInventory`, and the gateway discards
+    any inventory for a host not assigned to the reporting agent. A host agent rejects commands with a target, a
+    management agent rejects commands without one.
+  - Transports (from the management server to the host, with the stored account): WMI/DCOM with packet privacy for
+    inventory, power, delete, details and console (the same `root\virtualization\v2` code as a local agent); WinRM for
+    the typed operations — the fixed launcher `Ops\HvPortal.Remote.ps1` runs `Invoke-Command -FilePath` with the same
+    `HvPortal.Ops.ps1` and passes the JSON request as its only argument (no script block is built, the password comes
+    on stdin); SMB administrative shares (`\\host\D$`) for the folder browser and the file explorer, accessed under
+    `LogonUser(LOGON32_LOGON_NEW_CREDENTIALS)` so the account is used only for outbound access. All folder rules are
+    applied to the host-local path and to what the host reports (fixed drives from `Win32_LogicalDisk`). The CPU
+    sampler has no local fallback for remote hosts (it would report the management server).
+  - Protocol 6 (agent 0.4.0); `RequiredVersion` returns 6 for any command with a target.
+- **Alternatives**: credentials entered only on the management server (DPAPI, never on the gateway) — safer, but the
+  user wanted portal-managed credentials; one service instance per remote host — simpler routing, but heavier to
+  operate; PowerShell Direct / CIM sessions everywhere — would rewrite every operation.
+- **Consequences**: the gateway becomes a custodian of host administrator passwords for the hosts that use this mode:
+  a compromise of the gateway *and* its key ring exposes them (threat model T13). Hosts must accept WMI/DCOM, WinRM and
+  SMB from the management server; in a workgroup a non-built-in local administrator needs
+  `LocalAccountTokenFilterPolicy = 1` and WinRM over HTTP needs the host in the management server's `TrustedHosts`.
+  Outcome reporting is unchanged: a broken WinRM session is reported as a failure with "outcome unknown" text, never as
+  success. Not validated on real hosts yet (real-host test plan V29–V34).
 
 ## ADR-021 Gateway also as a Linux container
 - The gateway targets `net10.0` (was `net10.0-windows`) and runs either as a Windows service or in a Linux container

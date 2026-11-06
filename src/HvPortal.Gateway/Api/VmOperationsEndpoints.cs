@@ -24,7 +24,7 @@ public static class VmOperationsEndpoints
     public sealed record IsoLibraryRequest(string[] Paths);
     public sealed record CreateVmRequest(NewVmRequest Vm, Guid? GroupId, string? IdempotencyKey);
 
-    private static readonly string[] RequiresOffFields = ["processorCount", "dynamicMemoryEnabled", "secureBoot"];
+    private static readonly string[] RequiresOffFields = ["processorCount", "dynamicMemoryEnabled", "secureBoot", "automaticStopAction"];
 
     public static void Map(WebApplication app)
     {
@@ -218,7 +218,7 @@ public static class VmOperationsEndpoints
         {
             return ApiSupport.Conflict("vm_missing", "The VM is not present in the latest inventory.");
         }
-        var offOnly = OperationValidation.FieldsRequiringOff(change);
+        var offOnly = OperationValidation.FieldsRequiringOff(change, vm.Generation);
         if (offOnly.Count > 0 && IsFresh(host, agents, time) && vm.PowerState != VmPowerState.Off)
         {
             return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "requires_off",

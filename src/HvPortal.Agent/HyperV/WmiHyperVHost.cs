@@ -16,8 +16,8 @@ namespace HvPortal.Agent.HyperV;
 /// </summary>
 public sealed class WmiHyperVHost : IHyperVHost
 {
-    private const string VirtualizationNamespace = @"\\.\root\virtualization\v2";
-    private const string CimV2Namespace = @"\\.\root\cimv2";
+    private const string VirtualizationNamespace = @"root\virtualization\v2";
+    private const string CimV2Namespace = @"root\cimv2";
     private const uint ReturnCompleted = 0;
     private const uint ReturnJobStarted = 4096;
 
@@ -25,13 +25,21 @@ public sealed class WmiHyperVHost : IHyperVHost
     // HealthState, MemoryAvailable, AvailableMemoryBuffer, ReplicationMode, ReplicationState, ReplicationHealth (GetSummaryInformation docs).
     private static readonly uint[] SummaryRequest = [0, 1, 2, 3, 4, 101, 103, 104, 105, 106, 109, 112, 113, 114, 115, 116];
 
-    private readonly ILogger<WmiHyperVHost> _logger;
+    private readonly ILogger _logger;
     private readonly string _agentVersion;
-    private readonly CpuSampler _cpu = new();
+    private readonly HostTarget _target;
+    private readonly CpuSampler _cpu;
 
-    public WmiHyperVHost(ILogger<WmiHyperVHost> logger)
+    public WmiHyperVHost(ILogger<WmiHyperVHost> logger) : this(logger, HostTarget.Local)
+    {
+    }
+
+    /// <summary>Remote target (management agent): every WMI connection goes to that host with its credentials.</summary>
+    public WmiHyperVHost(ILogger logger, HostTarget target)
     {
         _logger = logger;
+        _target = target;
+        _cpu = new CpuSampler(target);
         _agentVersion = typeof(WmiHyperVHost).Assembly.GetName().Version?.ToString() ?? "0.0.0";
     }
 
@@ -107,6 +115,11 @@ public sealed class WmiHyperVHost : IHyperVHost
 
     private (HyperVAccessStatus, string?) CheckAccess(HostFacts facts)
     {
+        if (!_target.IsLocal && RemoteReachability() is { } unreachable)
+        {
+            // A remote host whose facts cannot be read is unreachable or refuses the credentials, not "Hyper-V not installed".
+            return unreachable;
+        }
         if (facts.HyperVServiceState is null)
         {
             return (HyperVAccessStatus.NotInstalled, "The Hyper-V Virtual Machine Management service (vmms) is not installed.");
@@ -125,7 +138,9 @@ public sealed class WmiHyperVHost : IHyperVHost
             {
                 return (HyperVAccessStatus.AccessDenied,
                     "root\\virtualization\\v2 returned no Msvm_VirtualSystemManagementService instance. " +
-                    "The agent identity is probably not a member of 'Hyper-V Administrators' (S-1-5-32-578).");
+                    (_target.IsLocal
+                        ? "The agent identity is probably not a member of 'Hyper-V Administrators' (S-1-5-32-578)."
+                        : $"The account {_target.UserName} is probably not an administrator of {_target.Display}."));
             }
             return (HyperVAccessStatus.Ok, null);
         }
@@ -135,21 +150,48 @@ public sealed class WmiHyperVHost : IHyperVHost
         }
         catch (ManagementException ex) when (ex.ErrorCode == ManagementStatus.AccessDenied)
         {
-            return (HyperVAccessStatus.AccessDenied, "Access denied to root\\virtualization\\v2.");
+            return (HyperVAccessStatus.AccessDenied, AccessDeniedMessage());
         }
         catch (UnauthorizedAccessException)
         {
-            return (HyperVAccessStatus.AccessDenied, "Access denied to root\\virtualization\\v2.");
+            return (HyperVAccessStatus.AccessDenied, AccessDeniedMessage());
         }
         catch (ManagementException ex)
         {
             return (HyperVAccessStatus.Error, $"WMI error: {ex.ErrorCode}");
         }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            return (HyperVAccessStatus.Error, $"Cannot reach {_target.Display} over WMI/DCOM: {ex.Message}");
+        }
     }
+
+    /// <summary>Remote targets only: null when root\cimv2 accepts the connection, otherwise the reason.</summary>
+    private (HyperVAccessStatus, string?)? RemoteReachability()
+    {
+        try
+        {
+            Connect(CimV2Namespace);
+            return null;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException || (ex is ManagementException me && me.ErrorCode == ManagementStatus.AccessDenied))
+        {
+            return (HyperVAccessStatus.AccessDenied, AccessDeniedMessage());
+        }
+        catch (Exception ex) when (ex is ManagementException or System.Runtime.InteropServices.COMException)
+        {
+            return (HyperVAccessStatus.Error, $"Cannot reach {_target.Display} over WMI/DCOM (TCP 135 and dynamic RPC ports): {ex.Message}");
+        }
+    }
+
+    private string AccessDeniedMessage() => _target.IsLocal
+        ? "Access denied to root\\virtualization\\v2."
+        : $"Access denied by {_target.Display} for {_target.UserName}: check user name and password and that the account is a local "
+          + "administrator of the host; for local accounts other than the built-in Administrator see LocalAccountTokenFilterPolicy in docs/install.md.";
 
     private HostFacts ReadHostFacts(List<string> warnings)
     {
-        string computerName = Environment.MachineName;
+        string computerName = _target.ComputerName ?? Environment.MachineName;
         string? dns = null, domain = null, caption = null, version = null, build = null, vmmsState = null;
         bool partOfDomain = false, clusterPresent = false;
         uint? sku = null, productType = null;
@@ -796,6 +838,11 @@ public sealed class WmiHyperVHost : IHyperVHost
         {
             return new PowerOutcome(AgentCommandStatus.AccessDenied, "Cannot connect to root\\virtualization\\v2: " + ex.Message, null, null);
         }
+        catch (System.Runtime.InteropServices.COMException ex)
+        {
+            // Nothing was sent to the host: a definite failure, not an unknown outcome.
+            return new PowerOutcome(AgentCommandStatus.Failed, $"Cannot reach {_target.Display}: {ex.Message}", null, null);
+        }
 
         using var vm = FindVmObject(scope, vmId);
         if (vm is null)
@@ -1028,17 +1075,7 @@ public sealed class WmiHyperVHost : IHyperVHost
                ?? throw new ManagementException($"{className} not found (insufficient rights?).");
     }
 
-    private static ManagementScope Connect(string ns)
-    {
-        var scope = new ManagementScope(ns, new ConnectionOptions
-        {
-            Impersonation = ImpersonationLevel.Impersonate,
-            Authentication = AuthenticationLevel.PacketPrivacy,
-            Timeout = TimeSpan.FromSeconds(30),
-        });
-        scope.Connect();
-        return scope;
-    }
+    private ManagementScope Connect(string ns) => _target.ConnectWmi(ns);
 
     private static System.Management.EnumerationOptions Enumeration() => new()
     {

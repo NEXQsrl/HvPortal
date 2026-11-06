@@ -107,6 +107,11 @@ public static class InventoryManagementEndpoints
         await using var tx = await db.Database.BeginTransactionAsync(http.RequestAborted);
         var vms = await InventoryCleanup.RemoveHostAsync(db, id, http.RequestAborted);
         await tx.CommitAsync(http.RequestAborted);
+        if (host.ManagementAgentId is { } managementAgent)
+        {
+            // Remote host: the stored credentials are gone with the row; the management agent drops them from memory.
+            await agents.ReconfigureManagementAgentAsync(managementAgent, http.RequestAborted);
+        }
         await http.WriteAuditAsync("hosts.delete", resourceType: "host", resourceId: id.ToString("D"),
             details: new { host.DisplayName, host.MachineName, vmRecordsRemoved = vms });
         return Results.NoContent();

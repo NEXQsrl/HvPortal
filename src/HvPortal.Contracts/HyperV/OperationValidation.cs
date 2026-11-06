@@ -134,13 +134,24 @@ public static partial class OperationValidation
 
     private static bool InvalidMemory(long? mb) => mb is { } v && (v < MinMemoryMb || v > MaxMemoryMb || v % 2 != 0);
 
-    /// <summary>Fields Hyper-V lets you change only while the VM is off (or saved for some): used to explain/deny early.</summary>
-    public static IReadOnlyList<string> FieldsRequiringOff(VmConfigChange c)
+    /// <summary>
+    /// Fields Hyper-V lets you change only while the VM is off: used to explain/deny early. Rules that depend on the
+    /// current configuration (startup memory with dynamic memory, IDE disks, VHD files) are enforced by the UI and by
+    /// Hyper-V itself (the job fails with its error). <paramref name="generation"/> is the VM generation when known.
+    /// </summary>
+    public static IReadOnlyList<string> FieldsRequiringOff(VmConfigChange c, int? generation = null)
     {
         var list = new List<string>();
         if (c.ProcessorCount is not null) list.Add("processorCount");
         if (c.DynamicMemoryEnabled is not null) list.Add("dynamicMemoryEnabled");
         if (c.SecureBootEnabled is not null || c.SecureBootTemplate is not null) list.Add("secureBoot");
+        if (c.AutomaticStopAction is not null) list.Add("automaticStopAction");
+        if (generation == 1)
+        {
+            // Generation 1: network adapters and IDE disks cannot be hot-added.
+            if (c.AddNetworkAdapterSwitch is not null) list.Add("addNetworkAdapter");
+            if (c.NewDisk is not null) list.Add("newDisk");
+        }
         return list;
     }
 }

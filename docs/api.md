@@ -52,7 +52,7 @@ message, 501 `agent_outdated`). Changes are jobs (202 + `jobId`), re-authorized 
 | POST `/groups` `{name, description?, parentId?}` · PATCH `/groups/{id}` `{name?, description?, parentId? \| moveToRoot}` · DELETE `/groups/{id}` | folders | `groups.manage`; cycles/depth refused; delete only empty of subgroups and assignments; moves are access changes (ADR-015) |
 | POST `/groups/{id}/members` · `/groups/{id}/members/remove` `{vmIds}` | membership | `groups.manage` (+ `roles.manage` and held permissions when the change alters access) |
 | GET `/vms/{id}/config` | live configuration + `can {compute,storage,network}` + switches + ISO library + options | `inventory.read` |
-| PATCH `/vms/{id}/config` (only changed fields) | configuration job `vm.config/Update` | `vm.config.compute` / `.storage` / `.network` per field; 409 `requires_off` (vCPU, dynamic memory toggle, Secure Boot); ISO must be in the host library |
+| PATCH `/vms/{id}/config` (only changed fields) | configuration job `vm.config/Update` | `vm.config.compute` / `.storage` / `.network` per field; 409 `requires_off` (vCPU, dynamic memory toggle, Secure Boot, automatic stop action; on Generation 1 also new network adapter and new disk); ISO must be in the host library |
 | GET `/vms/{id}/checkpoints` | checkpoint tree (live) | `inventory.read` |
 | POST `/vms/{id}/checkpoints` `{name?}` | create (job) | `vm.checkpoint.create` |
 | POST `/vms/{id}/checkpoints/{cid}/apply` `{confirmName}` | apply (job) | `vm.checkpoint.apply`; VM Off/Saved; typed VM name |
@@ -68,6 +68,11 @@ message, 501 `agent_outdated`). Changes are jobs (202 + `jobId`), re-authorized 
 | GET `/hosts/{id}/files?path=` | drives (no path) or folders + files of a folder (agent 0.3.3+) | `host.files.read` on host |
 | GET `/hosts/{id}/files/download?path=` | file download (streamed, 4 MB chunks); 409 `file_in_use` for files open for writing | `host.files.read` on host; audited |
 | POST `/hosts/{id}/files/upload?folder=&name=&overwrite=` | raw body (`application/octet-stream`, Content-Length required); 409 `file_exists` unless `overwrite=true`; returns path, size, SHA-256 | `host.files.write` on host; audited |
+| GET `/management-agents` | management agents (status, connected, server, version, number of hosts) | `hosts.manage` global |
+| POST `/management-agents` `{displayName, description?}` · POST `/management-agents/{id}/enrollment-token` | create + one-time token / new token (install with `-Management`) | `hosts.manage` global + re-auth |
+| POST `/management-agents/{id}/revoke` · POST `/management-agents/{id}/delete` `{confirmName}` | revoke certificates and disconnect · delete (409 `management_agent_in_use` while hosts use it) | `hosts.manage` global + re-auth |
+| POST `/hosts/remote` `{displayName, managementAgentId, computerName, userName, password, useHttps}` | remote host reached by a management agent (ADR-022); `invalid_computer_name`, `invalid_user_name`, `user_name_needs_host` (IP without `HOST\user`), `invalid_password`, `invalid_management_agent`, 409 `host_exists` | `hosts.manage` global + re-auth; audited without the password |
+| PUT `/hosts/{id}/remote` `{managementAgentId, computerName, userName, password?, useHttps}` | change connection/account/agent; `password` omitted or null keeps the stored one; re-enables a revoked remote host | `hosts.manage` global + re-auth; audited (`passwordChanged`) |
 | POST `/settings/backup/export` `{passphrase}` | sealed `.hvpbak` (DB snapshot + key ring + CA) | every privileged permission + re-auth; audited |
 | POST `/settings/backup/restore[?apply=true]` | raw body = backup file; headers `X-HvPortal-Passphrase`, `X-HvPortal-Confirm: RIPRISTINA` (apply); preview without `apply` | every privileged permission + re-auth |
 | GET / DELETE `/settings/backup/restore` · POST `/settings/backup/restart` | staged restore state / cancel / restart the service to apply | `settings.manage` (GET) · every privileged permission + re-auth |

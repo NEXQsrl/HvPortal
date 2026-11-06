@@ -78,6 +78,7 @@ public sealed class EnrollmentClient
                 // Keep the CA that was verified against the pin, not whatever the response claims.
                 CaCertificatePem = ca.ExportCertificatePem(),
                 EnrolledAtUtc = DateTimeOffset.UtcNow,
+                Role = Enum.IsDefined(result.Role) ? result.Role : AgentRole.Host,
             };
             _store.SaveState(state);
             return state;

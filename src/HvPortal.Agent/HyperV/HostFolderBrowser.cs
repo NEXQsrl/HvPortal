@@ -4,9 +4,10 @@ namespace HvPortal.Agent.HyperV;
 
 /// <summary>
 /// Read-only folder browser for the portal's VM-location and ISO pickers (operation BrowseFolders), and the file-system
-/// checks applied to a requested VM location. Only local fixed drives; hidden, system and reparse-point folders
-/// (junctions, symbolic links, mount points) are neither listed nor accepted; top-level system folders are excluded
-/// (HostPaths.BlockedRootFolders). Runs in-process with the agent's own identity: nothing is created or modified.
+/// checks applied to a requested VM location. Only local fixed drives of the host; hidden, system and reparse-point
+/// folders (junctions, symbolic links, mount points) are neither listed nor accepted; top-level system folders are
+/// excluded (HostPaths.BlockedRootFolders). Nothing is created or modified. Paths in and out are host-local; for a
+/// remote host (management agent) <see cref="HostFileAccess"/> maps them to the administrative shares.
 /// </summary>
 public static class HostFolderBrowser
 {
@@ -20,99 +21,79 @@ public static class HostFolderBrowser
         ReturnSpecialDirectories = false,
     };
 
-    public static FolderListing Browse(FolderBrowseRequest request)
+    public static FolderListing Browse(FolderBrowseRequest request, HostFileAccess? access = null)
     {
+        var fs = access ?? HostFileAccess.Local;
         if (request.Path is null)
         {
-            return new FolderListing { Drives = FixedDrives() };
+            return new FolderListing { Drives = fs.FixedDrives() };
         }
-        var path = CheckFolder(request.Path, mustExist: true);
-        var dir = new DirectoryInfo(path);
-        var atRoot = dir.Parent is null;
-        var truncated = false;
-        var folders = new List<FolderEntry>();
-        foreach (var d in dir.EnumerateDirectories("*", Options))
+        var path = CheckFolder(request.Path, mustExist: true, fs);
+        return fs.Run(() =>
         {
-            if ((atRoot && HostPaths.IsBlockedRootFolder(d.Name)) || d.Name.StartsWith('$'))
+            var dir = new DirectoryInfo(fs.ToPhysical(path));
+            var atRoot = dir.Parent is null;
+            var truncated = false;
+            var folders = new List<FolderEntry>();
+            foreach (var d in dir.EnumerateDirectories("*", Options))
             {
-                continue;
-            }
-            if (folders.Count >= HostPaths.MaxEntries)
-            {
-                truncated = true;
-                break;
-            }
-            folders.Add(new FolderEntry(d.Name, d.FullName));
-        }
-        var isos = new List<IsoFile>();
-        if (request.IncludeIsos)
-        {
-            foreach (var f in dir.EnumerateFiles("*.iso", Options))
-            {
-                if (!f.Extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
+                if ((atRoot && HostPaths.IsBlockedRootFolder(d.Name)) || d.Name.StartsWith('$'))
                 {
-                    continue; // 8.3 short-name matches such as *.iso_old
+                    continue;
                 }
-                if (isos.Count >= HostPaths.MaxEntries)
+                if (folders.Count >= HostPaths.MaxEntries)
                 {
                     truncated = true;
                     break;
                 }
-                isos.Add(new IsoFile(f.FullName, f.Length, f.LastWriteTimeUtc));
+                folders.Add(new FolderEntry(d.Name, fs.ToHost(d.FullName)));
             }
-        }
-        long? free = null;
-        try
-        {
-            free = new DriveInfo(path[..3]).AvailableFreeSpace;
-        }
-        catch (IOException)
-        {
-        }
-        return new FolderListing
-        {
-            Path = path,
-            Parent = dir.Parent?.FullName,
-            Folders = folders.OrderBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
-            Isos = isos.OrderBy(f => f.Path, StringComparer.CurrentCultureIgnoreCase).ToList(),
-            FreeBytes = free,
-            Truncated = truncated,
-        };
-    }
-
-    public static IReadOnlyList<DriveEntry> FixedDrives()
-    {
-        var list = new List<DriveEntry>();
-        foreach (var d in DriveInfo.GetDrives())
-        {
-            try
+            var isos = new List<IsoFile>();
+            if (request.IncludeIsos)
             {
-                if (d.DriveType == DriveType.Fixed && d.IsReady)
+                foreach (var f in dir.EnumerateFiles("*.iso", Options))
                 {
-                    list.Add(new DriveEntry(d.RootDirectory.FullName, string.IsNullOrWhiteSpace(d.VolumeLabel) ? null : d.VolumeLabel, d.TotalSize, d.AvailableFreeSpace));
+                    if (!f.Extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue; // 8.3 short-name matches such as *.iso_old
+                    }
+                    if (isos.Count >= HostPaths.MaxEntries)
+                    {
+                        truncated = true;
+                        break;
+                    }
+                    isos.Add(new IsoFile(fs.ToHost(f.FullName), f.Length, f.LastWriteTimeUtc));
                 }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            return new FolderListing
             {
-                // Drive vanished or locked (e.g. BitLocker): skip it.
-            }
-        }
-        return list;
+                Path = path,
+                Parent = atRoot ? null : fs.ToHost(dir.Parent!.FullName),
+                Folders = folders.OrderBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
+                Isos = isos.OrderBy(f => f.Path, StringComparer.CurrentCultureIgnoreCase).ToList(),
+                FreeBytes = fs.FreeSpace(path[..3]),
+                Truncated = truncated,
+            };
+        });
     }
 
+    public static IReadOnlyList<DriveEntry> FixedDrives() => HostFileAccess.Local.FixedDrives();
+
     /// <summary>
-    /// Validates a folder against the real file system and returns its normalized full path.
+    /// Validates a host folder against the real file system and returns its normalized host-local path.
     /// mustExist = false (VM location): the missing tail is created later by the operations script; every existing
     /// ancestor is still checked.
     /// </summary>
     /// <exception cref="HostPathException">The folder is not acceptable (message is safe to show).</exception>
-    public static string CheckFolder(string path, bool mustExist)
+    public static string CheckFolder(string path, bool mustExist, HostFileAccess? access = null)
     {
+        var fs = access ?? HostFileAccess.Local;
         if (!HostPaths.IsValidLocalFolder(path))
         {
             throw new HostPathException("Invalid folder: use a local path such as D:\\VMs.");
         }
         var normalized = HostPaths.Normalize(path);
+        // Path.GetFullPath on the host-local form only normalizes text (no I/O): it must not change an accepted path.
         var full = HostPaths.Normalize(Path.GetFullPath(normalized));
         if (!full.Equals(normalized, StringComparison.OrdinalIgnoreCase))
         {
@@ -122,36 +103,30 @@ public static class HostFolderBrowser
         {
             throw new HostPathException("System folders cannot be used.");
         }
-        DriveInfo drive;
-        try
+        if (!fs.IsFixedDrive(full[..3]))
         {
-            drive = new DriveInfo(full[..3]);
-            if (drive.DriveType != DriveType.Fixed || !drive.IsReady)
+            throw new HostPathException("Only local fixed drives can be used (no network, removable or optical drives).");
+        }
+        fs.Run(() =>
+        {
+            var current = new DirectoryInfo(fs.ToPhysical(full));
+            if (mustExist && !current.Exists)
             {
-                throw new HostPathException("Only local fixed drives can be used (no network, removable or optical drives).");
+                throw new HostPathException("Folder not found.");
             }
-        }
-        catch (ArgumentException)
-        {
-            throw new HostPathException("Drive not found.");
-        }
-        var current = new DirectoryInfo(full);
-        if (mustExist && !current.Exists)
-        {
-            throw new HostPathException("Folder not found.");
-        }
-        while (current is { Parent: not null })
-        {
-            if (current.Exists && (current.Attributes & Excluded) != 0)
+            while (current is { Parent: not null })
             {
-                throw new HostPathException("Hidden or system folders, junctions and symbolic links cannot be used.");
+                if (current.Exists && (current.Attributes & Excluded) != 0)
+                {
+                    throw new HostPathException("Hidden or system folders, junctions and symbolic links cannot be used.");
+                }
+                if (File.Exists(current.FullName))
+                {
+                    throw new HostPathException("The path points to a file, not a folder.");
+                }
+                current = current.Parent;
             }
-            if (File.Exists(current.FullName))
-            {
-                throw new HostPathException("The path points to a file, not a folder.");
-            }
-            current = current.Parent;
-        }
+        });
         return full;
     }
 }

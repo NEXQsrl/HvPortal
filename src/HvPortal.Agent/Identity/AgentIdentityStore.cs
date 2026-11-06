@@ -8,9 +8,12 @@ namespace HvPortal.Agent.Identity;
 public sealed record AgentState
 {
     public required Uri GatewayUrl { get; init; }
+    /// <summary>Host id, or the management agent id when <see cref="Role"/> is Management.</summary>
     public required Guid HostId { get; init; }
     public required string CaCertificatePem { get; init; }
     public DateTimeOffset EnrolledAtUtc { get; init; }
+    /// <summary>From the gateway at enrollment (protocol 6+); missing in older agent.json files = Host.</summary>
+    public HvPortal.Contracts.Agent.AgentRole Role { get; init; } = HvPortal.Contracts.Agent.AgentRole.Host;
 }
 
 /// <summary>

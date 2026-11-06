@@ -25,6 +25,24 @@ Output: `artifacts\release\<version>\{gateway,agent,installer,deps}\` and `SHA25
 target servers through your normal software distribution channel and verify the checksums
 (`Get-FileHash -Algorithm SHA256`). Without a code-signing certificate the binaries are unsigned.
 
+**Self-signed signature (no CA certificate available).** `New-CodeSigningCertificate.ps1` creates a code-signing
+certificate (default publisher *NEXQ S.r.l.*, RSA 3072, 5 years, `CA=false`) in `CurrentUser\My` and exports only the
+public `.cer`; pass its thumbprint to `Build-Release.ps1`. The release signs `HvPortal.*.exe/.dll` and every `.ps1`
+and ships the public certificate as `installer\HvPortal-CodeSigning.cer` (also inside the agent package); the portal
+shows the package as *Signed (self-signed)*.
+```powershell
+.\installer\New-CodeSigningCertificate.ps1                   # prints the thumbprint
+.\installer\Build-Release.ps1 -SigningCertificateThumbprint <thumbprint>
+# on each gateway/host/management server (elevated), or with a GPO:
+Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
+Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+```
+A self-signed signature is **not** a reputation: SmartScreen and antivirus products do not trust it by themselves.
+Once the certificate is imported, Authenticode reports the files as valid, PowerShell `AllSigned` policies accept the
+scripts, and AppLocker/WDAC or antivirus allow rules can be written *by publisher* instead of by path or hash. Without
+`-TimestampServer` the signatures stop validating when the certificate expires (re-sign with a new certificate).
+Keep the private key on the build machine only; whoever holds it can sign code that those machines will trust.
+
 ## 2. Install the gateway (elevated PowerShell on the management server)
 
 ```powershell
@@ -72,6 +90,45 @@ the CA fingerprint, with a token countdown and the live connection status of the
    The script installs `HvPortalAgent` as `NT SERVICE\HvPortalAgent`, adds it to *Hyper-V Administrators*, enrolls
    and starts it. No inbound firewall rule is created on the host.
 3. The host turns *online* in the portal within seconds; check *Hyper-V access* = `Ok`.
+
+## 4b. Alternative: remote hosts through a management agent (ADR-022)
+
+Optional, for hosts on which nothing should be installed (typically workgroup hosts). A **management agent** runs on a
+management server (Windows Server, no Hyper-V needed) and reaches the hosts with an administrator account stored,
+encrypted, in the portal. The agent on the host (section 4) remains the recommended mode: it stores no credentials.
+
+1. Portal → Inventory → **Management agents** → *New management agent*. Install it on the management server with the
+   same package and guide, adding `-Management`:
+   ```powershell
+   $env:HVP_ENROLLMENT_TOKEN = '<token>'
+   .\Install-Agent.ps1 -Source ..\agent -Gateway https://gw01.contoso.local:8444 -CaSha256 <fingerprint> -Management
+   ```
+   The service account is **not** added to *Hyper-V Administrators* (no local Hyper-V rights are needed).
+2. Prepare each Hyper-V host (elevated):
+   ```powershell
+   Enable-PSRemoting -Force                       # WinRM listener (HTTP 5985) and firewall rule
+   # Local account other than the built-in Administrator: allow remote administrative tokens (UAC remote restrictions)
+   New-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force
+   # Firewall: WMI (DCOM) and file sharing (SMB 445) from the management server
+   Enable-NetFirewallRule -DisplayGroup 'Windows Management Instrumentation (WMI)'
+   Enable-NetFirewallRule -DisplayGroup 'File and Printer Sharing'
+   ```
+   Restrict these rules to the management server's address (`Set-NetFirewallRule -RemoteAddress`). For WinRM over
+   HTTPS create a 5986 listener with a certificate the management server trusts and tick *WinRM over HTTPS* in the portal.
+3. On the management server, for workgroup hosts over WinRM HTTP (NTLM):
+   ```powershell
+   Set-Item WSMan:\localhost\Client\TrustedHosts -Value 'hv01.lab.local,10.0.20.15' -Concatenate -Force
+   Test-WSMan hv01.lab.local -Credential (Get-Credential) -Authentication Negotiate
+   ```
+4. Portal → *Add host* → **Through a management agent**: management agent, host name or IPv4 address, user name
+   (`HOST\Administrator`; a bare name is qualified with the host name, with an IP address `HOST\name` is required),
+   password, WinRM transport. The first inventory arrives within one cycle; *Hyper-V access* shows
+   `AccessDenied`/`Error` with the reason if the account or the network is wrong.
+5. Credentials can be changed later (host menu → *Connection and credentials*); the password is never shown again.
+   Revoking the host makes the management agent forget them at once (saving the connection again re-enables it);
+   deleting the host deletes them.
+
+Ports from the management server to each host: TCP 135 + dynamic RPC (WMI/DCOM), 5985 or 5986 (WinRM), 445 (SMB).
 
 ## 5. Assign permissions
 

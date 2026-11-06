@@ -8,6 +8,10 @@
   - No inbound firewall rule is created: the agent connects out to the gateway (TLS, port 8444 by default).
   - Enrollment uses a one-time token from the portal and the gateway CA fingerprint (pinning).
     Pass the token through -EnrollmentToken or HVP_ENROLLMENT_TOKEN to keep it out of command history.
+  - -Management: management server (no Hyper-V needed). The agent manages the remote hosts assigned to it in the
+    portal with the credentials stored there (WMI/DCOM, WinRM, SMB administrative shares). The service account is
+    NOT added to "Hyper-V Administrators". Use an enrollment token of a *management agent* (portal: Hosts ->
+    Management agents); the role comes from the gateway, the switch only adjusts the local setup.
 .EXAMPLE
   $env:HVP_ENROLLMENT_TOKEN = '<token>'; .\Install-Agent.ps1 -Source ..\agent -Gateway https://gw01.contoso.local:8444 -CaSha256 <fingerprint>
 #>
@@ -19,7 +23,8 @@ param(
     [string]$Gateway,
     [string]$CaSha256,
     [string]$EnrollmentToken = $env:HVP_ENROLLMENT_TOKEN,
-    [switch]$ForceReenroll
+    [switch]$ForceReenroll,
+    [switch]$Management
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
@@ -27,9 +32,10 @@ Assert-Administrator
 $service = 'HvPortalAgent'
 $exe = Join-Path $InstallPath 'HvPortal.Agent.exe'
 if (-not (Test-Path (Join-Path $Source 'HvPortal.Agent.exe'))) { throw "HvPortal.Agent.exe not found in $Source." }
-if (-not (Get-Service vmms -ErrorAction SilentlyContinue)) { Write-Warning 'The Hyper-V management service (vmms) is not installed on this machine.' }
+if (-not $Management -and -not (Get-Service vmms -ErrorAction SilentlyContinue)) { Write-Warning 'The Hyper-V management service (vmms) is not installed on this machine. For a management server use -Management.' }
 # VM configuration, creation, checkpoints and host resource views use the Hyper-V PowerShell module (fixed script Ops\HvPortal.Ops.ps1).
-if (-not (Get-Module -ListAvailable -Name Hyper-V)) {
+# Management agents run that script on the remote hosts (WinRM), so the module is needed there, not here.
+if (-not $Management -and -not (Get-Module -ListAvailable -Name Hyper-V)) {
     Write-Warning 'The Hyper-V PowerShell module is not installed: inventory, power and console work, but configuration/creation/checkpoints will fail. Install it with: Install-WindowsFeature Hyper-V-PowerShell'
 }
 $policy = Get-ExecutionPolicy -Scope MachinePolicy
@@ -37,6 +43,7 @@ if ($policy -eq 'AllSigned') {
     Write-Warning 'Group Policy enforces AllSigned for PowerShell: the unsigned operations script will be refused unless this build is signed.'
 }
 if (-not (Test-Path (Join-Path $Source 'Ops\HvPortal.Ops.ps1'))) { throw "Ops\HvPortal.Ops.ps1 not found in $Source (incomplete package)." }
+if ($Management -and -not (Test-Path (Join-Path $Source 'Ops\HvPortal.Remote.ps1'))) { throw "Ops\HvPortal.Remote.ps1 not found in $Source (package older than 0.4.0)." }
 
 if (Get-Service $service -ErrorAction SilentlyContinue) { Stop-Service $service -Force }
 $backup = Install-ServiceBinaries -Source $Source -InstallPath $InstallPath -ServiceName $service
@@ -48,12 +55,18 @@ Register-EventSource 'HvPortal Agent'
 Set-ServiceEnvironment -ServiceName $service -Variables @{ HVP_AGENT_DATA_DIR = $DataPath }
 
 # Least privilege for Hyper-V: membership in the built-in "Hyper-V Administrators" group (SID S-1-5-32-578).
-$hvAdmins = (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-578').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
-$member = "NT SERVICE\$service"
-$already = Get-LocalGroupMember -SID 'S-1-5-32-578' -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $member }
-if (-not $already) {
-    & net.exe localgroup "$hvAdmins" "$member" /add | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Could not add $member to '$hvAdmins'." }
+# A management agent needs no local Hyper-V rights: it uses the credentials of each remote host.
+if (-not $Management) {
+    $hvAdmins = (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-578').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
+    $member = "NT SERVICE\$service"
+    $already = Get-LocalGroupMember -SID 'S-1-5-32-578' -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $member }
+    if (-not $already) {
+        & net.exe localgroup "$hvAdmins" "$member" /add | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not add $member to '$hvAdmins'." }
+    }
+} else {
+    Write-Host 'Management agent: remote hosts need WMI/DCOM (TCP 135 + dynamic RPC), WinRM (5985, or 5986 with -UseHttps in the portal) and SMB (445) from this server.'
+    Write-Host 'Workgroup hosts over WinRM HTTP: add them to TrustedHosts on this server, e.g. Set-Item WSMan:\localhost\Client\TrustedHosts -Value "hv01,hv02" -Concatenate'
 }
 
 if ($Gateway -and $CaSha256 -and $EnrollmentToken) {

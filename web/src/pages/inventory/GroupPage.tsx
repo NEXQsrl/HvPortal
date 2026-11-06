@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ActionsButton, KebabMenu, rowLink, WithContextMenu } from '@/components/actions';
 import { Empty, GroupIcon, Loading, PageHeader, Section, StatCard } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
+import { ManagementAgentsView } from '@/components/ops/ManagementAgents';
 import { useOps } from '@/components/ops/OperationsProvider';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { HelpTip } from '@/components/dialogs';
@@ -89,7 +90,7 @@ export function GroupPage() {
   );
 }
 
-const VIEWS = ['hosts', 'groups', 'vms'] as const;
+const VIEWS = ['hosts', 'groups', 'vms', 'agents'] as const;
 type View = (typeof VIEWS)[number];
 
 /**
@@ -103,10 +104,13 @@ export function InventoryHome() {
   const ops = useOps();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const view: View = (VIEWS as readonly string[]).includes(params.get('view') ?? '') ? (params.get('view') as View) : 'hosts';
+  // Management agents (servers that reach remote hosts with stored credentials) are visible to host administrators only.
+  const views = VIEWS.filter((v) => v !== 'agents' || can('hosts.manage'));
+  const view: View = (views as readonly string[]).includes(params.get('view') ?? '') ? (params.get('view') as View) : 'hosts';
   const roots = inv.childrenOf(null);
   const ungrouped = inv.vms.filter((v) => inv.groupsOfVm(v.id).length === 0);
-  const counts: Record<View, number> = { hosts: inv.hosts.length, groups: inv.groups.length, vms: inv.vms.length };
+  const remoteHosts = inv.hosts.filter((h) => h.connectionMode === 'Remote').length;
+  const counts: Record<View, number> = { hosts: inv.hosts.length, groups: inv.groups.length, vms: inv.vms.length, agents: remoteHosts };
   return (
     <Tabs value={view} onValueChange={(v) => setParams({ view: v }, { replace: true })} className="flex h-full min-h-0 flex-col gap-0">
       <PageHeader icon={<Layers className="size-5" />} title={t('nav.inventory')}
@@ -117,15 +121,16 @@ export function InventoryHome() {
           {inv.hosts.some((h) => h.canCreateVm) && <Button size="sm" onClick={() => ops.openCreateVm()}><Plus />{t('wiz.title')}</Button>}
         </>}>
         <TabsList variant="line" className="-mb-px h-9 w-full justify-start overflow-x-auto rounded-none bg-transparent p-0">
-          {VIEWS.map((v) => (
+          {views.map((v) => (
             <TabsTrigger key={v} value={v} className="flex-none gap-1.5 px-3">
-              {t(('inv.view.' + v) as TKey)}<span className="rounded bg-muted px-1 text-[10px] text-muted-foreground tabular">{counts[v]}</span>
+              {t(('inv.view.' + v) as TKey)}{v !== 'agents' && <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground tabular">{counts[v]}</span>}
             </TabsTrigger>
           ))}
         </TabsList>
       </PageHeader>
       <TabsContent value="hosts" className="min-h-0">{view === 'hosts' && <HostTable />}</TabsContent>
       <TabsContent value="vms" className="min-h-0">{view === 'vms' && <VmListView />}</TabsContent>
+      <TabsContent value="agents" className="min-h-0 overflow-auto">{view === 'agents' && <ManagementAgentsView />}</TabsContent>
       <TabsContent value="groups" className="min-h-0 overflow-auto">
         {view === 'groups' && (
           <div className="space-y-3 p-4">

@@ -1,9 +1,9 @@
-import { Cpu, Disc3, HardDrive, MemoryStick, Network, Plus, Save, Settings2, ShieldCheck, Undo2 } from 'lucide-react';
+import { Cpu, Disc3, HardDrive, MemoryStick, Network, Plus, Save, Settings2, ShieldCheck, Undo2, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, get } from '@/api/client';
 import type { Accepted, ConfigChange, ConfigResponse, VmConfig } from '@/api/ops-types';
 import { realtime } from '@/api/realtime';
-import type { Vm } from '@/api/types';
+import type { Vm, VmDetails } from '@/api/types';
 import { ErrorAlert, Loading, Notice, StatusBadge } from '@/components/common';
 import { Field } from '@/components/dialogs';
 import { useInventory } from '@/components/inventory/InventoryProvider';
@@ -33,6 +33,9 @@ interface Draft {
 }
 
 const MB = 1048576;
+const GB = 1073741824;
+
+type DetailsResponse = { details: VmDetails | null; stale: boolean };
 
 function fromConfig(c: VmConfig): Draft {
   return {
@@ -107,6 +110,8 @@ export function VmSettings({ vm }: { vm: Vm }) {
   const { t } = useI18n();
   const ops = useOps();
   const cfg = useLoad(() => get<ConfigResponse>(`/api/v1/vms/${vm.id}/config`), [vm.id]);
+  // Current virtual disk capacities (same live/cached source as the Hardware tab), used to validate expansions.
+  const details = useLoad(() => get<DetailsResponse>(`/api/v1/vms/${vm.id}/details`), [vm.id]);
   const host = useInventory().hostById.get(vm.hostId);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -114,13 +119,16 @@ export function VmSettings({ vm }: { vm: Vm }) {
   const [pendingJob, setPendingJob] = useState<string | null>(null);
 
   useEffect(() => { if (cfg.data) setDraft(fromConfig(cfg.data.config)); }, [cfg.data]);
+  const diskSizes = useMemo(() => new Map((details.data?.details?.disks ?? [])
+    .flatMap((k) => (k.path && k.maxSizeBytes != null ? [[k.path.toLowerCase(), k.maxSizeBytes] as const] : []))), [details.data]);
   // Reload the live configuration when the change we queued has finished.
   useEffect(() => realtime.on('jobChanged', (p) => {
     if (pendingJob && p.jobId === pendingJob && p.status && !['Queued', 'Running', 'Reconciling'].includes(p.status)) {
       setPendingJob(null);
       cfg.reload();
+      details.reload();
     }
-  }), [pendingJob, cfg]);
+  }), [pendingJob, cfg, details]);
 
   const change = useMemo(() => (cfg.data && draft ? diff(cfg.data.config, draft) : {}), [cfg.data, draft]);
   const count = Object.keys(change).length;
@@ -134,6 +142,29 @@ export function VmSettings({ vm }: { vm: Vm }) {
   const nameInvalid = draft.name.trim() !== c.name && !VM_NAME.test(draft.name.trim());
   const memInvalid = [draft.startupMb, ...(draft.dynamic ? [draft.minMb, draft.maxMb] : [])].some((m) => m < 32 || m % 2 !== 0)
     || (draft.dynamic && (draft.minMb > draft.startupMb || draft.maxMb < draft.startupMb));
+  // Hyper-V rules for a running VM (the dynamic-memory switch is locked then, so draft.dynamic === c.dynamicMemoryEnabled).
+  const orig = fromConfig(c);
+  const startupLocked = !off && c.dynamicMemoryEnabled;
+  const dynamicRangeInvalid = !off && c.dynamicMemoryEnabled && (draft.minMb > orig.minMb || draft.maxMb < orig.maxMb);
+  const hotAddLocked = !off && c.generation === 1;
+  const dvdLocked = !off && c.dvdDrives.length === 0;
+  const expandLocked = (d: { controllerType: string; path: string | null }) =>
+    !off && (d.controllerType.toUpperCase() !== 'SCSI' || !(d.path ?? '').toLowerCase().endsWith('.vhdx'));
+  const expandDrive = c.hardDisks.find((d) => d.path === draft.expandPath);
+  // Changes left in the draft that the VM can no longer accept (e.g. edited while off, then the VM was started).
+  const offOnlyPending = !off && (change.processorCount !== undefined || change.dynamicMemoryEnabled !== undefined
+    || change.secureBootEnabled !== undefined || change.secureBootTemplate !== undefined || change.automaticStopAction !== undefined
+    || (startupLocked && change.memoryStartupMb !== undefined) || (hotAddLocked && (draft.addAdapter || draft.newDisk))
+    || (dvdLocked && change.dvdIsoPath !== undefined) || (!!change.expandDisk && !!expandDrive && expandLocked(expandDrive)));
+  // Expansion: the agent re-checks against Get-VHD; here the user gets immediate feedback.
+  const sizeOf = (path: string | null) => (path ? diskSizes.get(path.toLowerCase()) : undefined);
+  const expandCurrent = sizeOf(draft.expandPath);
+  const expandMinGb = expandCurrent != null ? Math.floor(expandCurrent / GB) + 1 : 1;
+  const expandInvalid = !!draft.expandPath && (!Number.isInteger(draft.expandGb) || draft.expandGb < expandMinGb || draft.expandGb > 65536);
+  const expandError = !expandInvalid ? undefined
+    : draft.expandGb === 0 ? t('cfg.expandRequired', { min: expandMinGb })
+      : expandCurrent != null && draft.expandGb * GB <= expandCurrent ? t('cfg.expandTooSmall', { size: formatBytes(expandCurrent), min: expandMinGb })
+        : t('cfg.expandRange', { min: expandMinGb });
 
   const apply = async () => {
     setBusy(true);
@@ -172,8 +203,8 @@ export function VmSettings({ vm }: { vm: Vm }) {
           <Field label={t('cfg.autoStartDelay')} htmlFor="cfg-delay">
             <Input id="cfg-delay" type="number" min={0} max={86400} value={draft.autoStartDelay} onChange={(e) => set({ autoStartDelay: num(e.target.value) })} />
           </Field>
-          <Field label={t('cfg.autoStop')} htmlFor="cfg-stop">
-            <NativeSelect id="cfg-stop" value={draft.autoStop} onChange={(e) => set({ autoStop: e.target.value })}>
+          <Field label={<span className="flex items-center gap-2">{t('cfg.autoStop')}{offBadge}</span>} htmlFor="cfg-stop">
+            <NativeSelect id="cfg-stop" value={draft.autoStop} disabled={!off} onChange={(e) => set({ autoStop: e.target.value })}>
               {options.stopActions.map((o) => <option key={o} value={o}>{t(('opt.stop.' + o) as TKey)}</option>)}
             </NativeSelect>
           </Field>
@@ -193,8 +224,9 @@ export function VmSettings({ vm }: { vm: Vm }) {
 
         <Block icon={<MemoryStick className="size-4" />} title={t('cfg.memory')} disabled={!can.compute}
           badge={memInvalid ? <StatusBadge tone="danger">{t('wiz.memoryInvalid')}</StatusBadge> : undefined}>
-          <Field label={t('cfg.startupMemory')} htmlFor="cfg-mem" aside={formatBytes(draft.startupMb * MB)}>
-            <Input id="cfg-mem" type="number" min={32} step={2} value={draft.startupMb} onChange={(e) => set({ startupMb: num(e.target.value) })} />
+          <Field label={<span className="flex items-center gap-2">{t('cfg.startupMemory')}{startupLocked && offBadge}</span>} htmlFor="cfg-mem"
+            aside={formatBytes(draft.startupMb * MB)} hint={!off && !c.dynamicMemoryEnabled ? t('cfg.runtimeResizeHint') : undefined}>
+            <Input id="cfg-mem" type="number" min={32} step={2} value={draft.startupMb} disabled={startupLocked} onChange={(e) => set({ startupMb: num(e.target.value) })} />
           </Field>
           <Field label={<span className="flex items-center gap-2">{t('cfg.dynamic')}{offBadge}</span>}>
             <div className="flex h-8 items-center"><Switch checked={draft.dynamic} disabled={!off} onCheckedChange={(v) => set({ dynamic: v })} aria-label={t('cfg.dynamic')} /></div>
@@ -202,8 +234,18 @@ export function VmSettings({ vm }: { vm: Vm }) {
           <Field label={t('cfg.priority')} htmlFor="cfg-prio"><Input id="cfg-prio" type="number" min={0} max={100} value={draft.priority} onChange={(e) => set({ priority: num(e.target.value) })} /></Field>
           {draft.dynamic && (
             <>
-              <Field label={t('cfg.minMemory')} htmlFor="cfg-min"><Input id="cfg-min" type="number" min={32} step={2} value={draft.minMb} onChange={(e) => set({ minMb: num(e.target.value) })} /></Field>
-              <Field label={t('cfg.maxMemory')} htmlFor="cfg-max"><Input id="cfg-max" type="number" min={32} step={2} value={draft.maxMb} onChange={(e) => set({ maxMb: num(e.target.value) })} /></Field>
+              <Field label={t('cfg.minMemory')} htmlFor="cfg-min"
+                hint={!off && c.dynamicMemoryEnabled ? t('cfg.minRunningHint', { size: formatBytes(orig.minMb * MB) }) : undefined}
+                error={!off && c.dynamicMemoryEnabled && draft.minMb > orig.minMb ? t('cfg.minRunningError', { size: formatBytes(orig.minMb * MB) }) : undefined}>
+                <Input id="cfg-min" type="number" min={32} max={!off && c.dynamicMemoryEnabled ? orig.minMb : undefined} step={2} value={draft.minMb}
+                  aria-invalid={(!off && c.dynamicMemoryEnabled && draft.minMb > orig.minMb) || undefined} onChange={(e) => set({ minMb: num(e.target.value) })} />
+              </Field>
+              <Field label={t('cfg.maxMemory')} htmlFor="cfg-max"
+                hint={!off && c.dynamicMemoryEnabled ? t('cfg.maxRunningHint', { size: formatBytes(orig.maxMb * MB) }) : undefined}
+                error={!off && c.dynamicMemoryEnabled && draft.maxMb < orig.maxMb ? t('cfg.maxRunningError', { size: formatBytes(orig.maxMb * MB) }) : undefined}>
+                <Input id="cfg-max" type="number" min={!off && c.dynamicMemoryEnabled ? orig.maxMb : 32} step={2} value={draft.maxMb}
+                  aria-invalid={(!off && c.dynamicMemoryEnabled && draft.maxMb < orig.maxMb) || undefined} onChange={(e) => set({ maxMb: num(e.target.value) })} />
+              </Field>
               <Field label={t('cfg.buffer')} htmlFor="cfg-buf"><Input id="cfg-buf" type="number" min={5} max={2000} value={draft.buffer} onChange={(e) => set({ buffer: num(e.target.value) })} /></Field>
             </>
           )}
@@ -228,9 +270,10 @@ export function VmSettings({ vm }: { vm: Vm }) {
         </Block>
 
         <Block icon={<Disc3 className="size-4" />} title={t('cfg.dvd')} disabled={!can.storage}>
-          <Field label={t('cfg.iso')} htmlFor="cfg-iso" className="sm:col-span-2" hint={c.dvdDrives.length === 0 ? t('cfg.noDvd') : undefined}>
+          <Field label={<span className="flex items-center gap-2">{t('cfg.iso')}{dvdLocked && offBadge}</span>} htmlFor="cfg-iso" className="sm:col-span-2"
+            hint={c.dvdDrives.length === 0 ? t(dvdLocked ? 'cfg.noDvdRunning' : 'cfg.noDvd') : undefined}>
             {host && can.storage
-              ? <IsoPicker id="cfg-iso" host={host} value={draft.iso} onChange={(p) => set({ iso: p })} emptyLabel={t('cfg.eject')} />
+              ? <IsoPicker id="cfg-iso" host={host} value={draft.iso} disabled={dvdLocked} onChange={(p) => set({ iso: p })} emptyLabel={t('cfg.eject')} />
               : <NativeSelect id="cfg-iso" value={draft.iso} disabled><option value={draft.iso}>{draft.iso || t('cfg.eject')}</option></NativeSelect>}
           </Field>
         </Block>
@@ -255,7 +298,10 @@ export function VmSettings({ vm }: { vm: Vm }) {
             );
           })}
           <div className="flex flex-wrap items-end gap-3 sm:col-span-2 xl:col-span-3">
-            <label className="flex h-8 items-center gap-2 text-sm"><Checkbox checked={draft.addAdapter} onCheckedChange={(v) => set({ addAdapter: !!v })} /><Plus className="size-4" />{t('cfg.addAdapter')}</label>
+            <label className={cn('flex h-8 items-center gap-2 text-sm', hotAddLocked && 'text-muted-foreground')}>
+              <Checkbox checked={draft.addAdapter} disabled={hotAddLocked} onCheckedChange={(v) => set({ addAdapter: !!v })} /><Plus className="size-4" />{t('cfg.addAdapter')}
+            </label>
+            {hotAddLocked && <StatusBadge tone="warn">{t('cfg.requiresOff')}</StatusBadge>}
             {draft.addAdapter && (
               <NativeSelect aria-label={t('cfg.switch')} value={draft.addAdapterSwitch} onChange={(e) => set({ addAdapterSwitch: e.target.value })} className="w-64">
                 <option value="">{t('cfg.notConnected')}</option>
@@ -267,25 +313,38 @@ export function VmSettings({ vm }: { vm: Vm }) {
 
         <Block icon={<HardDrive className="size-4" />} title={t('cfg.disks')} disabled={!can.storage}>
           <div className="space-y-1 sm:col-span-2 xl:col-span-3">
-            {c.hardDisks.map((d) => (
-              <label key={`${d.controllerType}${d.controllerNumber}${d.controllerLocation}`} className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm">
-                <input type="radio" name="expand" className="accent-primary" checked={draft.expandPath === d.path} disabled={!d.path}
-                  onChange={() => set({ expandPath: d.path ?? '', expandGb: 0 })} aria-label={`${t('cfg.expand')} ${d.path}`} />
-                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={d.path ?? ''}>{d.path ?? '—'}</span>
-                <span className="text-xs text-muted-foreground">{d.controllerType} {d.controllerNumber}:{d.controllerLocation}</span>
-              </label>
-            ))}
+            {c.hardDisks.map((d) => {
+              const locked = expandLocked(d);
+              return (
+                <label key={`${d.controllerType}${d.controllerNumber}${d.controllerLocation}`}
+                  className={cn('flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm', locked && 'text-muted-foreground')}
+                  title={locked ? t('cfg.expandRunningHint') : undefined}>
+                  <input type="radio" name="expand" className="accent-primary" checked={draft.expandPath === d.path} disabled={!d.path || locked}
+                    onChange={() => set({ expandPath: d.path ?? '', expandGb: 0 })} aria-label={`${t('cfg.expand')} ${d.path}`} />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs" title={d.path ?? ''}>{d.path ?? '—'}</span>
+                  {locked && <StatusBadge tone="warn">{t('cfg.requiresOff')}</StatusBadge>}
+                  <span className="text-xs tabular text-muted-foreground" title={t('vm.capacity')}>{details.loading && !details.data ? '…' : formatBytes(sizeOf(d.path))}</span>
+                  <span className="text-xs text-muted-foreground">{d.controllerType} {d.controllerNumber}:{d.controllerLocation}</span>
+                </label>
+              );
+            })}
           </div>
+          {!off && c.hardDisks.some(expandLocked) && <p className="text-xs text-muted-foreground sm:col-span-2 xl:col-span-3">{t('cfg.expandRunningHint')}</p>}
           {draft.expandPath && (
-            <div className="flex flex-wrap items-end gap-2 sm:col-span-2 xl:col-span-3">
-              <Field label={`${t('cfg.expandTo')} — ${draft.expandPath.split('\\').pop()}`} htmlFor="cfg-expand" hint={t('cfg.noShrink')}>
-                <Input id="cfg-expand" type="number" min={1} max={65536} value={draft.expandGb || ''} onChange={(e) => set({ expandGb: num(e.target.value) })} className="w-40" />
+            <div className="flex flex-wrap items-start gap-2 sm:col-span-2 xl:col-span-3">
+              <Field label={`${t('cfg.expandTo')} — ${draft.expandPath.split('\\').pop()}`} htmlFor="cfg-expand" hint={t('cfg.noShrink')}
+                aside={expandCurrent != null ? t('cfg.currentSize', { size: formatBytes(expandCurrent) }) : t('cfg.currentSizeUnknown')} error={expandError}>
+                <Input id="cfg-expand" type="number" min={expandMinGb} max={65536} step={1} placeholder={String(expandMinGb)} value={draft.expandGb || ''}
+                  aria-invalid={expandInvalid || undefined} onChange={(e) => set({ expandGb: num(e.target.value) })} className="w-40" />
               </Field>
-              <Button type="button" variant="ghost" size="sm" onClick={() => set({ expandPath: '', expandGb: 0 })}>{t('common.cancel')}</Button>
+              <Button type="button" variant="outline" size="sm" className="mt-5" onClick={() => set({ expandPath: '', expandGb: 0 })}><X />{t('cfg.cancelExpand')}</Button>
             </div>
           )}
           <div className="flex flex-wrap items-end gap-3 sm:col-span-2 xl:col-span-3">
-            <label className="flex h-8 items-center gap-2 text-sm"><Checkbox checked={draft.newDisk} onCheckedChange={(v) => set({ newDisk: !!v })} /><Plus className="size-4" />{t('cfg.addDisk')}</label>
+            <label className={cn('flex h-8 items-center gap-2 text-sm', hotAddLocked && 'text-muted-foreground')}>
+              <Checkbox checked={draft.newDisk} disabled={hotAddLocked} onCheckedChange={(v) => set({ newDisk: !!v })} /><Plus className="size-4" />{t('cfg.addDisk')}
+            </label>
+            {hotAddLocked && <StatusBadge tone="warn">{t('cfg.requiresOff')}</StatusBadge>}
             {draft.newDisk && (
               <>
                 <Input type="number" min={1} max={65536} value={draft.newDiskGb} onChange={(e) => set({ newDiskGb: num(e.target.value) })} className="w-28" aria-label={t('cfg.sizeGb')} />
@@ -300,9 +359,11 @@ export function VmSettings({ vm }: { vm: Vm }) {
       </div>
       <div className="flex shrink-0 items-center gap-2 border-t bg-panel px-4 py-2">
         <span className="text-xs text-muted-foreground">{count > 0 ? t('cfg.changes', { n: count }) : ''}{pendingJob ? ` · ${t('jobstatus.Running')}` : ''}</span>
+        {offOnlyPending && <StatusBadge tone="warn">{t('cfg.pendingRequiresOff')}</StatusBadge>}
         <span className="flex-1" />
         <Button type="button" variant="outline" size="sm" disabled={count === 0 || busy} onClick={() => setDraft(fromConfig(c))}><Undo2 />{t('cfg.discard')}</Button>
-        <Button type="button" size="sm" disabled={count === 0 || busy || nameInvalid || memInvalid || !!pendingJob} onClick={() => void apply()}><Save />{t('cfg.apply')}</Button>
+        <Button type="button" size="sm" disabled={count === 0 || busy || nameInvalid || memInvalid || dynamicRangeInvalid || expandInvalid || offOnlyPending || !!pendingJob}
+          onClick={() => void apply()}><Save />{t('cfg.apply')}</Button>
       </div>
     </div>
   );

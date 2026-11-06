@@ -27,6 +27,13 @@ The control plane is a **modular monolith**: one process, modules separated by n
 `VmConsole`).
 Privileged work happens only in the agent. Same-server installations still run two services and two identities.
 
+**Management agents (ADR-022, optional).** The same agent installed with `-Management` on a server without Hyper-V
+manages *remote hosts* with credentials stored in the portal: the gateway routes each remote host id to that channel,
+sends the host list with credentials (`TargetsConfiguration`) and stamps commands with `TargetHostId`; the agent runs
+one `WmiHyperVHost`/console/operations runner per target (WMI/DCOM with credentials, `Ops\HvPortal.Remote.ps1` →
+`Invoke-Command -FilePath Ops\HvPortal.Ops.ps1` over WinRM, SMB administrative shares for files) and reports
+`TargetInventory` per host.
+
 ## Request flow: "start VM" (browser → host)
 
 1. Browser `POST /api/v1/vms/{id}/power {operation:"Start", idempotencyKey}` with session cookie + `X-CSRF-TOKEN`.

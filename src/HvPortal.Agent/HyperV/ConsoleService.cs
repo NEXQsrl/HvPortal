@@ -15,14 +15,21 @@ namespace HvPortal.Agent.HyperV;
 /// </summary>
 public sealed class ConsoleService
 {
-    private const string Ns = @"\\.\root\virtualization\v2";
+    private const string Ns = @"root\virtualization\v2";
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(2);
     private readonly ConcurrentDictionary<Guid, Session> _sessions = new();
-    private readonly ILogger<ConsoleService> _logger;
+    private readonly ILogger _logger;
+    private readonly HostTarget _target;
 
-    public ConsoleService(ILogger<ConsoleService> logger)
+    public ConsoleService(ILogger<ConsoleService> logger) : this(logger, HostTarget.Local)
+    {
+    }
+
+    /// <summary>Remote target (management agent): same WMI methods over an authenticated, encrypted DCOM connection.</summary>
+    public ConsoleService(ILogger logger, HostTarget target)
     {
         _logger = logger;
+        _target = target;
     }
 
     private sealed class Session
@@ -194,8 +201,7 @@ public sealed class ConsoleService
         {
             return existing;
         }
-        var scope = new ManagementScope(Ns, new ConnectionOptions { Impersonation = ImpersonationLevel.Impersonate, Authentication = AuthenticationLevel.PacketPrivacy });
-        scope.Connect();
+        var scope = _target.ConnectWmi(Ns);
         var vssd = First(scope, $"SELECT * FROM Msvm_VirtualSystemSettingData WHERE VirtualSystemIdentifier = '{vmId:D}' AND VirtualSystemType = 'Microsoft:Hyper-V:System:Realized'");
         var vsms = First(scope, "SELECT * FROM Msvm_VirtualSystemManagementService");
         if (vssd is null || vsms is null)

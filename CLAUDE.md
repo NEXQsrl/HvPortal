@@ -29,11 +29,14 @@ npx vite build
 node web\e2e\ui-smoke.mjs --url https://localhost:28443 --data <gw-data> --agent-data <agent-data> --agent-exe <HvPortal.Agent.exe> --agent-port 28444 --out <screenshots>
 
 # Docker (gateway only; the agent stays a Windows service)
-docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.3.4 .      # compose + .env example in docker/
+docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.4.0 .      # compose + .env example in docker/
 
 # Packaging / release
 .\installer\New-AgentPackage.ps1 -OutputDirectory artifacts\packages   # zip served by the gateway (/api/v1/downloads)
 .\installer\Build-Release.ps1 [-SkipTests]
+# Signed release (self-signed "NEXQ S.r.l." code-signing cert in CurrentUser\My; only the public .cer is exported)
+.\installer\New-CodeSigningCertificate.ps1                                   # prints the thumbprint (reuses a valid one)
+.\installer\Build-Release.ps1 -SigningCertificateThumbprint <thumbprint>     # signs HvPortal.*.exe/.dll + all .ps1, ships installer\HvPortal-CodeSigning.cer
 
 # EF Core migration (SQLite)
 dotnet ef migrations add <Name> --project src/HvPortal.Gateway --output-dir Data/Migrations/Sqlite --configuration Release
@@ -46,6 +49,10 @@ Practical notes:
   Hyper-V (VM creation, config changes, console frames) is tested via the test double `FakeAgentDispatcher`
   (test project only) and listed in `docs/verification/real-host-test-plan.md`. Never present it as validated.
 - After changes, update `docs/testing.md` (suite counts) and the relevant docs/ADR.
+- Self-signed signatures show `UnknownError` (untrusted root) until the `.cer` is imported into `LocalMachine\Root` +
+  `TrustedPublisher`; they do not give SmartScreen/antivirus reputation. Never claim a build is "trusted" because it is
+  signed, and never export or commit the private key (`artifacts/` is git-ignored). No timestamp server by default:
+  `-TimestampServer` contacts an external service, so use it only when the user asks.
 
 ## Architecture
 
@@ -70,7 +77,7 @@ Three .NET projects plus the SPA:
 Key cross-cutting flows:
 - **Commands are typed and closed.** There is no "run script/WQL/path" command anywhere; adding a capability means a
   new `HvOperation` value + argument record + validation in Contracts + a branch in the script/agent + gateway endpoint.
-- **Protocol versioning.** `AgentProtocol.Version` (currently 5) is announced in `AgentHello`.
+- **Protocol versioning.** `AgentProtocol.Version` (currently 6) is announced in `AgentHello`.
   `AgentProtocol.RequiredVersion(command)` is checked in `AgentConnectionManager.SendAsync` (and mirrored in
   `FakeAgentDispatcher`): never send a command an older agent cannot parse or would silently misinterpret. Bump it
   when adding enum values or semantics-changing fields. Product version is in `Directory.Build.props` (+ `web/package.json`).

@@ -29,7 +29,7 @@ Every API response carries `X-Correlation-Id`; the same id appears in audit entr
 | Operations fail with "...is not digitally signed" / "running scripts is disabled" | Group Policy sets PowerShell execution policy (MachinePolicy) to AllSigned/Restricted, which overrides `-ExecutionPolicy Bypass` | sign the release (Authenticode) or allow the agent's `Ops\HvPortal.Ops.ps1` by policy. |
 | Operations fail with "Cannot create type. Only core types are supported in this language mode" | PowerShell Constrained Language Mode (WDAC/AppLocker script enforcement) | not supported yet: allow-list the signed script in the policy. |
 | 501 `agent_outdated` | agent older than 0.3 | update the agent package on the host (re-run `Install-Agent.ps1` without `-Gateway`; enrollment is kept). |
-| 409 `requires_off` | vCPU count, dynamic memory on/off or Secure Boot changed on a running VM | shut down the VM and apply again. |
+| 409 `requires_off` | vCPU count, dynamic memory on/off, Secure Boot, automatic stop action (or, on Generation 1, a new network adapter or disk) changed on a running VM | shut down the VM and apply again. |
 | 400 `iso_outside_library` | ISO path not inside the host ISO library | Host → Settings → ISO library: add the folder (local path such as `D:\ISO`). |
 | 403 `group_access_change_requires_roles_manage` / `permission_amplification` | the group move/membership change would grant or lift role assignments | ask an administrator with `roles.manage`, or use a group without role assignments. |
 | Console shows "The VM is not running" | expected while the VM is off/saved | start it from the console toolbar; BIOS/UEFI appears as soon as it powers on. |

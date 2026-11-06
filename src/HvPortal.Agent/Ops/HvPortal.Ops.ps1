@@ -11,18 +11,25 @@
      location was validated by the agent (local fixed drive, no system/hidden folders, no junctions or symbolic links);
    - ISO paths must be inside the allowed library roots provided by the agent;
    - VM groups (SyncVmGroups): only groups whose id the gateway lists as portal-owned are renamed, re-membered or removed.
+  Remote hosts (management agent): HvPortal.Remote.ps1 runs THIS file on the host with Invoke-Command -FilePath and passes
+  the same JSON request as the only argument; the response is then written to the pipeline instead of the console.
 #>
+param([string]$RequestJson)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $WarningPreference = 'SilentlyContinue'
 $VerbosePreference = 'SilentlyContinue'
-# UTF-8 both ways (Windows PowerShell 5.1 defaults to the OEM code page).
-[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
-[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$script:RemoteRequest = -not [string]::IsNullOrEmpty($RequestJson)
+if (-not $script:RemoteRequest) {
+    # UTF-8 both ways (Windows PowerShell 5.1 defaults to the OEM code page).
+    [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+}
 
 function Write-Response([bool]$ok, $result, [string]$errorText, $applied) {
     $obj = @{ ok = $ok; result = $result; error = $errorText; applied = @($applied) }
-    [Console]::Out.Write((ConvertTo-Json -InputObject $obj -Depth 8 -Compress))
+    $json = ConvertTo-Json -InputObject $obj -Depth 8 -Compress
+    if ($script:RemoteRequest) { Write-Output $json } else { [Console]::Out.Write($json) }
 }
 
 function Get-VmById([string]$id) {
@@ -110,7 +117,7 @@ function Get-Config($vm) {
 
 $applied = New-Object System.Collections.ArrayList
 try {
-    $raw = [Console]::In.ReadToEnd()
+    $raw = if ($script:RemoteRequest) { $RequestJson } else { [Console]::In.ReadToEnd() }
     if ($raw.Length -gt 65536) { throw 'Request too large.' }
     $req = ConvertFrom-Json -InputObject $raw
     $a = $req.args

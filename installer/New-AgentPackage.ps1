@@ -5,10 +5,13 @@
 .DESCRIPTION
   Layout inside the zip:
     agent\        self-contained agent (no .NET installation needed on the host)
-    installer\    Install-Agent.ps1, Common.ps1, Uninstall-HvPortal.ps1
+    installer\    Install-Agent.ps1, Common.ps1, Uninstall-HvPortal.ps1 (+ HvPortal-CodeSigning.cer for signed builds)
     LEGGIMI.txt / README.txt
   The manifest records version, build time and whether HvPortal.Agent.exe carries a valid Authenticode signature
-  (checked with Get-AuthenticodeSignature, never assumed).
+  (checked with Get-AuthenticodeSignature, never assumed). A self-signed signature whose root is not trusted on the
+  build machine is recorded as signed (signature present, hash intact) with selfSigned = true.
+.PARAMETER InstallerDirectory
+  Folder with the (possibly signed) installer scripts; default: the repository installer folder.
 .PARAMETER AgentDirectory
   Existing published agent folder. If omitted, the agent is published from source.
 .PARAMETER OutputDirectory
@@ -16,6 +19,7 @@
 #>
 param(
     [string]$AgentDirectory,
+    [string]$InstallerDirectory,
     [Parameter(Mandatory)][string]$OutputDirectory,
     [string]$Configuration = 'Release',
     [string]$Runtime = 'win-x64'
@@ -35,8 +39,10 @@ try {
         dotnet publish (Join-Path (Join-Path $repo 'src') 'HvPortal.Agent') -c $Configuration -r $Runtime --self-contained true -p:DebugType=none -p:EnableWindowsTargeting=true -o $agentStage
         if ($LASTEXITCODE -ne 0) { throw 'Agent publish failed.' }
     }
-    $inst = Join-Path $repo 'installer'
+    $inst = if ($InstallerDirectory) { $InstallerDirectory } else { Join-Path $repo 'installer' }
     Copy-Item (Join-Path $inst 'Common.ps1'), (Join-Path $inst 'Install-Agent.ps1'), (Join-Path $inst 'Uninstall-HvPortal.ps1') $installerStage
+    $publisherCer = Join-Path $inst 'HvPortal-CodeSigning.cer'
+    if (Test-Path $publisherCer) { Copy-Item $publisherCer $installerStage }
 
     $readmeIt = @"
 HvPortal Agent $version
@@ -86,7 +92,9 @@ Uninstall:  .\Uninstall-HvPortal.ps1 -Component Agent   (then remove the host in
     # Authenticode can be verified only on Windows: elsewhere the package is reported as unsigned (never assumed).
     $sig = $null
     if (Get-Command Get-AuthenticodeSignature -ErrorAction SilentlyContinue) { $sig = Get-AuthenticodeSignature (Join-Path $agentStage 'HvPortal.Agent.exe') }
-    $signed = $null -ne $sig -and $sig.Status -eq 'Valid'
+    # Valid = trusted chain. UnknownError with a self-signed signer = signature present and intact, root not trusted here.
+    $selfSigned = $null -ne $sig -and $null -ne $sig.SignerCertificate -and $sig.SignerCertificate.Subject -eq $sig.SignerCertificate.Issuer
+    $signed = $null -ne $sig -and ($sig.Status -eq 'Valid' -or ($selfSigned -and $sig.Status -eq 'UnknownError'))
     $zip = Join-Path $OutputDirectory 'HvPortal.Agent-win-x64.zip'
     $tmpZip = "$zip.tmp"
     if (Test-Path $tmpZip) { Remove-Item $tmpZip -Force }
@@ -97,11 +105,12 @@ Uninstall:  .\Uninstall-HvPortal.ps1 -Component Agent   (then remove the host in
         builtAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
         signed     = $signed
         signer     = if ($signed) { $sig.SignerCertificate.Subject } else { $null }
+        selfSigned = $signed -and $selfSigned
     } | ConvertTo-Json | Set-Content -Path (Join-Path $OutputDirectory 'HvPortal.Agent-win-x64.json') -Encoding utf8
     $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
     Write-Host "Agent package: $zip"
     Write-Host "SHA-256:       $hash"
-    Write-Host ("Signed:        {0}" -f $(if ($signed) { $sig.SignerCertificate.Subject } else { 'NO (unsigned build)' }))
+    Write-Host ("Signed:        {0}" -f $(if ($signed) { $sig.SignerCertificate.Subject + $(if ($selfSigned) { ' (self-signed)' } else { '' }) } else { 'NO (unsigned build)' }))
 } finally {
     Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
 }

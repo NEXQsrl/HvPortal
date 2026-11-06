@@ -11,13 +11,16 @@ import { NativeSelect } from './ui/native-select';
 /**
  * Step-by-step agent installation guide. With a token it is "live": ready-to-paste commands, countdown, host status.
  * In the enrollment dialog troubleshooting is shown inline; on the guide pages it links to its own page.
+ * management: the agent goes on a management server (no Hyper-V) and reaches remote hosts with stored credentials.
  */
-export function AgentSetupGuide({ connection, token, expiresAt, host, troubleshooting = 'inline' }: {
+export function AgentSetupGuide({ connection, token, expiresAt, host, troubleshooting = 'inline', management = false, managementConnected }: {
   connection: GatewayConnection;
   token?: string;
   expiresAt?: string;
   host?: Host | null;
   troubleshooting?: 'inline' | 'link';
+  management?: boolean;
+  managementConnected?: boolean;
 }) {
   const { t, fmtDate } = useI18n();
   const [name, setName] = useState(connection.preferredName);
@@ -36,8 +39,7 @@ export function AgentSetupGuide({ connection, token, expiresAt, host, troublesho
           <Bullets items={[
             t('guide.s1.admin'),
             t('guide.s1.network', { port: connection.agentPort }),
-            t('guide.s1.hyperv'),
-            t('guide.s1.module'),
+            ...(management ? [t('guide.m.s1.server'), t('guide.m.s1.ports')] : [t('guide.s1.hyperv'), t('guide.s1.module')]),
             ...(token ? [t('guide.s1.token')] : []),
           ]} />
         </Step>
@@ -69,18 +71,28 @@ export function AgentSetupGuide({ connection, token, expiresAt, host, troublesho
               ? <Notice kind="danger">{t('guide.s5.expired')}</Notice>
               : <Notice kind={remaining < 180 ? 'warn' : 'info'}>{t('guide.s5.countdown', { time: formatMmSs(remaining), at: fmtDate(expiresAt) })}</Notice>
           ) : <Notice kind="info">{t('guide.s5.noToken')}</Notice>}
-          <Command text={`cd ${folder}\\installer\n$env:HVP_ENROLLMENT_TOKEN = '${tokenValue}'\n.\\Install-Agent.ps1 -Source ..\\agent -Gateway ${url} -CaSha256 ${connection.caFingerprintSha256}`} />
+          <Command text={`cd ${folder}\\installer\n$env:HVP_ENROLLMENT_TOKEN = '${tokenValue}'\n.\\Install-Agent.ps1 -Source ..\\agent -Gateway ${url} -CaSha256 ${connection.caFingerprintSha256}${management ? ' -Management' : ''}`} />
           <p className="text-muted-foreground">{t('guide.s5.what')}</p>
           <div className="text-xs text-muted-foreground">{t('host.fingerprint')}</div>
           <code className="secret block rounded-md border bg-muted px-2 py-1 font-mono text-xs break-all">{connection.caFingerprintSha256}</code>
           <p className="text-xs text-muted-foreground">{t('guide.s5.fingerprint')}</p>
         </Step>
-        <Step n={6} title={t('guide.s6.title')}>
-          {host !== undefined && <HostStatus host={host} />}
-          <p className="text-muted-foreground">{t('guide.s6.help')}</p>
-          <Command text={`& 'C:\\Program Files\\HvPortal\\Agent\\HvPortal.Agent.exe' inventory`} />
-          <p className="text-muted-foreground">{t('guide.s6.expect')}</p>
-        </Step>
+        {management ? (
+          <Step n={6} title={t('guide.m.s6.title')}>
+            {managementConnected !== undefined && (managementConnected
+              ? <div className="flex items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2" role="status"><CircleCheck className="size-4 text-success" />{t('guide.m.s6.connected')}</div>
+              : <div className="flex items-center gap-2 rounded-lg border border-info/30 bg-info/5 px-3 py-2" role="status"><LoaderCircle className="size-4 animate-spin text-info" />{t('guide.s6.waiting')}</div>)}
+            <Command text={`& 'C:\\Program Files\\HvPortal\\Agent\\HvPortal.Agent.exe' status`} />
+            <p className="text-muted-foreground">{t('guide.m.s6.next')}</p>
+          </Step>
+        ) : (
+          <Step n={6} title={t('guide.s6.title')}>
+            {host !== undefined && <HostStatus host={host} />}
+            <p className="text-muted-foreground">{t('guide.s6.help')}</p>
+            <Command text={`& 'C:\\Program Files\\HvPortal\\Agent\\HvPortal.Agent.exe' inventory`} />
+            <p className="text-muted-foreground">{t('guide.s6.expect')}</p>
+          </Step>
+        )}
       </Steps>
 
       {troubleshooting === 'inline' ? (

@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 using HvPortal.Contracts.Agent;
 using HvPortal.Contracts.HyperV;
 using HvPortal.Gateway.Audit;
 using HvPortal.Gateway.Configuration;
+using HvPortal.Gateway.Crypto;
 using HvPortal.Gateway.Data;
 using HvPortal.Gateway.Pki;
 using HvPortal.Gateway.Realtime;
@@ -16,26 +18,34 @@ namespace HvPortal.Gateway.Agents;
 /// <summary>
 /// Accepts agent WebSocket channels (agent-initiated, mutual TLS) and routes typed commands to them.
 /// Authentication: TLS client certificate chained to the internal CA (validated by Kestrel) AND an
-/// active, non-revoked, non-expired AgentCertificate row bound to an enrolled host.
+/// active, non-revoked, non-expired AgentCertificate row bound to an enrolled host or management agent.
+/// Management agents (ADR-022): after Hello the gateway sends the list of remote hosts assigned to the agent, with their
+/// credentials; every remote host id is then routed to that channel and each command carries its TargetHostId.
+/// Inventory reported for a host that is not assigned to the reporting agent is discarded.
 /// </summary>
 public sealed class AgentConnectionManager : IAgentDispatcher
 {
+    /// <summary>Routable host id -> channel (the host's own agent, or the management agent that reaches it).</summary>
     private readonly ConcurrentDictionary<Guid, AgentSession> _sessions = new();
+    /// <summary>Management agent id -> channel.</summary>
+    private readonly ConcurrentDictionary<Guid, AgentSession> _managementSessions = new();
     // Rejected agents retry about once a minute: audit each rejected certificate at most once per hour.
     private readonly ConcurrentDictionary<string, DateTimeOffset> _deniedAudited = new();
     private readonly IServiceScopeFactory _scopes;
     private readonly InternalCertificateAuthority _ca;
+    private readonly KeyRing _keys;
     private readonly AuditLog _audit;
     private readonly IRealtimeNotifier _notifier;
     private readonly TimeProvider _time;
     private readonly GatewayOptions _options;
     private readonly ILogger<AgentConnectionManager> _logger;
 
-    public AgentConnectionManager(IServiceScopeFactory scopes, InternalCertificateAuthority ca, AuditLog audit,
+    public AgentConnectionManager(IServiceScopeFactory scopes, InternalCertificateAuthority ca, KeyRing keys, AuditLog audit,
         IRealtimeNotifier notifier, TimeProvider time, IOptions<GatewayOptions> options, ILogger<AgentConnectionManager> logger)
     {
         _scopes = scopes;
         _ca = ca;
+        _keys = keys;
         _audit = audit;
         _notifier = notifier;
         _time = time;
@@ -48,6 +58,8 @@ public sealed class AgentConnectionManager : IAgentDispatcher
     public int ProtocolVersionOf(Guid hostId) => _sessions.TryGetValue(hostId, out var s) ? s.ProtocolVersion : 0;
 
     public IReadOnlyCollection<Guid> ConnectedHosts => _sessions.Keys.ToList();
+
+    public bool IsManagementAgentConnected(Guid agentId) => _managementSessions.ContainsKey(agentId);
 
     public async Task HandleChannelAsync(HttpContext http)
     {
@@ -63,54 +75,78 @@ public sealed class AgentConnectionManager : IAgentDispatcher
             return;
         }
         var thumbprint = InternalCertificateAuthority.Sha256Thumbprint(cert);
-        Guid hostId;
+        Guid subjectId;
+        bool isManagement;
         using (var scope = _scopes.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
             var now = _time.GetUtcNow();
             var row = await db.AgentCertificates.AsNoTracking().FirstOrDefaultAsync(c => c.ThumbprintSha256 == thumbprint, http.RequestAborted);
             var host = row is null ? null : await db.Hosts.AsNoTracking().FirstOrDefaultAsync(h => h.Id == row.HostId, http.RequestAborted);
-            if (row is null || host is null || row.RevokedAt is not null || row.NotAfter <= now || host.Status != HostStatus.Active)
+            var management = row is null || host is not null ? null : await db.ManagementAgents.AsNoTracking().FirstOrDefaultAsync(a => a.Id == row.HostId, http.RequestAborted);
+            var active = host is { Status: HostStatus.Active, ConnectionMode: HostConnectionMode.Agent } || management is { Status: HostStatus.Active };
+            if (row is null || row.RevokedAt is not null || row.NotAfter <= now || !active)
             {
                 var last = _deniedAudited.GetValueOrDefault(thumbprint);
                 if (now - last > TimeSpan.FromHours(1))
                 {
                     _deniedAudited[thumbprint] = now;
                     await _audit.WriteAsync(new AuditRecord
-                {
-                    Action = "agent.connect",
-                    Outcome = AuditOutcome.Denied,
-                    AuthMethod = "agent-mtls",
-                    SourceIp = http.Connection.RemoteIpAddress?.ToString(),
-                    ResourceType = "host",
-                    ResourceId = row?.HostId.ToString("D"),
-                    Details = new { reason = row is null ? "unknown certificate (host deleted?)" : row.RevokedAt is not null ? "revoked certificate" : "inactive host or expired", note = "further attempts with this certificate are audited at most hourly" },
-                });
+                    {
+                        Action = "agent.connect",
+                        Outcome = AuditOutcome.Denied,
+                        AuthMethod = "agent-mtls",
+                        SourceIp = http.Connection.RemoteIpAddress?.ToString(),
+                        ResourceType = management is not null ? "management_agent" : "host",
+                        ResourceId = row?.HostId.ToString("D"),
+                        Details = new
+                        {
+                            reason = row is null ? "unknown certificate (host deleted?)" : row.RevokedAt is not null ? "revoked certificate" : "inactive host/agent or expired",
+                            note = "further attempts with this certificate are audited at most hourly",
+                        },
+                    });
                 }
                 http.Response.StatusCode = StatusCodes.Status403Forbidden;
                 return;
             }
-            hostId = host.Id;
+            subjectId = row.HostId;
+            isManagement = management is not null;
         }
 
         using var ws = await http.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext { KeepAliveInterval = TimeSpan.FromSeconds(20) });
-        var session = new AgentSession(hostId, thumbprint, ws);
-        if (_sessions.TryGetValue(hostId, out var previous))
+        var session = new AgentSession(subjectId, thumbprint, ws, isManagement);
+        if (isManagement)
         {
-            previous.Abort("superseded by a new connection");
+            if (_managementSessions.TryGetValue(subjectId, out var previous))
+            {
+                UnmapTargets(previous);
+                previous.Abort("superseded by a new connection");
+            }
+            _managementSessions[subjectId] = session;
+            await TouchManagementAgentAsync(subjectId, null);
         }
-        _sessions[hostId] = session;
-        _logger.LogInformation("Agent for host {HostId} connected from {Ip}", hostId, http.Connection.RemoteIpAddress);
-        await TouchHostAsync(hostId, null);
+        else
+        {
+            if (_sessions.TryGetValue(subjectId, out var previous))
+            {
+                previous.Abort("superseded by a new connection");
+            }
+            _sessions[subjectId] = session;
+            await TouchHostAsync(subjectId, null);
+        }
+        _logger.LogInformation("Agent {Kind} {SubjectId} connected from {Ip}", isManagement ? "management" : "host", subjectId, http.Connection.RemoteIpAddress);
         await _audit.WriteAsync(new AuditRecord
         {
             Action = "agent.connected",
             AuthMethod = "agent-mtls",
             SourceIp = http.Connection.RemoteIpAddress?.ToString(),
-            ResourceType = "host",
-            ResourceId = hostId.ToString("D"),
+            ResourceType = isManagement ? "management_agent" : "host",
+            ResourceId = subjectId.ToString("D"),
         });
-        await _notifier.HostChangedAsync(hostId);
+        if (!isManagement)
+        {
+            await _notifier.HostChangedAsync(subjectId);
+        }
 
         try
         {
@@ -118,13 +154,24 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         }
         catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or IOException)
         {
-            _logger.LogInformation("Agent channel for host {HostId} closed: {Message}", hostId, ex.Message);
+            _logger.LogInformation("Agent channel {SubjectId} closed: {Message}", subjectId, ex.Message);
         }
         finally
         {
-            _sessions.TryRemove(new KeyValuePair<Guid, AgentSession>(hostId, session));
-            session.FailPending(new AgentChannelLostException(hostId));
-            await _notifier.HostChangedAsync(hostId);
+            if (isManagement)
+            {
+                _managementSessions.TryRemove(new KeyValuePair<Guid, AgentSession>(subjectId, session));
+                foreach (var hostId in UnmapTargets(session))
+                {
+                    await _notifier.HostChangedAsync(hostId);
+                }
+            }
+            else
+            {
+                _sessions.TryRemove(new KeyValuePair<Guid, AgentSession>(subjectId, session));
+                await _notifier.HostChangedAsync(subjectId);
+            }
+            session.FailPending(new AgentChannelLostException(subjectId));
         }
     }
 
@@ -135,11 +182,20 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         {
             throw new HostNotConnectedException(hostId);
         }
+        // Remote host: the management agent needs to know which host the command is for (server-controlled field).
+        command = command with { TargetHostId = session.IsManagement ? hostId : null };
         // Older agents cannot even parse newer command kinds (and would drop the channel): refuse locally, nothing is sent.
         var required = AgentProtocol.RequiredVersion(command);
         if (session.ProtocolVersion < required)
         {
-            var minAgent = required >= 3 ? "0.3.1" : "0.3";
+            var minAgent = required switch
+            {
+                >= 6 => "0.4.0",
+                5 => "0.3.3",
+                4 => "0.3.2",
+                3 => "0.3.1",
+                _ => "0.3",
+            };
             return new AgentCommandResult
             {
                 CommandId = command.CommandId,
@@ -173,16 +229,44 @@ public sealed class AgentConnectionManager : IAgentDispatcher
 
     public void Disconnect(Guid hostId, string reason)
     {
-        if (_sessions.TryRemove(hostId, out var s))
+        if (!_sessions.TryGetValue(hostId, out var s))
         {
+            return;
+        }
+        if (s.IsManagement)
+        {
+            // A remote host: stop routing to it, keep the management agent connected for its other hosts.
+            s.Targets.TryRemove(hostId, out _);
+            _sessions.TryRemove(new KeyValuePair<Guid, AgentSession>(hostId, s));
+            return;
+        }
+        if (_sessions.TryRemove(hostId, out var removed))
+        {
+            removed.Abort(reason);
+        }
+    }
+
+    public void DisconnectManagementAgent(Guid agentId, string reason)
+    {
+        if (_managementSessions.TryRemove(agentId, out var s))
+        {
+            UnmapTargets(s);
             s.Abort(reason);
+        }
+    }
+
+    public async Task ReconfigureManagementAgentAsync(Guid agentId, CancellationToken ct)
+    {
+        if (_managementSessions.TryGetValue(agentId, out var s) && s.ProtocolVersion > 0)
+        {
+            await PushTargetsAsync(s, ct);
         }
     }
 
     /// <summary>Drops sessions whose certificate was revoked or expired (defense in depth besides explicit Disconnect).</summary>
     public async Task EnforceCertificateValidityAsync(CancellationToken ct)
     {
-        if (_sessions.IsEmpty)
+        if (_sessions.IsEmpty && _managementSessions.IsEmpty)
         {
             return;
         }
@@ -191,11 +275,24 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         var now = _time.GetUtcNow();
         foreach (var (hostId, session) in _sessions)
         {
+            if (session.IsManagement)
+            {
+                continue;
+            }
             var ok = await db.AgentCertificates.AsNoTracking().AnyAsync(c => c.ThumbprintSha256 == session.Thumbprint && c.RevokedAt == null && c.NotAfter > now, ct)
                      && await db.Hosts.AsNoTracking().AnyAsync(h => h.Id == hostId && h.Status == HostStatus.Active, ct);
             if (!ok)
             {
                 Disconnect(hostId, "certificate no longer valid");
+            }
+        }
+        foreach (var (agentId, session) in _managementSessions)
+        {
+            var ok = await db.AgentCertificates.AsNoTracking().AnyAsync(c => c.ThumbprintSha256 == session.Thumbprint && c.RevokedAt == null && c.NotAfter > now, ct)
+                     && await db.ManagementAgents.AsNoTracking().AnyAsync(a => a.Id == agentId && a.Status == HostStatus.Active, ct);
+            if (!ok)
+            {
+                DisconnectManagementAgent(agentId, "certificate no longer valid");
             }
         }
     }
@@ -229,7 +326,7 @@ public sealed class AgentConnectionManager : IAgentDispatcher
             }
             catch (JsonException)
             {
-                _logger.LogWarning("Malformed message from host {HostId}", session.HostId);
+                _logger.LogWarning("Malformed message from agent {SubjectId}", session.SubjectId);
                 continue;
             }
             if (env is not null)
@@ -245,16 +342,32 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         {
             case AgentMessageType.Hello when env.Read<AgentHello>() is { } hello:
                 session.ProtocolVersion = hello.ProtocolVersion;
-                await TouchHostAsync(session.HostId, hello.AgentVersion);
+                session.AgentVersion = hello.AgentVersion is { Length: > 32 } v ? v[..32] : hello.AgentVersion;
+                if (session.IsManagement)
+                {
+                    await TouchManagementAgentAsync(session.SubjectId, session.AgentVersion);
+                    await PushTargetsAsync(session, ct);
+                }
+                else
+                {
+                    await TouchHostAsync(session.SubjectId, session.AgentVersion);
+                }
                 break;
 
-            case AgentMessageType.Inventory when env.Read<HostInventory>() is { } inv:
-                using (var scope = _scopes.CreateScope())
+            case AgentMessageType.Inventory when !session.IsManagement && env.Read<HostInventory>() is { } inv:
+                await IngestAsync(session.SubjectId, inv, ct);
+                break;
+
+            case AgentMessageType.TargetInventory when session.IsManagement && env.Read<TargetInventory>() is { } ti:
+                if (ti.HostId != Guid.Empty && session.Targets.ContainsKey(ti.HostId))
                 {
-                    var ingestor = scope.ServiceProvider.GetRequiredService<InventoryIngestor>();
-                    await ingestor.ApplyAsync(session.HostId, inv, ct);
+                    await IngestAsync(ti.HostId, ti.Inventory, ct);
                 }
-                await _notifier.HostChangedAsync(session.HostId);
+                else
+                {
+                    // Never accept data for a host this agent was not given: it could overwrite another host's inventory.
+                    _logger.LogWarning("Management agent {AgentId} reported inventory for unassigned host {HostId}: discarded", session.SubjectId, ti.HostId);
+                }
                 break;
 
             case AgentMessageType.CommandResult when env.Read<AgentCommandResult>() is { } result:
@@ -271,17 +384,123 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         }
     }
 
+    private async Task IngestAsync(Guid hostId, HostInventory inv, CancellationToken ct)
+    {
+        using (var scope = _scopes.CreateScope())
+        {
+            var ingestor = scope.ServiceProvider.GetRequiredService<InventoryIngestor>();
+            await ingestor.ApplyAsync(hostId, inv, ct);
+        }
+        await _notifier.HostChangedAsync(hostId);
+    }
+
+    /// <summary>
+    /// Sends the management agent its remote hosts (with decrypted credentials, over its mTLS channel only) and updates
+    /// the routing table. Hosts no longer assigned stop being routed to it.
+    /// </summary>
+    private async Task PushTargetsAsync(AgentSession session, CancellationToken ct)
+    {
+        await session.ConfigLock.WaitAsync(ct);
+        try
+        {
+            if (session.ProtocolVersion < 6)
+            {
+                _logger.LogWarning("Management agent {AgentId} announced protocol {Version}: remote hosts need 0.4.0 or later", session.SubjectId, session.ProtocolVersion);
+                return;
+            }
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
+            var hosts = await db.Hosts.AsNoTracking()
+                .Where(h => h.ManagementAgentId == session.SubjectId && h.ConnectionMode == HostConnectionMode.Remote
+                            && h.Status == HostStatus.Active && h.RemotePasswordEncrypted != null)
+                .ToListAsync(ct);
+            var targets = new List<RemoteTarget>();
+            foreach (var h in hosts)
+            {
+                try
+                {
+                    targets.Add(new RemoteTarget
+                    {
+                        HostId = h.Id,
+                        ComputerName = h.RemoteComputerName!,
+                        UserName = h.RemoteUserName!,
+                        Password = RemoteHostCredentials.Unprotect(_keys, h.Id, h.RemotePasswordEncrypted!),
+                        UseHttps = h.RemoteUseHttps,
+                    });
+                }
+                catch (CryptographicException ex)
+                {
+                    _logger.LogWarning("Cannot decrypt the stored credentials of remote host {HostId}: {Message}", h.Id, ex.Message);
+                }
+            }
+            if (!await session.TrySendAsync(AgentEnvelope.Create(AgentMessageType.TargetsConfiguration, null, new TargetsConfiguration { Targets = targets }), ct))
+            {
+                return;
+            }
+
+            var wanted = targets.Select(t => t.HostId).ToHashSet();
+            var changed = new List<Guid>();
+            foreach (var old in session.Targets.Keys.Where(id => !wanted.Contains(id)).ToList())
+            {
+                session.Targets.TryRemove(old, out _);
+                _sessions.TryRemove(new KeyValuePair<Guid, AgentSession>(old, session));
+                changed.Add(old);
+            }
+            foreach (var id in wanted)
+            {
+                if (_sessions.TryGetValue(id, out var other) && !ReferenceEquals(other, session))
+                {
+                    other.Targets.TryRemove(id, out _); // reassigned from another management agent
+                }
+                session.Targets[id] = 0;
+                if (!ReferenceEquals(_sessions.GetValueOrDefault(id), session))
+                {
+                    _sessions[id] = session;
+                    changed.Add(id);
+                }
+            }
+            if (wanted.Count > 0 && session.AgentVersion is { } version)
+            {
+                // Capability checks (file explorer, VM groups, ...) read the version of the agent that runs the operations.
+                await db.Hosts.Where(h => wanted.Contains(h.Id)).ExecuteUpdateAsync(u => u.SetProperty(h => h.AgentVersion, version), ct);
+            }
+            foreach (var id in changed)
+            {
+                await _notifier.HostChangedAsync(id);
+            }
+        }
+        finally
+        {
+            session.ConfigLock.Release();
+        }
+    }
+
+    /// <summary>Removes every remote host routed to this management channel; returns them.</summary>
+    private List<Guid> UnmapTargets(AgentSession session)
+    {
+        var removed = new List<Guid>();
+        foreach (var id in session.Targets.Keys.ToList())
+        {
+            session.Targets.TryRemove(id, out _);
+            if (_sessions.TryRemove(new KeyValuePair<Guid, AgentSession>(id, session)))
+            {
+                removed.Add(id);
+            }
+        }
+        return removed;
+    }
+
     private async Task RenewAsync(AgentSession session, RenewCertificateRequest renew, CancellationToken ct)
     {
         try
         {
-            var issued = _ca.IssueAgentCertificate(renew.CsrPem, session.HostId, TimeSpan.FromDays(_options.Security.AgentCertificateDays));
+            var issued = _ca.IssueAgentCertificate(renew.CsrPem, session.SubjectId, TimeSpan.FromDays(_options.Security.AgentCertificateDays));
             using (var scope = _scopes.CreateScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
                 db.AgentCertificates.Add(new AgentCertificate
                 {
-                    HostId = session.HostId,
+                    HostId = session.SubjectId,
                     ThumbprintSha256 = issued.ThumbprintSha256,
                     SerialNumber = issued.SerialNumber,
                     NotBefore = issued.NotBefore,
@@ -298,8 +517,8 @@ public sealed class AgentConnectionManager : IAgentDispatcher
             {
                 Action = "agent.certificate.renewed",
                 AuthMethod = "agent-mtls",
-                ResourceType = "host",
-                ResourceId = session.HostId.ToString("D"),
+                ResourceType = session.IsManagement ? "management_agent" : "host",
+                ResourceId = session.SubjectId.ToString("D"),
                 Details = new { serial = issued.SerialNumber, notAfter = issued.NotAfter },
             }, ct);
         }
@@ -321,33 +540,64 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         host.LastSeenAt = _time.GetUtcNow();
         if (agentVersion is not null)
         {
-            host.AgentVersion = agentVersion.Length > 32 ? agentVersion[..32] : agentVersion;
+            host.AgentVersion = agentVersion;
         }
         await db.SaveChangesAsync();
-
-        // Revoke certificates older than the one in use once the agent has proven possession of a newer one.
         if (_sessions.TryGetValue(hostId, out var s))
         {
-            var current = await db.AgentCertificates.AsNoTracking().FirstOrDefaultAsync(c => c.ThumbprintSha256 == s.Thumbprint);
-            if (current is not null)
-            {
-                var now = _time.GetUtcNow();
-                await db.AgentCertificates
-                    .Where(c => c.HostId == hostId && c.RevokedAt == null && c.Id != current.Id && c.IssuedAt < current.IssuedAt)
-                    .ExecuteUpdateAsync(u => u.SetProperty(c => c.RevokedAt, now).SetProperty(c => c.RevokedReason, "superseded"));
-            }
+            await RevokeSupersededAsync(db, hostId, s.Thumbprint);
         }
     }
 
-    private sealed class AgentSession(Guid hostId, string thumbprint, WebSocket socket)
+    private async Task TouchManagementAgentAsync(Guid agentId, string? agentVersion)
+    {
+        using var scope = _scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
+        var agent = await db.ManagementAgents.FirstOrDefaultAsync(a => a.Id == agentId);
+        if (agent is null)
+        {
+            return;
+        }
+        agent.LastSeenAt = _time.GetUtcNow();
+        if (agentVersion is not null)
+        {
+            agent.AgentVersion = agentVersion;
+        }
+        await db.SaveChangesAsync();
+        if (_managementSessions.TryGetValue(agentId, out var s))
+        {
+            await RevokeSupersededAsync(db, agentId, s.Thumbprint);
+        }
+    }
+
+    /// <summary>Revokes certificates older than the one in use once the agent has proven possession of a newer one.</summary>
+    private async Task RevokeSupersededAsync(PortalDbContext db, Guid subjectId, string thumbprint)
+    {
+        var current = await db.AgentCertificates.AsNoTracking().FirstOrDefaultAsync(c => c.ThumbprintSha256 == thumbprint);
+        if (current is not null)
+        {
+            var now = _time.GetUtcNow();
+            await db.AgentCertificates
+                .Where(c => c.HostId == subjectId && c.RevokedAt == null && c.Id != current.Id && c.IssuedAt < current.IssuedAt)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.RevokedAt, now).SetProperty(c => c.RevokedReason, "superseded"));
+        }
+    }
+
+    private sealed class AgentSession(Guid subjectId, string thumbprint, WebSocket socket, bool isManagement)
     {
         private readonly SemaphoreSlim _sendLock = new(1, 1);
         private readonly ConcurrentDictionary<Guid, (TaskCompletionSource<AgentCommandResult> Tcs, Action<AgentCommandProgress>? Progress)> _pending = new();
 
-        public Guid HostId { get; } = hostId;
+        /// <summary>Host id, or management agent id.</summary>
+        public Guid SubjectId { get; } = subjectId;
         public string Thumbprint { get; } = thumbprint;
+        public bool IsManagement { get; } = isManagement;
+        /// <summary>Management agents: remote host ids currently routed to this channel.</summary>
+        public ConcurrentDictionary<Guid, byte> Targets { get; } = new();
+        public SemaphoreSlim ConfigLock { get; } = new(1, 1);
         /// <summary>From the agent's Hello; 0 until it arrives.</summary>
         public int ProtocolVersion { get; set; }
+        public string? AgentVersion { get; set; }
         public WebSocket Socket { get; } = socket;
 
         public TaskCompletionSource<AgentCommandResult> Register(Guid id, Action<AgentCommandProgress>? progress)
@@ -408,7 +658,7 @@ public sealed class AgentConnectionManager : IAgentDispatcher
 
         public void Abort(string reason)
         {
-            FailPending(new AgentChannelLostException(HostId));
+            FailPending(new AgentChannelLostException(SubjectId));
             try
             {
                 Socket.Abort();

@@ -36,7 +36,8 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     <CommandDialog open={open} onOpenChange={onOpenChange} title={t('cmd.title')} description={t('cmd.placeholder')}>
       <Command>
       <CommandInput placeholder={t('cmd.placeholder')} />
-      <CommandList className="max-h-[60vh]">
+      {/* Fixed height: the dialog stays centered without jumping while the results are filtered. */}
+      <CommandList className="h-[min(60vh,32rem)] max-h-none">
         <CommandEmpty>{t('cmd.empty')}</CommandEmpty>
         {inv.vms.length > 0 && (
           <CommandGroup heading={t('cmd.vms')}>

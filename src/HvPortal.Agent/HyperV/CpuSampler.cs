@@ -8,7 +8,8 @@ namespace HvPortal.Agent.HyperV;
 ///  - Preferred: hypervisor logical processor run time (Win32_PerfRawData_HvStats_HyperVHypervisorLogicalProcessor,
 ///    "% Total Run Time"): includes the root partition AND all guests, i.e. the real load of the physical CPUs.
 ///    Task Manager / Win32_Processor on a Hyper-V host only show the root partition.
-///  - Fallback: GetSystemTimes (kernel32) — root partition only; reported with source "root-partition".
+///  - Fallback: GetSystemTimes (kernel32) — root partition only; reported with source "root-partition". Local host only:
+///    for a remote target (management agent) the local machine's CPU would be reported, so there is no such fallback.
 /// The value is the average since the previous sample (the inventory interval); the first call samples twice, 1 s apart.
 /// </summary>
 public sealed class CpuSampler
@@ -16,6 +17,13 @@ public sealed class CpuSampler
     private readonly object _gate = new();
     private (ulong Run, ulong Time, int Count)? _lastHv;
     private (ulong Idle, ulong Total)? _lastSys;
+    private readonly HostTarget _target;
+
+    public CpuSampler() : this(HostTarget.Local)
+    {
+    }
+
+    public CpuSampler(HostTarget target) => _target = target;
 
     public (int? Percent, string? Source) Sample()
     {
@@ -25,7 +33,7 @@ public sealed class CpuSampler
             {
                 return (hv, "hypervisor");
             }
-            if (TrySampleSystem() is { } sys)
+            if (_target.IsLocal && TrySampleSystem() is { } sys)
             {
                 return (sys, "root-partition");
             }
@@ -68,10 +76,9 @@ public sealed class CpuSampler
         }
     }
 
-    private static (ulong Run, ulong Time, int Count)? ReadHypervisor()
+    private (ulong Run, ulong Time, int Count)? ReadHypervisor()
     {
-        var scope = new ManagementScope(@"\\.\root\cimv2");
-        scope.Connect();
+        var scope = _target.ConnectWmi(@"root\cimv2");
         using var s = new ManagementObjectSearcher(scope,
             new ObjectQuery("SELECT Name, PercentTotalRunTime, Timestamp_Sys100NS FROM Win32_PerfRawData_HvStats_HyperVHypervisorLogicalProcessor"));
         using var r = s.Get();

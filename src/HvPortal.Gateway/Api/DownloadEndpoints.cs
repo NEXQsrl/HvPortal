@@ -20,7 +20,7 @@ public static class DownloadEndpoints
 
     private static readonly ConcurrentDictionary<string, (long Length, DateTime Modified, string Sha256)> HashCache = new();
 
-    public sealed record PackageManifest(string? Version, DateTimeOffset? BuiltAtUtc, bool Signed, string? Signer);
+    public sealed record PackageManifest(string? Version, DateTimeOffset? BuiltAtUtc, bool Signed, string? Signer, bool SelfSigned = false);
 
     public static string PackagesDirectory(GatewayOptions options) =>
         options.PackagesDirectory is { Length: > 0 } d ? Path.GetFullPath(d) : Path.Combine(AppContext.BaseDirectory, "packages");
@@ -52,12 +52,13 @@ public static class DownloadEndpoints
             }
             var info = Describe(options.Value);
             await http.WriteAuditAsync("downloads.agent", resourceType: "package", resourceId: AgentPackageFile,
-                details: new { info?.Version, info?.Sha256, info?.Signed });
+                details: new { info?.Version, info?.Sha256, info?.Signed, info?.SelfSigned });
             return Results.File(path, "application/zip", AgentPackageFile, enableRangeProcessing: false);
         });
     }
 
-    public sealed record PackageInfo(string FileName, long SizeBytes, string Sha256, string? Version, DateTimeOffset? BuiltAtUtc, bool Signed, string? Signer);
+    public sealed record PackageInfo(string FileName, long SizeBytes, string Sha256, string? Version, DateTimeOffset? BuiltAtUtc, bool Signed, string? Signer,
+        bool SelfSigned);
 
     public static PackageInfo? Describe(GatewayOptions options)
     {
@@ -89,6 +90,6 @@ public static class DownloadEndpoints
             }
         }
         return new PackageInfo(AgentPackageFile, fi.Length, cached.Sha256, manifest?.Version, manifest?.BuiltAtUtc,
-            manifest?.Signed ?? false, manifest?.Signer);
+            manifest?.Signed ?? false, manifest?.Signer, manifest is { Signed: true, SelfSigned: true });
     }
 }

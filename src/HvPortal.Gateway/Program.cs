@@ -252,6 +252,7 @@ namespace HvPortal.Gateway
             AgentEndpoints.Map(app);
             DownloadEndpoints.Map(app);
             InventoryManagementEndpoints.Map(app);
+            ManagementAgentEndpoints.Map(app);
             GroupEndpoints.Map(app);
             VmOperationsEndpoints.Map(app);
             ConsoleEndpoints.Map(app);

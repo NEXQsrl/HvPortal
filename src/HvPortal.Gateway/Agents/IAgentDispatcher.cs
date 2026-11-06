@@ -16,7 +16,20 @@ public interface IAgentDispatcher
     Task<AgentCommandResult> SendAsync(Guid hostId, AgentCommand command, Action<AgentCommandProgress>? onProgress,
         TimeSpan timeout, CancellationToken ct);
 
+    /// <summary>Host agent: closes its channel. Remote host: stops routing to it (its management agent stays connected).</summary>
     void Disconnect(Guid hostId, string reason);
+
+    // ---- management agents (ADR-022)
+
+    bool IsManagementAgentConnected(Guid agentId);
+
+    /// <summary>
+    /// Sends a connected management agent its current remote hosts (with credentials) and updates routing.
+    /// Call after any change to the remote hosts of that agent. No-op when the agent is offline (it gets them on connect).
+    /// </summary>
+    Task ReconfigureManagementAgentAsync(Guid agentId, CancellationToken ct);
+
+    void DisconnectManagementAgent(Guid agentId, string reason);
 }
 
 public sealed class HostNotConnectedException(Guid hostId) : Exception($"Host {hostId} is not connected.")

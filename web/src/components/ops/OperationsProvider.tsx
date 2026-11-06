@@ -1,8 +1,8 @@
 import {
-  Camera, FolderInput, FolderMinus, FolderPlus, KeyRound, Monitor, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save,
+  Camera, FolderInput, FolderMinus, FolderPlus, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save,
   Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2,
 } from 'lucide-react';
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { del, newIdempotencyKey, patch, post } from '@/api/client';
 import type { Accepted, Group } from '@/api/ops-types';
@@ -18,7 +18,8 @@ import { toast } from '@/lib/toast';
 import { useSession } from '@/session';
 import { CreateVmWizard } from './CreateVmWizard';
 import { AddToGroupDialog, AddVmsDialog, MoveGroupDialog, NewGroupDialog } from './GroupDialogs';
-import { AddHostDialog, EnrollmentDialog, RevokeHostDialog } from './HostDialogs';
+import { AddHostDialog, EnrollmentDialog, RemoteHostDialog, RevokeHostDialog } from './HostDialogs';
+import { LiveManagementEnrollment, NewManagementAgentDialog } from './ManagementAgents';
 import { CreateCheckpointDialog, PowerDialog } from './VmDialogs';
 
 const POWER_ICONS: Record<PowerOperation, typeof Play> = {
@@ -37,6 +38,9 @@ type DialogState =
   | { kind: 'editHost'; host: Host }
   | { kind: 'deleteHost'; host: Host }
   | { kind: 'revokeHost'; host: Host }
+  | { kind: 'remoteHost'; host: Host }
+  | { kind: 'newManagementAgent' }
+  | { kind: 'enrollManagement'; info: EnrollmentInfo; agentId: string; name: string }
   | { kind: 'newGroup'; parentId: string | null }
   | { kind: 'editGroup'; group: Group }
   | { kind: 'moveGroup'; group: Group }
@@ -50,6 +54,10 @@ interface Ops {
   groupActions: (group: Group | null) => Action[];
   openCreateVm: (opts?: { hostId?: string; groupId?: string }) => void;
   openAddHost: () => void;
+  openNewManagementAgent: () => void;
+  openManagementEnrollment: (info: EnrollmentInfo, agentId: string, name: string) => void;
+  /** Subscribe to management agent changes made through these dialogs; returns the unsubscribe function. */
+  onManagementAgentsChanged: (listener: () => void) => () => void;
   openNewGroup: (parentId: string | null) => void;
   openPower: (vm: Vm, op: PowerOperation) => void;
   openConsole: (vm: Vm, popout?: boolean) => void;
@@ -74,6 +82,12 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
   const close = useCallback(() => setDialog(null), []);
   const manageHosts = can('hosts.manage');
   const manageGroups = inv.canManageGroups;
+  const agentListeners = useRef(new Set<() => void>());
+  const agentsChanged = useCallback(() => agentListeners.current.forEach((l) => l()), []);
+  const onManagementAgentsChanged = useCallback((listener: () => void) => {
+    agentListeners.current.add(listener);
+    return () => { agentListeners.current.delete(listener); };
+  }, []);
 
   const queued = useCallback((r: Accepted, label: string) => {
     watchJob(r.jobId, label);
@@ -156,12 +170,17 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     });
     if (manageHosts) {
       list.push({ key: 'edit', label: t('menu.editDescription'), icon: Pencil, separatorBefore: true, onSelect: () => setDialog({ kind: 'editHost', host: h }) });
-      list.push({
-        key: 'token', label: t('host.newToken'), icon: KeyRound,
-        onSelect: async () => {
-          try { setDialog({ kind: 'enroll', info: await post<EnrollmentInfo>(`/api/v1/hosts/${h.id}/enrollment-token`), hostId: h.id }); } catch (e) { fail(e); }
-        },
-      });
+      if (h.connectionMode === 'Remote') {
+        // Reached through a management agent: there is no agent to enroll, only connection and credentials.
+        list.push({ key: 'remote', label: t('remote.edit'), icon: Network, onSelect: () => setDialog({ kind: 'remoteHost', host: h }) });
+      } else {
+        list.push({
+          key: 'token', label: t('host.newToken'), icon: KeyRound,
+          onSelect: async () => {
+            try { setDialog({ kind: 'enroll', info: await post<EnrollmentInfo>(`/api/v1/hosts/${h.id}/enrollment-token`), hostId: h.id }); } catch (e) { fail(e); }
+          },
+        });
+      }
       list.push({ key: 'revoke', label: t('host.revoke'), icon: ShieldOff, danger: true, separatorBefore: true, disabled: h.status === 'Revoked', onSelect: () => setDialog({ kind: 'revokeHost', host: h }) });
       list.push({ key: 'delete', label: t('host.delete'), icon: Trash2, danger: true, onSelect: () => setDialog({ kind: 'deleteHost', host: h }) });
     }
@@ -187,9 +206,12 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     vmActions, powerActions, hostActions, groupActions, queued, placeVms, moveGroup, openConsole,
     openCreateVm: (o) => setDialog({ kind: 'createVm', hostId: o?.hostId, groupId: o?.groupId }),
     openAddHost: () => setDialog({ kind: 'addHost' }),
+    openNewManagementAgent: () => setDialog({ kind: 'newManagementAgent' }),
+    openManagementEnrollment: (info, agentId, name) => setDialog({ kind: 'enrollManagement', info, agentId, name }),
+    onManagementAgentsChanged,
     openNewGroup: (parentId) => setDialog({ kind: 'newGroup', parentId }),
     openPower: (vm, op) => setDialog({ kind: 'power', vm, op }),
-  }), [vmActions, powerActions, hostActions, groupActions, queued, placeVms, moveGroup, openConsole]);
+  }), [vmActions, powerActions, hostActions, groupActions, queued, placeVms, moveGroup, openConsole, onManagementAgentsChanged]);
 
   const d = dialog;
   return (
@@ -217,8 +239,16 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
       {d?.kind === 'addHost' && (
         // The enrollment guide replaces this dialog: closing must not clear it.
         <AddHostDialog onClose={() => setDialog((cur) => (cur?.kind === 'addHost' ? null : cur))}
-          onCreated={(info, hostId) => { inv.reload(); setDialog({ kind: 'enroll', info, hostId }); }} />
+          onCreated={(info, hostId) => { inv.reload(); setDialog({ kind: 'enroll', info, hostId }); }}
+          onRemoteCreated={(hostId) => { inv.reload(); agentsChanged(); toast.success(t('remote.created')); navigate(`/hosts/${hostId}`); }}
+          onNewManagementAgent={() => setDialog({ kind: 'newManagementAgent' })} />
       )}
+      {d?.kind === 'remoteHost' && <RemoteHostDialog host={d.host} onClose={() => { close(); inv.reload(); agentsChanged(); }} />}
+      {d?.kind === 'newManagementAgent' && (
+        <NewManagementAgentDialog onClose={() => setDialog((cur) => (cur?.kind === 'newManagementAgent' ? null : cur))}
+          onCreated={(info, agentId, name) => { agentsChanged(); setDialog({ kind: 'enrollManagement', info, agentId, name }); }} />
+      )}
+      {d?.kind === 'enrollManagement' && <LiveManagementEnrollment info={d.info} agentId={d.agentId} name={d.name} onClose={() => { close(); agentsChanged(); }} />}
       {d?.kind === 'enroll' && <EnrollmentDialog info={d.info} hostId={d.hostId} onClose={() => { close(); inv.reload(); }} />}
       {d?.kind === 'editHost' && (
         <EditDialog title={t('host.editTitle', { name: d.host.displayName })} withName initialName={d.host.displayName} initialDescription={d.host.description} onClose={close}

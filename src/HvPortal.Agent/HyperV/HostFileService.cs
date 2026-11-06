@@ -11,6 +11,8 @@ namespace HvPortal.Agent.HyperV;
 /// cannot be downloaded — the portal never produces an inconsistent copy of an active VHDX.
 /// Uploads go to a hidden temporary file next to the target and become visible only after size and SHA-256 match
 /// (commit). Existing files are replaced only with explicit overwrite. Idle uploads are discarded after 10 minutes.
+/// Paths in and out are host-local; for a remote host (management agent) <see cref="HostFileAccess"/> maps them to the
+/// administrative shares and runs the I/O with the host credentials.
 /// </summary>
 public static class HostFileService
 {
@@ -21,8 +23,8 @@ public static class HostFileService
     private static readonly EnumerationOptions Options = new() { IgnoreInaccessible = true, AttributesToSkip = Excluded, ReturnSpecialDirectories = false };
     private static readonly ConcurrentDictionary<Guid, Upload> Uploads = new();
 
-    /// <summary>Folder check (replaceable in tests, which cannot write outside the user profile).</summary>
-    internal static Func<string, bool, string> CheckFolder { get; set; } = HostFolderBrowser.CheckFolder;
+    /// <summary>Folder check returning the host-local path (replaceable in tests, which cannot write outside the user profile).</summary>
+    internal static Func<string, bool, HostFileAccess, string> CheckFolder { get; set; } = HostFolderBrowser.CheckFolder;
 
     private sealed class Upload : IDisposable
     {
@@ -31,6 +33,7 @@ public static class HostFileService
         public required long Size { get; init; }
         public required bool Overwrite { get; init; }
         public required FileStream Stream { get; init; }
+        public required HostFileAccess Access { get; init; }
         public IncrementalHash Hash { get; } = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         public long Written { get; set; }
         public DateTime LastActivityUtc { get; set; } = DateTime.UtcNow;
@@ -44,10 +47,16 @@ public static class HostFileService
         }
     }
 
-    public static FolderListing List(FileListRequest request)
+    public static FolderListing List(FileListRequest request, HostFileAccess? access = null)
     {
-        var path = CheckFolder(request.Path, true);
-        var dir = new DirectoryInfo(path);
+        var fs = access ?? HostFileAccess.Local;
+        var path = CheckFolder(request.Path, true, fs);
+        return fs.Run(() => ListPhysical(path, fs));
+    }
+
+    private static FolderListing ListPhysical(string path, HostFileAccess fs)
+    {
+        var dir = new DirectoryInfo(fs.ToPhysical(path));
         var atRoot = dir.Parent is null;
         var folders = new List<FolderEntry>();
         var files = new List<FileEntry>();
@@ -63,7 +72,7 @@ public static class HostFileService
                 truncated = true;
                 break;
             }
-            folders.Add(new FolderEntry(d.Name, d.FullName));
+            folders.Add(new FolderEntry(d.Name, fs.ToHost(d.FullName)));
         }
         foreach (var f in dir.EnumerateFiles("*", Options))
         {
@@ -72,35 +81,28 @@ public static class HostFileService
                 truncated = true;
                 break;
             }
-            files.Add(new FileEntry(f.Name, f.FullName, f.Length, f.LastWriteTimeUtc));
-        }
-        long? free = null;
-        try
-        {
-            free = new DriveInfo(path[..3]).AvailableFreeSpace;
-        }
-        catch (IOException)
-        {
+            files.Add(new FileEntry(f.Name, fs.ToHost(f.FullName), f.Length, f.LastWriteTimeUtc));
         }
         return new FolderListing
         {
             Path = path,
-            Parent = dir.Parent?.FullName,
+            Parent = atRoot ? null : fs.ToHost(dir.Parent!.FullName),
             Folders = folders.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
             Files = files.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
-            FreeBytes = free,
+            FreeBytes = fs.FreeSpace(path[..3]),
             Truncated = truncated,
         };
     }
 
-    private static FileInfo CheckFile(string path)
+    /// <summary>Call inside <see cref="HostFileAccess.Run{T}"/>.</summary>
+    private static FileInfo CheckFile(string path, HostFileAccess fs)
     {
         if (!HostPaths.IsValidFilePath(path))
         {
             throw new HostPathException("invalid_path: not a valid file path.");
         }
-        var folder = CheckFolder(Path.GetDirectoryName(path)!, true);
-        var file = new FileInfo(Path.Combine(folder, Path.GetFileName(path)));
+        var folder = CheckFolder(Path.GetDirectoryName(path)!, true, fs);
+        var file = new FileInfo(fs.ToPhysical(Path.Combine(folder, Path.GetFileName(path))));
         if (!file.Exists)
         {
             throw new HostPathException("not_found: file not found.");
@@ -112,9 +114,15 @@ public static class HostFileService
         return file;
     }
 
-    public static FileChunk Read(FileReadRequest request)
+    public static FileChunk Read(FileReadRequest request, HostFileAccess? access = null)
     {
-        var file = CheckFile(request.Path);
+        var fs = access ?? HostFileAccess.Local;
+        return fs.Run(() => ReadPhysical(request, fs));
+    }
+
+    private static FileChunk ReadPhysical(FileReadRequest request, HostFileAccess access)
+    {
+        var file = CheckFile(request.Path, access);
         try
         {
             using var fs = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
@@ -142,8 +150,9 @@ public static class HostFileService
         }
     }
 
-    public static FileWriteBeginResult Begin(FileWriteBeginRequest request)
+    public static FileWriteBeginResult Begin(FileWriteBeginRequest request, HostFileAccess? access = null)
     {
+        var fs = access ?? HostFileAccess.Local;
         Sweep();
         if (Uploads.Count >= MaxConcurrentUploads)
         {
@@ -153,8 +162,20 @@ public static class HostFileService
         {
             throw new HostPathException("invalid_file_name: invalid file name.");
         }
-        var folder = CheckFolder(request.Folder, true);
-        var final = Path.Combine(folder, request.Name);
+        var folder = CheckFolder(request.Folder, true, fs);
+        var hostFinal = Path.Combine(folder, request.Name);
+        if (fs.FreeSpace(folder[..3]) is { } free && free < request.SizeBytes)
+        {
+            throw new HostPathException("insufficient_space: not enough free space on the drive.");
+        }
+        var id = Guid.NewGuid();
+        var upload = fs.Run(() => Open(request, fs.ToPhysical(hostFinal), fs.ToPhysical(Path.Combine(folder, $".{request.Name}.{id:N}.hvpart")), fs));
+        Uploads[id] = upload;
+        return new FileWriteBeginResult(id, hostFinal);
+    }
+
+    private static Upload Open(FileWriteBeginRequest request, string final, string temp, HostFileAccess fs)
+    {
         if (Directory.Exists(final))
         {
             throw new HostPathException("file_exists: a folder with this name already exists.");
@@ -170,12 +191,6 @@ public static class HostFileService
                 throw new HostPathException("location_not_allowed: read-only, hidden, system or linked files cannot be replaced.");
             }
         }
-        if (new DriveInfo(folder[..3]).AvailableFreeSpace < request.SizeBytes)
-        {
-            throw new HostPathException("insufficient_space: not enough free space on the drive.");
-        }
-        var id = Guid.NewGuid();
-        var temp = Path.Combine(folder, $".{request.Name}.{id:N}.hvpart");
         FileStream stream;
         try
         {
@@ -186,8 +201,7 @@ public static class HostFileService
         {
             throw new HostPathException("access_denied: the agent service account cannot write in this folder.");
         }
-        Uploads[id] = new Upload { FinalPath = final, TempPath = temp, Size = request.SizeBytes, Overwrite = request.Overwrite, Stream = stream };
-        return new FileWriteBeginResult(id, final);
+        return new Upload { FinalPath = final, TempPath = temp, Size = request.SizeBytes, Overwrite = request.Overwrite, Stream = stream, Access = fs };
     }
 
     public static async Task<long> ChunkAsync(FileWriteChunkRequest request, CancellationToken ct)
@@ -243,13 +257,16 @@ public static class HostFileService
             }
             u.Stream.Flush(flushToDisk: true);
             u.Stream.Dispose();
-            if (File.Exists(u.FinalPath) && !u.Overwrite)
+            u.Access.Run(() =>
             {
-                throw new HostPathException("file_exists: the file was created meanwhile.");
-            }
-            File.Move(u.TempPath, u.FinalPath, u.Overwrite);
-            File.SetAttributes(u.FinalPath, FileAttributes.Archive);
-            return new FileWriteResult(u.FinalPath, u.Size, hash);
+                if (File.Exists(u.FinalPath) && !u.Overwrite)
+                {
+                    throw new HostPathException("file_exists: the file was created meanwhile.");
+                }
+                File.Move(u.TempPath, u.FinalPath, u.Overwrite);
+                File.SetAttributes(u.FinalPath, FileAttributes.Archive);
+            });
+            return new FileWriteResult(u.Access.ToHost(u.FinalPath), u.Size, hash);
         }
         catch (IOException ex)
         {
@@ -275,11 +292,14 @@ public static class HostFileService
         u.Dispose();
         try
         {
-            if (File.Exists(u.TempPath))
+            u.Access.Run(() =>
             {
-                File.SetAttributes(u.TempPath, FileAttributes.Normal);
-                File.Delete(u.TempPath);
-            }
+                if (File.Exists(u.TempPath))
+                {
+                    File.SetAttributes(u.TempPath, FileAttributes.Normal);
+                    File.Delete(u.TempPath);
+                }
+            });
         }
         catch (IOException)
         {

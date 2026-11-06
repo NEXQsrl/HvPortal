@@ -215,11 +215,46 @@ public sealed class ManagedHost
     public DateTimeOffset? VmGroupsSyncedAt { get; set; }
     public string? VmGroupsSyncError { get; set; }
     public string? VmGroupsPlanHash { get; set; }
+
+    /// <summary>Agent: an agent runs on the host (default). Remote: reached by a management agent with stored credentials.</summary>
+    public HostConnectionMode ConnectionMode { get; set; } = HostConnectionMode.Agent;
+    /// <summary>Remote hosts: the management agent that reaches them.</summary>
+    public Guid? ManagementAgentId { get; set; }
+    public string? RemoteComputerName { get; set; }
+    public string? RemoteUserName { get; set; }
+    /// <summary>AES-256-GCM with the gateway key ring, purpose bound to the host id. Never returned by the API.</summary>
+    public byte[]? RemotePasswordEncrypted { get; set; }
+    public bool RemoteUseHttps { get; set; }
+    public DateTimeOffset? RemoteCredentialUpdatedAt { get; set; }
+}
+
+public enum HostConnectionMode
+{
+    Agent,
+    Remote,
+}
+
+/// <summary>
+/// An agent installed on a management server (no Hyper-V needed) that manages remote hosts with the credentials stored
+/// in the portal (ADR-022). Enrolled like a host agent; its certificates and tokens use its id as subject id.
+/// </summary>
+public sealed class ManagementAgent
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public required string DisplayName { get; set; }
+    public string? Description { get; set; }
+    public string? MachineName { get; set; }
+    public string? AgentVersion { get; set; }
+    public HostStatus Status { get; set; } = HostStatus.Pending;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? EnrolledAt { get; set; }
+    public DateTimeOffset? LastSeenAt { get; set; }
 }
 
 public sealed class AgentCertificate
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    /// <summary>Subject: a <see cref="ManagedHost"/> id or, for management agents, a <see cref="ManagementAgent"/> id.</summary>
     public Guid HostId { get; set; }
     public required string ThumbprintSha256 { get; set; }
     public required string SerialNumber { get; set; }
@@ -233,6 +268,7 @@ public sealed class AgentCertificate
 public sealed class EnrollmentToken
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    /// <summary>Subject: a <see cref="ManagedHost"/> id or a <see cref="ManagementAgent"/> id.</summary>
     public Guid HostId { get; set; }
     public required string TokenHash { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

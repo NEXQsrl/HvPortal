@@ -43,24 +43,41 @@ foreach ($p in @(@{ Name = 'gateway'; Project = 'src\HvPortal.Gateway' }, @{ Nam
     dotnet list (Join-Path $repo $p.Project) package --include-transitive --format json |
         Out-File -Encoding utf8 "$out\deps\nuget-$($p.Name).json"
 }
-Copy-Item (Join-Path $repo 'installer\*.ps1') -Destination (New-Item -ItemType Directory -Force "$out\installer") -Exclude 'Build-Release.ps1', 'New-AgentPackage.ps1'
+Copy-Item (Join-Path $repo 'installer\*.ps1') -Destination (New-Item -ItemType Directory -Force "$out\installer") -Exclude 'Build-Release.ps1', 'New-AgentPackage.ps1', 'New-CodeSigningCertificate.ps1'
 
 if ($SigningCertificateThumbprint) {
     $cert = Get-ChildItem Cert:\LocalMachine\My, Cert:\CurrentUser\My | Where-Object Thumbprint -eq $SigningCertificateThumbprint | Select-Object -First 1
     if (-not $cert -or -not $cert.HasPrivateKey) { throw "Code signing certificate $SigningCertificateThumbprint not found or without private key." }
+    # Self-signed certificate (New-CodeSigningCertificate.ps1): the signature is applied, but Windows reports the chain
+    # as untrusted (UnknownError) until the certificate is imported as trusted. Accepted only in that exact case.
+    $selfSigned = $cert.Subject -eq $cert.Issuer
+    $untrusted = 0
     $targets = Get-ChildItem $out -Recurse -Include 'HvPortal.*.exe', 'HvPortal.*.dll', '*.ps1'
     foreach ($f in $targets) {
         $sig = if ($TimestampServer) { Set-AuthenticodeSignature $f.FullName $cert -HashAlgorithm SHA256 -TimestampServer $TimestampServer }
                else { Set-AuthenticodeSignature $f.FullName $cert -HashAlgorithm SHA256 }
-        if ($sig.Status -ne 'Valid') { throw "Signing failed for $($f.Name): $($sig.StatusMessage)" }
+        $applied = $sig.SignerCertificate -and $sig.SignerCertificate.Thumbprint -eq $cert.Thumbprint
+        if ($sig.Status -eq 'Valid') { continue }
+        if ($selfSigned -and $applied -and $sig.Status -eq 'UnknownError') { $untrusted++; continue }
+        throw "Signing failed for $($f.Name): $($sig.StatusMessage)"
     }
     Write-Host "Signed $($targets.Count) files with $($cert.Subject)."
+    # Public certificate shipped with the installer so hosts can trust the publisher (never the private key).
+    Export-Certificate -Cert $cert -FilePath "$out\installer\HvPortal-CodeSigning.cer" -Type CERT | Out-Null
+    if ($untrusted -gt 0) {
+        Write-Warning ("Self-signed certificate not trusted on this machine: the signatures are present but Windows, " +
+            "SmartScreen and antivirus products will treat them as untrusted until installer\HvPortal-CodeSigning.cer is imported " +
+            "into LocalMachine\Root and LocalMachine\TrustedPublisher on each machine.")
+    }
+    if (-not $TimestampServer) {
+        Write-Warning "No timestamp server: signatures stop validating when the certificate expires ($($cert.NotAfter.ToString('yyyy-MM-dd')))."
+    }
 } else {
     Write-Warning 'No signing certificate provided: binaries and scripts are UNSIGNED.'
 }
 
 # Downloadable agent package served by the gateway portal (built from the possibly signed agent).
-& (Join-Path $PSScriptRoot 'New-AgentPackage.ps1') -AgentDirectory (Join-Path $out 'agent') -OutputDirectory (Join-Path $out 'gateway\packages')
+& (Join-Path $PSScriptRoot 'New-AgentPackage.ps1') -AgentDirectory (Join-Path $out 'agent') -InstallerDirectory (Join-Path $out 'installer') -OutputDirectory (Join-Path $out 'gateway\packages')
 
 $sums = Get-ChildItem $out -Recurse -File | Where-Object Name -ne 'SHA256SUMS.txt' | ForEach-Object {
     '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), [IO.Path]::GetRelativePath($out, $_.FullName)

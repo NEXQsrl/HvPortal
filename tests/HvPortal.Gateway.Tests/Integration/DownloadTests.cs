@@ -65,7 +65,22 @@ public sealed class DownloadTests : IAsyncLifetime
         Assert.Equal(Convert.ToHexString(SHA256.HashData(bytes)), info.GetProperty("sha256").GetString());
         Assert.Equal("9.9.9", info.GetProperty("version").GetString());
         Assert.False(info.GetProperty("signed").GetBoolean());
+        Assert.False(info.GetProperty("selfSigned").GetBoolean());
         Assert.Equal(4096, info.GetProperty("sizeBytes").GetInt64());
+
+        // Self-signed build (New-CodeSigningCertificate.ps1): reported as such, never as a plain trusted signature.
+        var manifest = Path.Combine(_app.PackagesDirectory, "HvPortal.Agent-win-x64.json");
+        await File.WriteAllTextAsync(manifest,
+            """{ "version": "9.9.9", "signed": true, "signer": "CN=NEXQ S.r.l., O=NEXQ S.r.l., C=IT", "selfSigned": true }""");
+        info = (await (await c.GetAsync("/api/v1/downloads")).JsonAsync()).GetProperty("agent");
+        Assert.True(info.GetProperty("signed").GetBoolean());
+        Assert.True(info.GetProperty("selfSigned").GetBoolean());
+        Assert.Equal("CN=NEXQ S.r.l., O=NEXQ S.r.l., C=IT", info.GetProperty("signer").GetString());
+        // An inconsistent manifest (self-signed but not signed) never turns into a signature.
+        await File.WriteAllTextAsync(manifest, """{ "version": "9.9.9", "signed": false, "selfSigned": true }""");
+        info = (await (await c.GetAsync("/api/v1/downloads")).JsonAsync()).GetProperty("agent");
+        Assert.False(info.GetProperty("signed").GetBoolean());
+        Assert.False(info.GetProperty("selfSigned").GetBoolean());
 
         var r = await c.GetAsync("/api/v1/downloads/agent");
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);

@@ -49,6 +49,27 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
 
     public void Disconnect(Guid hostId, string reason) => _connected[hostId] = false;
 
+    // ---- management agents: only the calls are recorded (routing is covered by AgentConnectionManager's own logic).
+    private readonly ConcurrentDictionary<Guid, bool> _managementConnected = new();
+    public ConcurrentQueue<Guid> Reconfigured { get; } = new();
+    public ConcurrentQueue<Guid> ManagementDisconnected { get; } = new();
+
+    public void ConnectManagementAgent(Guid agentId) => _managementConnected[agentId] = true;
+
+    public bool IsManagementAgentConnected(Guid agentId) => _managementConnected.TryGetValue(agentId, out var c) && c;
+
+    public Task ReconfigureManagementAgentAsync(Guid agentId, CancellationToken ct)
+    {
+        Reconfigured.Enqueue(agentId);
+        return Task.CompletedTask;
+    }
+
+    public void DisconnectManagementAgent(Guid agentId, string reason)
+    {
+        _managementConnected[agentId] = false;
+        ManagementDisconnected.Enqueue(agentId);
+    }
+
     public Task<AgentCommandResult> SendAsync(Guid hostId, AgentCommand command, Action<AgentCommandProgress>? onProgress, TimeSpan timeout, CancellationToken ct)
     {
         if (!IsConnected(hostId))

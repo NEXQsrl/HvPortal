@@ -10,24 +10,37 @@ namespace HvPortal.Agent.HyperV;
 /// Runs the fixed operations script (Ops\HvPortal.Ops.ps1, shipped with the agent and read-only for the service)
 /// in Windows PowerShell 5.1 with the Hyper-V module. The request is a JSON document on stdin; the script never
 /// evaluates caller-provided code. Arguments are validated here first (same rules as the gateway).
+/// Remote target (management agent): the fixed launcher Ops\HvPortal.Remote.ps1 runs the same operations script on the
+/// host with Invoke-Command -FilePath (WinRM); the credentials travel on the launcher's stdin together with the request.
+/// File-system operations go through <see cref="HostFileAccess"/> (administrative shares for remote hosts).
 /// </summary>
 public sealed class PowerShellOperationRunner
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
-    private readonly ILogger<PowerShellOperationRunner> _logger;
+    private readonly ILogger _logger;
     private readonly string _scriptPath;
+    private readonly string _remoteLauncherPath;
     private readonly string _powershell;
+    private readonly HostTarget _target;
+    private readonly HostFileAccess _files;
 
-    public PowerShellOperationRunner(ILogger<PowerShellOperationRunner> logger)
+    public PowerShellOperationRunner(ILogger<PowerShellOperationRunner> logger) : this(logger, HostTarget.Local, HostFileAccess.Local)
+    {
+    }
+
+    public PowerShellOperationRunner(ILogger logger, HostTarget target, HostFileAccess files)
     {
         _logger = logger;
+        _target = target;
+        _files = files;
         _scriptPath = Path.Combine(AppContext.BaseDirectory, "Ops", "HvPortal.Ops.ps1");
+        _remoteLauncherPath = Path.Combine(AppContext.BaseDirectory, "Ops", "HvPortal.Remote.ps1");
         _powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
     }
 
     public async Task<HvOperationOutcome> RunAsync(HvOperation operation, JsonElement? args, TimeSpan? timeout, CancellationToken ct)
     {
-        var validation = Validate(operation, args);
+        var validation = Validate(operation, args, _files);
         if (validation is not null)
         {
             return new HvOperationOutcome { Ok = false, Error = "Rejected by agent validation: " + validation };
@@ -40,23 +53,26 @@ public sealed class PowerShellOperationRunner
             {
                 object? result = operation switch
                 {
-                    HvOperation.ListFolder => HostFileService.List(HvOperations.FromElement<FileListRequest>(args)!),
-                    HvOperation.ReadFile => HostFileService.Read(HvOperations.FromElement<FileReadRequest>(args)!),
-                    HvOperation.WriteFileBegin => HostFileService.Begin(HvOperations.FromElement<FileWriteBeginRequest>(args)!),
+                    HvOperation.ListFolder => HostFileService.List(HvOperations.FromElement<FileListRequest>(args)!, _files),
+                    HvOperation.ReadFile => HostFileService.Read(HvOperations.FromElement<FileReadRequest>(args)!, _files),
+                    HvOperation.WriteFileBegin => HostFileService.Begin(HvOperations.FromElement<FileWriteBeginRequest>(args)!, _files),
                     HvOperation.WriteFileChunk => new { written = await HostFileService.ChunkAsync(HvOperations.FromElement<FileWriteChunkRequest>(args)!, ct) },
                     HvOperation.WriteFileCommit => HostFileService.Commit(HvOperations.FromElement<FileWriteCommitRequest>(args)!),
                     _ => Aborted(HvOperations.FromElement<FileWriteAbortRequest>(args)!),
                 };
                 return new HvOperationOutcome { Ok = true, Result = HvOperations.ToElement(result) };
             }
-            catch (Exception ex) when (ex is HostPathException or IOException or UnauthorizedAccessException or FormatException)
+            catch (Exception ex) when (ex is HostPathException or IOException or UnauthorizedAccessException or FormatException
+                                           or System.Management.ManagementException or System.Runtime.InteropServices.COMException)
             {
                 return new HvOperationOutcome
                 {
                     Ok = false,
                     Error = ex switch
                     {
-                        UnauthorizedAccessException => "access_denied: access denied for the agent service account.",
+                        UnauthorizedAccessException when _target.IsLocal => "access_denied: access denied for the agent service account.",
+                        UnauthorizedAccessException => $"access_denied: access denied by {_target.Display} for {_target.UserName} (administrative share).",
+                        System.Management.ManagementException or System.Runtime.InteropServices.COMException => $"host_unreachable: {ex.Message}",
                         FormatException => "invalid_data: chunk is not valid base64.",
                         _ => ex.Message,
                     },
@@ -68,20 +84,36 @@ public sealed class PowerShellOperationRunner
             // Plain file-system listing: done in-process (no PowerShell, nothing modified).
             try
             {
-                var listing = HostFolderBrowser.Browse(HvOperations.FromElement<FolderBrowseRequest>(args)!);
+                var listing = HostFolderBrowser.Browse(HvOperations.FromElement<FolderBrowseRequest>(args)!, _files);
                 return new HvOperationOutcome { Ok = true, Result = HvOperations.ToElement(listing) };
             }
-            catch (Exception ex) when (ex is HostPathException or IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (ex is HostPathException or IOException or UnauthorizedAccessException
+                                           or System.Management.ManagementException or System.Runtime.InteropServices.COMException)
             {
-                return new HvOperationOutcome { Ok = false, Error = ex is UnauthorizedAccessException ? "Access denied to the folder for the agent service account." : ex.Message };
+                return new HvOperationOutcome
+                {
+                    Ok = false,
+                    Error = ex is UnauthorizedAccessException
+                        ? (_target.IsLocal ? "Access denied to the folder for the agent service account." : $"Access denied by {_target.Display} (administrative share).")
+                        : ex.Message,
+                };
             }
         }
-        if (!File.Exists(_scriptPath))
+        if (!File.Exists(_scriptPath) || (!_target.IsLocal && !File.Exists(_remoteLauncherPath)))
         {
             return new HvOperationOutcome { Ok = false, Error = "Operations script missing from the agent installation." };
         }
 
         var request = JsonSerializer.Serialize(new { op = operation.ToString(), args }, AgentProtocol.Json);
+        if (!_target.IsLocal)
+        {
+            // The launcher receives the target (with the password) and the unchanged request on stdin: nothing on the command line.
+            request = JsonSerializer.Serialize(new
+            {
+                target = new { computerName = _target.ComputerName, userName = _target.UserName, password = _target.RevealPassword(), useHttps = _target.UseHttps },
+                request,
+            }, AgentProtocol.Json);
+        }
         var psi = new ProcessStartInfo
         {
             FileName = _powershell,
@@ -95,7 +127,7 @@ public sealed class PowerShellOperationRunner
             StandardInputEncoding = new UTF8Encoding(false),
         };
         // Fixed argument list (no caller data on the command line).
-        foreach (var a in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", _scriptPath })
+        foreach (var a in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", _target.IsLocal ? _scriptPath : _remoteLauncherPath })
         {
             psi.ArgumentList.Add(a);
         }
@@ -127,7 +159,7 @@ public sealed class PowerShellOperationRunner
 
         var output = (await stdout).Trim();
         var errors = (await stderr).Trim();
-        _logger.LogInformation("Hyper-V operation {Operation} finished in {Ms} ms (exit {Code})", operation, sw.ElapsedMilliseconds, process.ExitCode);
+        _logger.LogInformation("Hyper-V operation {Operation} on {Host} finished in {Ms} ms (exit {Code})", operation, _target.Display, sw.ElapsedMilliseconds, process.ExitCode);
         if (output.Length == 0)
         {
             return new HvOperationOutcome { Ok = false, Error = "No output from the operations script. " + Truncate(errors, 500) };
@@ -159,7 +191,7 @@ public sealed class PowerShellOperationRunner
         return new { aborted = true };
     }
 
-    internal static string? Validate(HvOperation operation, JsonElement? args)
+    internal static string? Validate(HvOperation operation, JsonElement? args, HostFileAccess? files = null)
     {
         try
         {
@@ -187,7 +219,7 @@ public sealed class PowerShellOperationRunner
                     }
                     if (n.Location is { } location)
                     {
-                        HostFolderBrowser.CheckFolder(location, mustExist: false);
+                        HostFolderBrowser.CheckFolder(location, mustExist: false, files);
                     }
                     return null;
                 case HvOperation.BrowseFolders:

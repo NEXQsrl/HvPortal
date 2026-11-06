@@ -25,7 +25,8 @@ switch (verb)
         using (var c = store.LoadCertificate())
         {
             Console.WriteLine($"Gateway:      {st.GatewayUrl}");
-            Console.WriteLine($"Host id:      {st.HostId}");
+            Console.WriteLine($"Role:         {st.Role}");
+            Console.WriteLine(st.Role == AgentRole.Management ? $"Agent id:     {st.HostId}" : $"Host id:      {st.HostId}");
             Console.WriteLine($"Enrolled:     {st.EnrolledAtUtc:u}");
             Console.WriteLine($"Certificate:  {c?.Thumbprint} valid until {c?.NotAfter.ToUniversalTime():u}");
         }
@@ -59,6 +60,7 @@ builder.Services.AddSingleton<IHyperVHost, WmiHyperVHost>();
 builder.Services.AddSingleton<PowerShellOperationRunner>();
 builder.Services.AddSingleton<ConsoleService>();
 builder.Services.AddSingleton<CommandExecutor>();
+builder.Services.AddSingleton<RemoteTargetRegistry>();
 builder.Services.AddHostedService<GatewayChannelService>();
 var app = builder.Build();
 await app.RunAsync();
@@ -88,7 +90,9 @@ static async Task<int> EnrollAsync(AgentIdentityStore store, string[] a)
     try
     {
         var state = await new EnrollmentClient(store).EnrollAsync(gw, token, fp, CancellationToken.None);
-        Console.WriteLine($"Enrolled as host {state.HostId}. Data directory: {store.DataDirectory}");
+        Console.WriteLine(state.Role == AgentRole.Management
+            ? $"Enrolled as management agent {state.HostId}. Assign remote hosts to it in the portal. Data directory: {store.DataDirectory}"
+            : $"Enrolled as host {state.HostId}. Data directory: {store.DataDirectory}");
         Console.WriteLine("Start the service: Start-Service HvPortalAgent");
         return 0;
     }

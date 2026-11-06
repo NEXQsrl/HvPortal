@@ -35,6 +35,17 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 - Agent protocol 3 (agent 0.3.1): `BrowseFolders`, `NewVm.Location`; the gateway never sends them to older agents;
   agents reply `Rejected` to commands they cannot parse instead of dropping the channel.
 
+## v0.4.0 — delivered (code + automated tests; real-host validation pending)
+- Management agents (ADR-022): remote Hyper-V hosts (e.g. workgroup) managed from a management server with
+  credentials stored encrypted in the portal; one management agent for many hosts; agent protocol 6. The agent on the
+  host remains the recommended mode. Real-host plan V29–V34.
+- UI: copy buttons show only the icon (label as tooltip); VM settings show the current size of each virtual disk,
+  validate the new size against it (must be larger, whole GB) and offer *Cancel resize*.
+- VM settings on a running VM lock every field Hyper-V cannot change online (automatic stop action, startup memory
+  with dynamic memory, dynamic range only widened, DVD add, Gen1 NIC/disk add, IDE/VHD expansion) and *Apply* refuses
+  drafts that still contain such changes; the gateway also refuses automatic stop action and Gen1 hot-add (409
+  `requires_off`). Search palette centred on screen. Real-host plan V35.
+
 ## v0.3.4 — delivered (code + automated tests; real-tenant validation pending)
 - Microsoft Entra ID sign-in configured from Settings, pre-provisioned Microsoft users, Entra re-authentication
   (ADR-019). New user dialog: type (local / Microsoft), role and scope, MFA at first sign-in for local users.

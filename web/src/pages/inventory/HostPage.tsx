@@ -1,5 +1,5 @@
 import { ChevronDown, Clock, Cpu, FolderOpen, MemoryStick, Monitor, Plus, RefreshCw, Server, Trash2 } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { get, put } from '@/api/client';
 import type { HostDiskRow, IsosResponse, SwitchInfo } from '@/api/ops-types';
@@ -104,6 +104,11 @@ function HostSummary({ host: h, running }: { host: Host; running: number }) {
             [t('host.domain'), h.os ? `${h.os.domain ?? '—'}${h.os.partOfDomain ? '' : ' (workgroup)'}` : '—'],
             [t('host.edition'), h.edition], [t('host.platform'), h.platform], [t('host.support'), h.support],
             [t('host.connection'), `${h.agentVersion ?? '—'} · ${t('host.lastInventory')}: ${fmtDate(h.lastInventoryAt)}`],
+            ...(h.connectionMode === 'Remote' ? [[
+              t('host.connectionMode'),
+              <span key="remote">{t('remote.via', { agent: h.managementAgentName ?? '—' })}
+                {h.remote && <span className="block text-xs text-muted-foreground">{`${h.remote.computerName} · ${h.remote.userName} · WinRM ${h.remote.useHttps ? 'HTTPS' : 'HTTP'}`}</span>}</span>,
+            ] as [string, ReactNode]] : []),
           ]} />
         </Section>
         <Section title={t('host.capabilities')}>

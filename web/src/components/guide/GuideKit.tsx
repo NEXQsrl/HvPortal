@@ -69,9 +69,12 @@ export function PackageDownload({ help }: { help?: ReactNode }) {
       <div className="flex flex-wrap items-center gap-2">
         <Button asChild size="sm"><a href="/api/v1/downloads/agent" download={AGENT_ZIP}><Download />{t('guide.s2.download')}</a></Button>
         <span className="text-xs text-muted-foreground">{a.version ?? ''} · {formatBytes(a.sizeBytes)}</span>
-        {a.signed ? <StatusBadge tone="ok">{t('guide.s2.signed')}</StatusBadge> : <StatusBadge tone="warn">{t('guide.s2.unsigned')}</StatusBadge>}
+        {!a.signed ? <StatusBadge tone="warn">{t('guide.s2.unsigned')}</StatusBadge>
+          : a.selfSigned ? <StatusBadge tone="warn" title={a.signer ?? undefined}>{t('guide.s2.selfSigned')}</StatusBadge>
+            : <StatusBadge tone="ok" title={a.signer ?? undefined}>{t('guide.s2.signed')}</StatusBadge>}
       </div>
       {!a.signed && <p className="text-xs text-muted-foreground">{t('guide.s2.unsignedHelp')}</p>}
+      {a.signed && a.selfSigned && <p className="text-xs text-muted-foreground">{t('guide.s2.selfSignedHelp', { signer: a.signer ?? '' })}</p>}
       <div className="text-xs text-muted-foreground">SHA-256</div>
       <div className="flex items-center gap-2">
         <code className="secret pkg-hash flex-1 rounded-md border bg-muted px-2 py-1 font-mono text-xs break-all">{a.sha256}</code>

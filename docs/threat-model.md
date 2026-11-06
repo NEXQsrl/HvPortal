@@ -1,4 +1,4 @@
-# Threat model (v0.3)
+# Threat model (v0.4)
 
 ## Assets
 A1 control of VMs and hosts · A2 portal credentials, sessions, MFA secrets · A3 agent identities and the internal CA ·
@@ -28,7 +28,9 @@ B3 gateway process ↔ its data directory · B4 agent ↔ Hyper-V WMI (local) ·
 | D2 | Job flooding | per-VM locks, bounded concurrency, idempotency keys | dedicated per-user quotas (M2) |
 | E1 | Horizontal escalation (other VMs) | scope evaluation at request and job time; disks/networks/groups features will validate every referenced resource | — |
 | E2 | Vertical escalation via role management | anti-escalation rules (see security model), tests | — |
-| E3 | Gateway compromise → host takeover | gateway has no host credentials; agent only accepts typed operations; no arbitrary execution endpoint | attacker can still power off/on VMs the agent can manage |
+| E3 | Gateway compromise → host takeover | gateway has no host credentials (except remote hosts, see T13); agent only accepts typed operations; no arbitrary execution endpoint | attacker can still power off/on VMs the agent can manage |
+| T13 | Theft of remote-host credentials (management agents, ADR-022) | opt-in per host; password AES-256-GCM with the key ring, bound to the host id; write-only API, not audited; only `hosts.manage` (global) + recent re-auth can set it; sent only to the assigned management agent over mutual TLS; agent keeps it in memory (SecureString), never on disk, dropped on disconnect; inventory for unassigned hosts discarded; WinRM without disabled certificate checks | a holder of the gateway database **and** key ring (or of the management agent's memory) obtains host administrator passwords: use a dedicated host account, prefer the agent on the host, rotate the password when a gateway or management server is rebuilt |
+| S5 | Rogue management agent reporting other hosts | each inventory accepted only for hosts assigned to the reporting agent; commands stamped with the target by the gateway | a compromised management server controls the hosts assigned to it |
 | E4 | Command injection in WMI/PowerShell | WQL built only from GUIDs formatted by the agent; PowerShell only through one fixed script with a fixed command line, JSON on stdin, closed operation switch, typed named parameters, no `Invoke-Expression`/script blocks (unit test enforced), validation at API, job execution and agent; sanitizer for free-text reason | notes are free text passed as a typed `-Notes` value (never evaluated) |
 | E6 | Console hijacking (ticket theft, cross-site WebSocket, lingering access) | one-time 30 s ticket bound to user+session+VM, sent in the first message (not in URLs), Origin required, SameSite cookie, permission/session re-check every 60 s, idle/absolute timeouts, input validation, audit open/close | a user who may open the console can type into the VM like at a physical keyboard: grant `vm.console` accordingly |
 | E7 | Escalation through group membership/moves | access-change guard (ADR-015): gaining Allow or losing Deny via groups needs `roles.manage` + held permissions; tests | — |

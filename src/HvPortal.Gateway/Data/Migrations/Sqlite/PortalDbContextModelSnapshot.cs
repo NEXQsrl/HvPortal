@@ -482,6 +482,11 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(1024)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ConnectionMode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
@@ -526,6 +531,26 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(1024)
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("ManagementAgentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RemoteComputerName")
+                        .HasMaxLength(253)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("RemoteCredentialUpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<byte[]>("RemotePasswordEncrypted")
+                        .HasColumnType("BLOB");
+
+                    b.Property<bool>("RemoteUseHttps")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RemoteUserName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -547,7 +572,54 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.HasIndex("DisplayName")
                         .IsUnique();
 
+                    b.HasIndex("ManagementAgentId");
+
                     b.ToTable("Hosts");
+                });
+
+            modelBuilder.Entity("HvPortal.Gateway.Data.ManagementAgent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AgentVersion")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("EnrolledAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LastSeenAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MachineName")
+                        .HasMaxLength(63)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DisplayName")
+                        .IsUnique();
+
+                    b.ToTable("ManagementAgents");
                 });
 
             modelBuilder.Entity("HvPortal.Gateway.Data.MfaChallenge", b =>

@@ -24,6 +24,8 @@
   <ItemGroup>
     <!-- Fixed operations script, read-only for the service. Signed together with the binaries in release builds. -->
     <None Include="Ops\HvPortal.Ops.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Management agents: fixed launcher that runs HvPortal.Ops.ps1 on a remote host (Invoke-Command -FilePath). -->
+    <None Include="Ops\HvPortal.Remote.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

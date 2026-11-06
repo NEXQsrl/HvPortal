@@ -105,6 +105,26 @@ export interface Host {
   canBrowseFiles?: boolean;
   vmGroupsSyncedAt?: string | null;
   vmGroupsSyncError?: string | null;
+  /** Agent: an agent runs on the host. Remote: reached by a management agent with stored credentials. */
+  connectionMode?: 'Agent' | 'Remote';
+  managementAgentId?: string | null;
+  managementAgentName?: string | null;
+  /** Only for global host administrators; the password is never returned. */
+  remote?: { computerName: string; userName: string; useHttps: boolean; credentialUpdatedAt: string | null } | null;
+}
+
+export interface ManagementAgent {
+  id: string;
+  displayName: string;
+  description: string | null;
+  machineName: string | null;
+  agentVersion: string | null;
+  status: 'Pending' | 'Active' | 'Revoked';
+  connected: boolean;
+  createdAt: string;
+  enrolledAt: string | null;
+  lastSeenAt: string | null;
+  hostCount: number;
 }
 
 export interface InventoryEvent { id: number; hostId: string; vmId: string | null; kind: string; details: string | null; at: string }
@@ -263,6 +283,8 @@ export interface EnrollmentInfo {
   bindAddress: string;
   command: string;
   note: string;
+  /** Token of a management agent (install with -Management). */
+  management?: boolean;
 }
 
 export interface PackageInfo {
@@ -273,4 +295,6 @@ export interface PackageInfo {
   builtAtUtc: string | null;
   signed: boolean;
   signer: string | null;
+  /** Signed with a self-signed certificate: trusted only where HvPortal-CodeSigning.cer is imported. */
+  selfSigned: boolean;
 }

@@ -42,7 +42,8 @@ public static class InventoryEndpoints
 
     // ------------------------------------------------------------------ hosts
 
-    private static object HostDto(ManagedHost h, bool connected, int vmCount, DateTimeOffset now, bool canCreateVm = false)
+    private static object HostDto(ManagedHost h, bool connected, int vmCount, DateTimeOffset now, bool canCreateVm = false,
+        bool showRemote = false, string? managementAgentName = null)
     {
         var facts = h.HostFactsJson is null ? null : JsonSerializer.Deserialize<HostFacts>(h.HostFactsJson);
         var eval = HostCapabilities.Evaluate(facts, h.Access);
@@ -85,8 +86,18 @@ public static class InventoryEndpoints
             canBrowseFiles = connected && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 3),
             vmGroupsSyncedAt = h.VmGroupsSyncedAt,
             vmGroupsSyncError = h.VmGroupsSyncError,
+            connectionMode = h.ConnectionMode.ToString(),
+            managementAgentId = h.ManagementAgentId,
+            managementAgentName,
+            // Connection details only for host administrators; the password is never returned.
+            remote = h.ConnectionMode == HostConnectionMode.Remote && showRemote
+                ? new { computerName = h.RemoteComputerName, userName = h.RemoteUserName, useHttps = h.RemoteUseHttps, credentialUpdatedAt = h.RemoteCredentialUpdatedAt }
+                : null,
         };
     }
+
+    private static async Task<Dictionary<Guid, string>> ManagementAgentNamesAsync(PortalDbContext db, CancellationToken ct) =>
+        await db.ManagementAgents.AsNoTracking().ToDictionaryAsync(a => a.Id, a => a.DisplayName, ct);
 
     private static async Task<IResult> ListHostsAsync(HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents, TimeProvider time)
     {
@@ -96,13 +107,15 @@ public static class InventoryEndpoints
         var counts = await db.VirtualMachines.AsNoTracking().Where(v => !v.IsMissing).GroupBy(v => v.HostId)
             .Select(g => new { g.Key, n = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.n, http.RequestAborted);
         var now = time.GetUtcNow();
+        var agentNames = await ManagementAgentNamesAsync(db, http.RequestAborted);
         var result = new List<object>();
         foreach (var h in hosts)
         {
             if (manageAll || await access.CanSeeHostAsync(uid, h.Id, http.RequestAborted))
             {
                 result.Add(HostDto(h, agents.IsConnected(h.Id), counts.GetValueOrDefault(h.Id), now,
-                    await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(h.Id), http.RequestAborted)));
+                    await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(h.Id), http.RequestAborted),
+                    manageAll, h.ManagementAgentId is { } ma ? agentNames.GetValueOrDefault(ma) : null));
             }
         }
         return Results.Ok(result);
@@ -112,15 +125,18 @@ public static class InventoryEndpoints
     {
         var uid = http.User.UserId();
         var h = await db.Hosts.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, http.RequestAborted);
-        if (h is null || !(await access.HasAsync(uid, Permissions.HostsManage, ResourceRef.Global, http.RequestAborted)
-                           || await access.CanSeeHostAsync(uid, id, http.RequestAborted)))
+        var manageAll = await access.HasAsync(uid, Permissions.HostsManage, ResourceRef.Global, http.RequestAborted);
+        if (h is null || !(manageAll || await access.CanSeeHostAsync(uid, id, http.RequestAborted)))
         {
             return ApiSupport.NotFound();
         }
+        var agentName = h.ManagementAgentId is { } ma
+            ? await db.ManagementAgents.AsNoTracking().Where(a => a.Id == ma).Select(a => a.DisplayName).FirstOrDefaultAsync(http.RequestAborted)
+            : null;
         var count = await db.VirtualMachines.CountAsync(v => v.HostId == id && !v.IsMissing, http.RequestAborted);
         var events = await db.InventoryEvents.AsNoTracking().Where(e => e.HostId == id).OrderByDescending(e => e.Id).Take(50).ToListAsync(http.RequestAborted);
         return Results.Ok(new { host = HostDto(h, agents.IsConnected(id), count, time.GetUtcNow(),
-            await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted)), events });
+            await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted), manageAll, agentName), events });
     }
 
     /// <summary>Connection facts an agent needs: names valid in the gateway certificate, port, CA pin, reachability.</summary>
@@ -146,7 +162,8 @@ public static class InventoryEndpoints
     private static bool IsLoopback(string name) =>
         name is "localhost" or "::1" or "[::1]" || (System.Net.IPAddress.TryParse(name, out var ip) && System.Net.IPAddress.IsLoopback(ip));
 
-    private static object EnrollmentInfo(HttpContext http, InternalCertificateAuthority ca, GatewayOptions options, string token, DateTimeOffset expires)
+    internal static object EnrollmentInfo(HttpContext http, InternalCertificateAuthority ca, GatewayOptions options, string token, DateTimeOffset expires,
+        bool management = false)
     {
         var c = GatewayConnectionInfo(http, ca, options);
         var url = c.GatewayAgentUrl;
@@ -160,7 +177,9 @@ public static class InventoryEndpoints
             agentPort = options.AgentPort,
             listensOnNetwork = c.ListensOnNetwork,
             bindAddress = c.BindAddress,
-            command = $"$env:HVP_ENROLLMENT_TOKEN = '<token>'; .\\Install-Agent.ps1 -Source ..\\agent -Gateway {url} -CaSha256 {ca.CaFingerprintSha256}",
+            command = $"$env:HVP_ENROLLMENT_TOKEN = '<token>'; .\\Install-Agent.ps1 -Source ..\\agent -Gateway {url} -CaSha256 {ca.CaFingerprintSha256}"
+                      + (management ? " -Management" : ""),
+            management,
             note = "The token is shown only once and expires quickly. Verify the CA fingerprint out of band.",
         };
     }
@@ -206,9 +225,14 @@ public static class InventoryEndpoints
         {
             return denied;
         }
-        if (!await db.Hosts.AnyAsync(h => h.Id == id, http.RequestAborted))
+        var mode = await db.Hosts.Where(h => h.Id == id).Select(h => (HostConnectionMode?)h.ConnectionMode).FirstOrDefaultAsync(http.RequestAborted);
+        if (mode is null)
         {
             return ApiSupport.NotFound();
+        }
+        if (mode == HostConnectionMode.Remote)
+        {
+            return ApiSupport.BadRequest("remote_host_not_enrolled", "This host is reached through a management agent: it has no agent to enroll.");
         }
         var (token, expires) = await enrollment.CreateTokenAsync(id, http.User.UserId(), http.RequestAborted);
         await http.WriteAuditAsync("hosts.enrollment_token", resourceType: "host", resourceId: id.ToString("D"), details: new { expires });
@@ -234,6 +258,11 @@ public static class InventoryEndpoints
         await db.EnrollmentTokens.Where(t => t.HostId == id && t.ConsumedAt == null)
             .ExecuteUpdateAsync(u => u.SetProperty(t => t.ExpiresAt, now), http.RequestAborted);
         agents.Disconnect(id, "host revoked");
+        if (host.ManagementAgentId is { } managementAgent)
+        {
+            // Remote host: the management agent drops its credentials from memory.
+            await agents.ReconfigureManagementAgentAsync(managementAgent, http.RequestAborted);
+        }
         await http.WriteAuditAsync("hosts.revoke", resourceType: "host", resourceId: id.ToString("D"), details: new { certificatesRevoked = certs });
         return Results.NoContent();
     }

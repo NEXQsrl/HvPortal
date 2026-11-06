@@ -33,6 +33,7 @@ public sealed class EnrollmentService
         _options = options.Value;
     }
 
+    /// <param name="hostId">A host id or a management agent id.</param>
     public async Task<(string Token, DateTimeOffset ExpiresAt)> CreateTokenAsync(Guid hostId, Guid createdBy, CancellationToken ct)
     {
         var now = _time.GetUtcNow();
@@ -97,33 +98,51 @@ public sealed class EnrollmentService
             throw await Reject("token race lost", token.HostId);
         }
 
-        var host = await _db.Hosts.FirstAsync(h => h.Id == token.HostId, ct);
+        // The token subject is either a host (agent on the host) or a management agent (remote hosts, ADR-022).
+        var host = await _db.Hosts.FirstOrDefaultAsync(h => h.Id == token.HostId, ct);
+        var management = host is null ? await _db.ManagementAgents.FirstOrDefaultAsync(a => a.Id == token.HostId, ct) : null;
+        if (host is { ConnectionMode: HostConnectionMode.Remote } || (host is null && management is null))
+        {
+            throw await Reject(host is null ? "token subject deleted" : "remote hosts are not enrolled", token.HostId);
+        }
+        var subjectId = host?.Id ?? management!.Id;
         IssuedCertificate issued;
         try
         {
-            issued = _ca.IssueAgentCertificate(request.CsrPem, host.Id, TimeSpan.FromDays(_options.Security.AgentCertificateDays));
+            issued = _ca.IssueAgentCertificate(request.CsrPem, subjectId, TimeSpan.FromDays(_options.Security.AgentCertificateDays));
         }
         catch (CertificateRequestRejectedException ex)
         {
-            throw await Reject("csr rejected: " + ex.Message, host.Id);
+            throw await Reject("csr rejected: " + ex.Message, subjectId);
         }
 
-        // Re-enrollment replaces the identity: every previous certificate of this host is revoked.
-        await _db.AgentCertificates.Where(c => c.HostId == host.Id && c.RevokedAt == null)
+        // Re-enrollment replaces the identity: every previous certificate of this subject is revoked.
+        await _db.AgentCertificates.Where(c => c.HostId == subjectId && c.RevokedAt == null)
             .ExecuteUpdateAsync(u => u.SetProperty(c => c.RevokedAt, now).SetProperty(c => c.RevokedReason, "re-enrolled"), ct);
         _db.AgentCertificates.Add(new AgentCertificate
         {
-            HostId = host.Id,
+            HostId = subjectId,
             ThumbprintSha256 = issued.ThumbprintSha256,
             SerialNumber = issued.SerialNumber,
             NotBefore = issued.NotBefore,
             NotAfter = issued.NotAfter,
             IssuedAt = now,
         });
-        host.Status = HostStatus.Active;
-        host.EnrolledAt = now;
-        host.MachineName = Sanitize(request.MachineName, 63);
-        host.AgentVersion = Sanitize(request.AgentVersion, 32);
+        var machine = Sanitize(request.MachineName, 63);
+        if (host is not null)
+        {
+            host.Status = HostStatus.Active;
+            host.EnrolledAt = now;
+            host.MachineName = machine;
+            host.AgentVersion = Sanitize(request.AgentVersion, 32);
+        }
+        else
+        {
+            management!.Status = HostStatus.Active;
+            management.EnrolledAt = now;
+            management.MachineName = machine;
+            management.AgentVersion = Sanitize(request.AgentVersion, 32);
+        }
         await _db.SaveChangesAsync(ct);
 
         await _audit.WriteAsync(new AuditRecord
@@ -131,16 +150,17 @@ public sealed class EnrollmentService
             Action = "agent.enroll",
             AuthMethod = "enrollment-token",
             SourceIp = sourceIp,
-            ResourceType = "host",
-            ResourceId = host.Id.ToString("D"),
-            Details = new { machine = host.MachineName, serial = issued.SerialNumber, notAfter = issued.NotAfter },
+            ResourceType = host is not null ? "host" : "management_agent",
+            ResourceId = subjectId.ToString("D"),
+            Details = new { machine, serial = issued.SerialNumber, notAfter = issued.NotAfter },
         }, ct);
 
         return new EnrollmentResponse
         {
-            HostId = host.Id,
+            HostId = subjectId,
             CertificatePem = issued.CertificatePem,
             CaCertificatePem = _ca.CaCertificate.ExportCertificatePem(),
+            Role = host is not null ? AgentRole.Host : AgentRole.Management,
         };
     }
 

@@ -159,11 +159,13 @@ export function StatCard({ icon, label, value, sub, meter, className }: {
 export function CopyButton({ text, className }: { text: string; className?: string }) {
   const { t } = useI18n();
   const [done, setDone] = useState(false);
+  const label = done ? t('common.copied') : t('common.copy');
+  // Icon only; the label stays available as tooltip and accessible name.
   return (
-    <Button type="button" variant="outline" size="sm" className={className} onClick={async () => {
+    <Button type="button" variant="outline" size="icon-sm" className={className} aria-label={label} title={label} onClick={async () => {
       try { await navigator.clipboard.writeText(text); setDone(true); window.setTimeout(() => setDone(false), 1500); } catch { /* clipboard blocked */ }
     }}>
-      {done ? <Check /> : <Copy />}{done ? t('common.copied') : t('common.copy')}
+      {done ? <Check /> : <Copy />}
     </Button>
   );
 }

@@ -14,7 +14,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       platforms: ["linux/amd64"]
-    image: ${HVP_IMAGE:-hvportal-gateway:0.3.4}
+    image: ${HVP_IMAGE:-hvportal-gateway:0.4.0}
     pull_policy: build
     container_name: hvportal-gateway
     restart: unless-stopped

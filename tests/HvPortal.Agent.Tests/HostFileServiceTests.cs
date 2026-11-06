@@ -15,12 +15,12 @@ public sealed class HostFileServiceTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         // The real rule refuses C:\Users (where the temp folder is): these tests check the transfer logic in a temp folder.
-        HostFileService.CheckFolder = (p, mustExist) => Directory.Exists(p) || !mustExist ? Path.GetFullPath(p) : throw new HostPathException("not_found: folder");
+        HostFileService.CheckFolder = (p, mustExist, _) => Directory.Exists(p) || !mustExist ? Path.GetFullPath(p) : throw new HostPathException("not_found: folder");
     }
 
     public void Dispose()
     {
-        HostFileService.CheckFolder = HostFolderBrowser.CheckFolder;
+        HostFileService.CheckFolder = (p, mustExist, fs) => HostFolderBrowser.CheckFolder(p, mustExist, fs);
         Directory.Delete(_root, recursive: true);
     }
 

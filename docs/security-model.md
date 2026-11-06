@@ -104,6 +104,15 @@ certificate against the pinned CA only (Windows trust store ignored) and rejects
 4 MB; commands are a closed enum; VM ids are GUIDs formatted by the agent before being placed in WQL; shutdown reasons
 are sanitized. The agent never receives scripts, paths or WQL from the gateway.
 
+**Management agents (ADR-022, opt-in per host).** A management agent is enrolled like a host agent but its certificate
+subject is a management agent record; it receives the credentials of the remote hosts assigned to it
+(`TargetsConfiguration`) over the same mutual-TLS channel, keeps them in memory only and forgets them when the channel
+closes or the host is revoked/deleted/moved. The gateway stamps every command with the target host and accepts
+inventory only for hosts assigned to the reporting agent. Toward the host the agent uses WMI/DCOM with packet privacy,
+WinRM (`Invoke-Command -FilePath` of the fixed operations script; HTTP 5985 is encrypted by Negotiate/NTLM, HTTPS 5986
+uses normal certificate validation — no skip options) and SMB administrative shares with `LOGON32_LOGON_NEW_CREDENTIALS`.
+The management server needs no local Hyper-V rights (the service account is not added to *Hyper-V Administrators*).
+
 ## Keys and secrets
 
 | Material | Storage | Protection | Recovery |
@@ -111,6 +120,7 @@ are sanitized. The agent never receives scripts, paths or WQL from the gateway.
 | Key ring (AES-256 keys) | `keys\master.json` | DPAPI LocalMachine + ACL | `admin export-keys` (PBKDF2 600k + AES-GCM, passphrase ≥ 20) |
 | Internal CA + server cert | `pki\ca.bin`, `pki\server.bin` | encrypted with key ring + ACL | included in the key export |
 | TOTP secrets | DB | AES-GCM via key ring | needs key ring |
+| Remote host passwords (management agents only) | DB (`Hosts.RemotePasswordEncrypted`) | AES-GCM via key ring, AAD bound to the host id; write-only API; never audited | needs key ring; otherwise re-enter in the portal |
 | Recovery codes, tokens | DB | HMAC / SHA-256 only | not recoverable (by design) |
 | ASP.NET Data Protection keys | `keys\dataprotection` | DPAPI LocalMachine | not needed (sessions re-established) |
 | Agent private key | `<agent data>\identity.bin` | DPAPI LocalMachine + ACL | re-enroll |

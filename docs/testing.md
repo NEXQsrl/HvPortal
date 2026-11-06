@@ -1,5 +1,19 @@
 # Testing
 
+## v0.4.0 — management agents, icon-only copy buttons, disk expansion check (2026-11-06, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 158 | pass — adds management agents / remote hosts (ADR-022): every endpoint refused without global `hosts.manage` (host-scoped admin and read-only user, denial audited, nothing changed); password encrypted with the key ring, bound to the host id, absent from API responses, list and audit, connection details hidden from host viewers, kept on update without password, replaced with a new one; input validation (IP needs `HOST\user`, localhost, UNC, IPv6, bad user, empty password, unknown agent, duplicate computer); no enrollment token for remote hosts; moving a host reconfigures both agents; agent in use cannot be deleted, revoked agent disconnected and refused for new hosts; host delete reconfigures its agent; enrollment of a management agent returns role Management and creates no host |
+| `tests/HvPortal.Agent.Tests` | 97 | pass — adds computer-name and user-name rules, password never in `ToString`, command routing (host agent refuses targeted commands, management agent refuses untargeted or unknown targets, protocol 6 requirement), target registry (unchanged targets kept, changed credentials replaced, invalid skipped), administrative-share path mapping both ways, remote launcher contains a single `Invoke-Command -FilePath` of the fixed script and no dynamic code or certificate-check bypass |
+| `web`: `tsc -b`, `vitest` (IT/EN keys), `vite build` | — | pass |
+| Follow-up (same day): `tests/HvPortal.Gateway.Tests` | 158 | pass — off-only fields extended (automatic stop action; Generation 1 NIC/disk hot-add) in `FieldsRequiringOff`; agent package manifest `selfSigned` reported as such (and never when `signed` is false) |
+| `installer/Build-Release.ps1 -SigningCertificateThumbprint <self-signed NEXQ S.r.l.>` (full, with tests) | 97 + 158 | pass — 12 files (gateway/agent `HvPortal.*.exe/.dll`, every `.ps1`) carry the NEXQ S.r.l. signature (`Get-AuthenticodeSignature`: `UnknownError` = untrusted root on the build machine, expected until the `.cer` is imported); `installer\HvPortal-CodeSigning.cer` in the release and in the agent zip, whose installer scripts are now the signed ones; manifest `signed: true, selfSigned: true` |
+
+Not executed: anything that needs a real remote Hyper-V host (WMI/DCOM, WinRM, SMB with credentials): real-host test
+plan V29–V34; VM settings rules on a running VM: V35. Effect of the self-signed signature on Defender/SmartScreen or
+other antivirus products after importing the certificate was not observed. `web/e2e/ui-smoke.mjs` was not re-run.
+
 ## v0.3.4 — Docker image and settings UI (2026-11-05)
 
 | Check | Result |

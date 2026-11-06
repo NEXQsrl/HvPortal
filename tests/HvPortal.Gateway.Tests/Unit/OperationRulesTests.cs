@@ -40,6 +40,14 @@ public sealed class OperationRulesTests
         Assert.Equal("invalid_disk_size", OperationValidation.Validate(new VmConfigChange { VmId = vm, NewDisk = new NewDiskSpec(0, false) }));
         Assert.Equal(new[] { "processorCount", "dynamicMemoryEnabled", "secureBoot" },
             OperationValidation.FieldsRequiringOff(new VmConfigChange { VmId = vm, ProcessorCount = 2, DynamicMemoryEnabled = true, SecureBootEnabled = false }));
+        // Hot-changeable on any generation; automatic stop action never; hot-add of NIC/disk only on Generation 2.
+        var mixed = new VmConfigChange
+        {
+            VmId = vm, Notes = "x", ProcessorLimit = 50, MemoryBuffer = 30, AutomaticStopAction = "ShutDown",
+            AddNetworkAdapterSwitch = "LAN", NewDisk = new NewDiskSpec(10, false),
+        };
+        Assert.Equal(new[] { "automaticStopAction" }, OperationValidation.FieldsRequiringOff(mixed, 2));
+        Assert.Equal(new[] { "automaticStopAction", "addNetworkAdapter", "newDisk" }, OperationValidation.FieldsRequiringOff(mixed, 1));
     }
 
     [Fact]
