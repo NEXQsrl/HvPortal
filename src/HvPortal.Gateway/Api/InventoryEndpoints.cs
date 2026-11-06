@@ -81,6 +81,9 @@ public static class InventoryEndpoints
             canManageNetworks = canManageNetworks && connected && h.Status == HostStatus.Active && h.Access == HyperVAccessStatus.Ok
                                 && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 5),
             isoLibrary = Jobs.OperationPolicy.IsoRoots(h),
+            // Agent 0.6.0+ (protocol 8): VM templates, kept in this folder of the host (null = not chosen yet).
+            templateLibraryPath = h.TemplateLibraryPath,
+            templates = connected && h.Access == HyperVAccessStatus.Ok && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 6),
             // Agent 0.3.1+ (protocol 3): folder browser for the VM location and ISO files.
             canBrowseFolders = connected && h.Access == HyperVAccessStatus.Ok && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 1),
             // Agent 0.3.2+ (protocol 4): portal groups mirrored as native Hyper-V VM groups.
@@ -312,6 +315,8 @@ public static class InventoryEndpoints
         var canConfigure = await access.HasAsync(uid, Permissions.VmConfigCompute, r, ct) || await access.HasAsync(uid, Permissions.VmConfigStorage, r, ct)
                            || await access.HasAsync(uid, Permissions.VmConfigNetwork, r, ct);
         var canCheckpoint = await access.HasAsync(uid, Permissions.VmCheckpointCreate, r, ct);
+        // Templates are a matter of the host: created by who manages them there (agent 0.6.0+).
+        var canTemplate = await access.HasAsync(uid, Permissions.TemplatesManage, ResourceRef.Host(v.HostId), ct);
         var canApplyCheckpoint = await access.HasAsync(uid, Permissions.VmCheckpointApply, r, ct);
         var allowed = Enum.GetValues<VmPowerOperation>()
             .Where(op => VmPowerRules.IsAllowed(op, v.PowerState) && (VmPowerRules.IsDestructive(op) ? canForce : canPower))
@@ -364,6 +369,7 @@ public static class InventoryEndpoints
             canConsole = canConsole && !v.IsMissing,
             canConfigure = canConfigure && !v.IsMissing,
             canCheckpoint = canCheckpoint && !v.IsMissing,
+            canTemplate = canTemplate && connected && !v.IsMissing && HostCapabilities.AgentAtLeast(host?.AgentVersion, 0, 6),
             canApplyCheckpoint = canApplyCheckpoint && !v.IsMissing,
             destructiveOperations = Enum.GetValues<VmPowerOperation>().Where(VmPowerRules.IsDestructive).Select(o => o.ToString()),
         };

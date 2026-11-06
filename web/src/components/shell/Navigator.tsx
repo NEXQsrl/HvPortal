@@ -1,6 +1,6 @@
-import { Activity, CircleCheck, CircleX, Clock, FileSearch, FolderOpen, HardDrive, KeyRound, ListChecks, Network, ShieldCheck, ShieldX } from 'lucide-react';
+import { Activity, CircleCheck, CircleX, Clock, FileSearch, FolderOpen, HardDrive, KeyRound, LayoutTemplate, ListChecks, Network, ShieldCheck, ShieldX } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { Link, NavLink, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { HostIcon } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { InventoryTree } from '@/components/inventory/InventoryTree';
@@ -19,19 +19,24 @@ function NavIcons() {
   // Planned sections have no page yet: they stay out of the icon row (the command palette still lists them).
   const visible = (n: NavItem) => !n.planned && (!n.permission || n.permission.some(can));
   return (
-    <nav className="nav flex flex-wrap items-center gap-0.5 border-b px-1.5 py-1" aria-label="Main">
-      {NAV_ITEMS.filter(visible).map((n) => (
-        <Tooltip key={n.to}>
-          <TooltipTrigger asChild>
-            <NavLink to={n.to} end={n.end} aria-label={t(n.label as TKey)}
-              className={({ isActive }) => cn('relative flex size-7 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60',
-                (isActive || n.match?.test(pathname)) && 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary')}>
-              <n.icon className="size-4" />
-            </NavLink>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{t(n.label as TKey)}</TooltipContent>
-        </Tooltip>
-      ))}
+    <nav className="nav flex flex-wrap items-center gap-x-1.5 gap-y-1 border-b px-2 py-1.5" aria-label="Main">
+      {NAV_ITEMS.filter(visible).map((n) => {
+        // The class is a plain string: the tooltip trigger merges props into the link, and a className function
+        // (NavLink's own way to mark the current section) would be turned into text, marking every icon as current.
+        const current = n.match ? n.match.test(pathname) : n.end ? pathname === n.to : pathname === n.to || pathname.startsWith(n.to + '/');
+        return (
+          <Tooltip key={n.to}>
+            <TooltipTrigger asChild>
+              <Link to={n.to} aria-label={t(n.label as TKey)} aria-current={current ? 'page' : undefined}
+                className={cn('relative flex h-9 w-7 items-center justify-center rounded-md text-primary outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 dark:text-white',
+                  current && 'bg-primary/15 hover:bg-primary/20 dark:bg-white/15 dark:hover:bg-white/20')}>
+                <n.icon className="size-[18px]" />
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t(n.label as TKey)}</TooltipContent>
+          </Tooltip>
+        );
+      })}
     </nav>
   );
 }
@@ -118,6 +123,10 @@ export function Navigator({ onNavigate }: { onNavigate?: () => void }) {
       if (h.canBrowseFiles) nodes.push({ key: `${h.id}/files`, label: t('sto.tab.files'), icon: <FolderOpen className={muted} />, to: pageLink('/storage', { tab: 'files', host: h.id }), depth: 1 });
     }
     tree = <PageTree title={t('nav.storage')} nodes={nodes} onNavigate={onNavigate} />;
+  } else if (pathname.startsWith('/templates')) {
+    const nodes: PageNode[] = [{ key: 'all', label: t('tpl.all'), icon: <LayoutTemplate className={muted} />, to: '/templates', depth: 0 }];
+    for (const h of inv.hosts) nodes.push({ key: h.id, label: h.displayName, icon: <HostIcon connected={h.connected} access={h.access} />, to: pageLink('/templates', { host: h.id }), depth: 1 });
+    tree = <PageTree title={t('nav.templates')} nodes={nodes} onNavigate={onNavigate} />;
   } else if (pathname.startsWith('/jobs')) {
     const nodes: PageNode[] = [{ key: 'all', label: t('common.all'), icon: <ListChecks className={muted} />, to: '/jobs', depth: 0 }];
     for (const s of Object.keys(JOB_STATUS_ICONS)) nodes.push({ key: s, label: t(('jobstatus.' + s) as TKey), icon: JOB_STATUS_ICONS[s], to: pageLink('/jobs', { status: s }), depth: 1 });
@@ -125,9 +134,9 @@ export function Navigator({ onNavigate }: { onNavigate?: () => void }) {
   } else if (pathname.startsWith('/audit')) {
     tree = <PageTree title={t('nav.audit')} onNavigate={onNavigate} nodes={[
       { key: 'all', label: t('audit.allOutcomes'), icon: <FileSearch className={muted} />, to: '/audit', depth: 0 },
-      { key: 'Success', label: 'Success', icon: <CircleCheck className="size-4 text-success" />, to: pageLink('/audit', { outcome: 'Success' }), depth: 1 },
-      { key: 'Failure', label: 'Failure', icon: <CircleX className="size-4 text-destructive" />, to: pageLink('/audit', { outcome: 'Failure' }), depth: 1 },
-      { key: 'Denied', label: 'Denied', icon: <ShieldX className="size-4 text-warning" />, to: pageLink('/audit', { outcome: 'Denied' }), depth: 1 },
+      { key: 'Success', label: t('audit.outcome.Success'), icon: <CircleCheck className="size-4 text-success" />, to: pageLink('/audit', { outcome: 'Success' }), depth: 1 },
+      { key: 'Failure', label: t('audit.outcome.Failure'), icon: <CircleX className="size-4 text-destructive" />, to: pageLink('/audit', { outcome: 'Failure' }), depth: 1 },
+      { key: 'Denied', label: t('audit.outcome.Denied'), icon: <ShieldX className="size-4 text-warning" />, to: pageLink('/audit', { outcome: 'Denied' }), depth: 1 },
     ]} />;
   } else if (pathname.startsWith('/settings')) {
     const icons: Record<string, ReactNode> = {

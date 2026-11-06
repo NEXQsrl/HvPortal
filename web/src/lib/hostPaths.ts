@@ -7,7 +7,8 @@ export const BLOCKED_ROOT_FOLDERS = [
   'Documents and Settings', 'Config.Msi', 'MSOCache', 'OneDriveTemp', 'Intel', 'AMD', 'NVIDIA',
 ];
 
-const LOCAL_FOLDER = /^[A-Za-z]:\\(?:[^\x00-\x1f"*?<>|:\\/]+\\?)*$/;
+// Same pattern as HostPaths.LocalFolderRegex on the server (written so that it cannot backtrack exponentially).
+const LOCAL_FOLDER = /^[A-Za-z]:\\(?:[^\x00-\x1f"*?<>|:\\/]+(?:\\[^\x00-\x1f"*?<>|:\\/]+)*\\?)?$/;
 
 export function normalizeFolder(p: string): string {
   const s = p.trim();

@@ -181,7 +181,7 @@ public static class AdminEndpoints
         if (role is not null)
         {
             await http.WriteAuditAsync("role_assignments.create", resourceType: "user", resourceId: user.Id.ToString("D"),
-                details: new { role = role.Name, scope = scope!.Value.ToString(), effect = nameof(AssignmentEffect.Allow) });
+                details: new { user = user.UserName, role = role.Name, scope = scope!.Value.ToString(), effect = nameof(AssignmentEffect.Allow) });
         }
         // Without a role the user has no permission (default deny) until one is assigned.
         return Results.Ok(new
@@ -528,8 +528,10 @@ public static class AdminEndpoints
         };
         db.RoleAssignments.Add(a);
         await db.SaveChangesAsync(http.RequestAborted);
+        // The user name is recorded too: the audit must stay readable after the user is deleted.
+        var userName = await db.Users.AsNoTracking().Where(u => u.Id == req.UserId).Select(u => u.UserName).FirstOrDefaultAsync(http.RequestAborted);
         await http.WriteAuditAsync("role_assignments.create", resourceType: "user", resourceId: pid,
-            details: new { role = role.Name, scope = scope.Value.ToString(), effect = req.Effect.ToString() });
+            details: new { user = userName, role = role.Name, scope = scope.Value.ToString(), effect = req.Effect.ToString() });
         return Results.Ok(new { a.Id });
     }
 
@@ -562,8 +564,10 @@ public static class AdminEndpoints
         }
         db.RoleAssignments.Remove(a);
         await db.SaveChangesAsync(http.RequestAborted);
+        var principalName = Guid.TryParse(a.PrincipalId, out var principal)
+            ? await db.Users.AsNoTracking().Where(u => u.Id == principal).Select(u => u.UserName).FirstOrDefaultAsync(http.RequestAborted) : null;
         await http.WriteAuditAsync("role_assignments.delete", resourceType: "user", resourceId: a.PrincipalId,
-            details: new { role = a.Role?.Name, scope = scope.ToString(), effect = a.Effect.ToString() });
+            details: new { user = principalName, role = a.Role?.Name, scope = scope.ToString(), effect = a.Effect.ToString() });
         return Results.NoContent();
     }
 
@@ -616,24 +620,140 @@ public static class AdminEndpoints
         return Results.Ok(after);
     }
 
-    private static async Task<IResult> ListAuditAsync(HttpContext http, PortalDbContext db, int? skip, int? take, string? action, string? outcome)
+    /// <summary>
+    /// Audit entries, newest first. Filters: action prefix (or prefixes separated by commas), outcome, period (from/to, UTC) and free text, which matches
+    /// the stored fields and also the current names of hosts, VMs, users and groups. Each entry carries the name of
+    /// its resource when it can be told (current name, or the name recorded in the details if it was removed), so the
+    /// page does not have to show identifiers.
+    /// </summary>
+    private static async Task<IResult> ListAuditAsync(HttpContext http, PortalDbContext db, int? skip, int? take, string? action, string? outcome,
+        string? q, DateTimeOffset? from, DateTimeOffset? to)
     {
         if (await http.GuardAsync(Permissions.AuditRead, ResourceRef.Global, "audit.list") is { } denied)
         {
             return denied;
         }
-        var q = db.AuditEntries.AsNoTracking().AsQueryable();
+        var ct = http.RequestAborted;
+        var query = db.AuditEntries.AsNoTracking().AsQueryable();
         if (!string.IsNullOrWhiteSpace(action))
         {
-            q = q.Where(e => e.Action.StartsWith(action));
+            // One prefix, or several separated by commas (an area of the page covers more than one family of actions).
+            var prefixes = action.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(8).ToArray();
+            query = prefixes.Length == 1
+                ? query.Where(e => e.Action.StartsWith(prefixes[0]))
+                : query.Where(e => prefixes.Any(p => e.Action.StartsWith(p)));
         }
         if (Enum.TryParse<AuditOutcome>(outcome, true, out var o))
         {
-            q = q.Where(e => e.Outcome == o);
+            query = query.Where(e => e.Outcome == o);
         }
-        var total = await q.CountAsync(http.RequestAborted);
-        var items = await q.OrderByDescending(e => e.Id).Skip(Math.Max(0, skip ?? 0)).Take(Math.Clamp(take ?? 50, 1, 500)).ToListAsync(http.RequestAborted);
-        return Results.Ok(new { total, items });
+        if (from is { } f)
+        {
+            var fromUtc = f.ToUniversalTime();
+            query = query.Where(e => e.TimestampUtc >= fromUtc);
+        }
+        if (to is { } t)
+        {
+            var toUtc = t.ToUniversalTime();
+            query = query.Where(e => e.TimestampUtc < toUtc);
+        }
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var text = q.Trim();
+            text = text.Length > 100 ? text[..100] : text;
+            // Resources whose current name matches: their entries only store the identifier.
+            var ids = new List<string>();
+            ids.AddRange((await db.Hosts.AsNoTracking().Where(h => h.DisplayName.Contains(text)).Select(h => h.Id).Take(50).ToListAsync(ct)).Select(i => i.ToString("D")));
+            ids.AddRange((await db.VirtualMachines.AsNoTracking().Where(v => v.Name.Contains(text)).Select(v => v.Id).Take(100).ToListAsync(ct)).Select(i => i.ToString("D")));
+            ids.AddRange((await db.Users.AsNoTracking().Where(u => u.UserName.Contains(text)).Select(u => u.Id).Take(50).ToListAsync(ct)).Select(i => i.ToString("D")));
+            ids.AddRange((await db.LogicalGroups.AsNoTracking().Where(g => g.Name.Contains(text)).Select(g => g.Id).Take(50).ToListAsync(ct)).Select(i => i.ToString("D")));
+            var correlation = Guid.TryParse(text, out var parsed) ? parsed : (Guid?)null;
+            query = query.Where(e => e.Action.Contains(text) || (e.ActorName != null && e.ActorName.Contains(text)) || (correlation != null && e.CorrelationId == correlation)
+                || (e.ResourceId != null && (e.ResourceId.Contains(text) || ids.Contains(e.ResourceId)))
+                || (e.SourceIp != null && e.SourceIp.Contains(text)) || (e.DetailsJson != null && e.DetailsJson.Contains(text)));
+        }
+        var total = await query.CountAsync(ct);
+        var items = await query.OrderByDescending(e => e.Id).Skip(Math.Max(0, skip ?? 0)).Take(Math.Clamp(take ?? 50, 1, 500)).ToListAsync(ct);
+
+        List<Guid> Ids(string type) => items.Where(e => e.ResourceType == type && Guid.TryParse(e.ResourceId, out _)).Select(e => Guid.Parse(e.ResourceId!)).Distinct().ToList();
+        var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var hostIds = Ids("host");
+        var vmIds = Ids("vm");
+        var userIds = Ids("user");
+        var groupIds = Ids("group");
+        foreach (var h in await db.Hosts.AsNoTracking().Where(h => hostIds.Contains(h.Id)).Select(h => new { h.Id, Name = h.DisplayName }).ToListAsync(ct)) names[$"host:{h.Id:D}"] = h.Name;
+        foreach (var v in await db.VirtualMachines.AsNoTracking().Where(v => vmIds.Contains(v.Id)).Select(v => new { v.Id, v.Name }).ToListAsync(ct)) names[$"vm:{v.Id:D}"] = v.Name;
+        foreach (var u in await db.Users.AsNoTracking().Where(u => userIds.Contains(u.Id)).Select(u => new { u.Id, Name = u.UserName }).ToListAsync(ct)) names[$"user:{u.Id:D}"] = u.Name;
+        foreach (var g in await db.LogicalGroups.AsNoTracking().Where(g => groupIds.Contains(g.Id)).Select(g => new { g.Id, g.Name }).ToListAsync(ct)) names[$"group:{g.Id:D}"] = g.Name;
+
+        return Results.Ok(new
+        {
+            total,
+            items = items.Select(e =>
+            {
+                var live = e.ResourceType is not null && e.ResourceId is not null && names.TryGetValue($"{e.ResourceType}:{e.ResourceId}", out var name) ? name : null;
+                return new
+                {
+                    e.Id, e.TimestampUtc, e.ActorUserId, e.ActorName, e.AuthMethod, e.SourceIp, e.Action, e.ResourceType, e.ResourceId, e.Outcome, e.CorrelationId, e.DetailsJson,
+                    // resourceExists false = the name comes from the entry itself (the resource is no longer in the portal).
+                    resourceName = live ?? RecordedName(e.DetailsJson),
+                    resourceExists = live is not null,
+                };
+            }),
+        });
+    }
+
+    private static readonly string[] NameProperties = ["vm", "user", "DisplayName", "UserName", "Name"];
+
+    /// <summary>The name written in the details of an entry (also inside "request" / "after"), for resources that no longer exist.</summary>
+    private static string? RecordedName(string? detailsJson)
+    {
+        if (string.IsNullOrEmpty(detailsJson))
+        {
+            return null;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(detailsJson);
+            return Find(doc.RootElement) ?? Nested("request") ?? Nested("after");
+
+            string? Nested(string property) =>
+                doc.RootElement.ValueKind == JsonValueKind.Object && TryGet(doc.RootElement, property, out var inner) ? Find(inner) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        static bool TryGet(JsonElement obj, string property, out JsonElement value)
+        {
+            foreach (var p in obj.EnumerateObject())
+            {
+                if (string.Equals(p.Name, property, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = p.Value;
+                    return true;
+                }
+            }
+            value = default;
+            return false;
+        }
+
+        static string? Find(JsonElement obj)
+        {
+            if (obj.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+            foreach (var property in NameProperties)
+            {
+                if (TryGet(obj, property, out var v) && v.ValueKind == JsonValueKind.String && v.GetString() is { Length: > 0 } name)
+                {
+                    return name.Length > 200 ? name[..200] : name;
+                }
+            }
+            return null;
+        }
     }
 
     private static async Task ExportAuditAsync(HttpContext http, PortalDbContext db)

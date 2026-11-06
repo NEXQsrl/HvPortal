@@ -1,5 +1,29 @@
 # Testing
 
+## v0.6.0 — VM templates, readable audit, navigation icons, path pattern fix (2026-11-06, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 196 | pass — adds `TemplateTests` (5, ADR-028): a template is created only from a VM that is off, on a host with a template library (system and network folders refused), the agent is told to copy into `<library>\<template id>`, the record becomes *Ready* with the disks reported; a VM from the template gets the caller's name and resources and the template's disks, location and generation whatever the request says (injected `templateDisks` / `templateRoots` / generation ignored), a larger boot disk is kept and a smaller one raised to the template's; a creation without a template never reaches the agent with template fields; rename; delete with the typed name removes the files; a template cannot be used on another host. Permissions: an operator sees no template and cannot create, rename, delete or set the library (refusals audited); who creates VMs on the host uses the template but cannot change it and is not told where the files are; an administrator of another host does not see it; agents with protocol 7 never receive template commands (`agent_outdated`). Folder limits: every disk of the template counts against the disk quota at request time, the folder's users see the templates of the hosts opened to them. States: a failed copy leaves a *Failed* template that cannot be used and is cleaned by deleting it; a lost result (channel dropped, then reconciliation) gives *Unverified*, never *Ready*; a requester who loses the permission before execution leaves no template and nothing is sent; a template that stops being ready while a creation is queued fails that job (`template_not_available`), no VM is created; the library path rules answer at once on long refused paths. Adds `AuditListTests` (2): entries carry the name of their resource (current, or the recorded one when the resource was deleted), search by the name of a host or group, several action prefixes, period, correlation id; the list needs `audit.read` (refusal recorded) |
+| `tests/HvPortal.Agent.Tests` | 106 | pass — adds `TemplateOperationTests` (5): a template folder is exactly one level below the library and named by an id (other folders, traversal, system and network paths refused, also by the agent before PowerShell runs); a VM from a template only takes .vhdx/.vhd files inside the library (template fields without disks are refused, not ignored); protocol 8 required for `NewTemplate`, `RemoveTemplate` and `NewVm` with template disks; copies may run up to 8 hours while everything else keeps 30 minutes; script rules (source VM only read: off, no checkpoints, no differencing or pass-through disks, nothing left behind on failure; template deletion file by file, never recursive, nothing deleted when the folder holds anything else; `NewVm` copies and never moves template disks); **path rules answer at once** on long refused names (see below) and accept/refuse the same paths as before |
+| PowerShell parser on `Ops\HvPortal.Ops.ps1` (5.1) | — | pass |
+| `web`: `tsc -b`, `vitest` (IT/EN keys), `vite build` | — | pass |
+| `web/e2e/ui-smoke.mjs` (Edge headless, fresh gateway + real agent on this machine) | 80 | pass — adds: audit rows describe actions in words with the name of the resource, who acted and how, translated outcome, never raw JSON; a row expands to its details (action code, fields); filter by area; search by the name of a host; template library of the host saved from its settings (a path that is not a local folder is refused before saving); Templates page with its explanation and the tree of hosts; in the dark theme the navigation icons are white, at least 36 px high and **only the current section is highlighted** |
+| Update of an existing database: gateway 0.6.0 started on a copy of the data directory left by the 0.5.1 e2e | — | pass — migration `VmTemplates` applied (new table, `Hosts.TemplateLibraryPath`), `PRAGMA integrity_check` ok, portal answers |
+| `installer/Build-Release.ps1 -SigningCertificateThumbprint <self-signed NEXQ S.r.l.>` (full, with tests) | 106 + 196 | pass — release 0.6.0 |
+
+**Defect found while writing these tests** (threat model D3): the pattern that validates folder paths
+(`HostPaths`, `OperationPolicy`, and its copies in the web client) took exponential time on a long folder name followed
+by a refused character: one request with such a path kept a thread busy indefinitely (the test host hung for 10
+minutes before it was stopped). The pattern is rewritten so that it cannot backtrack; the new tests feed paths of 150-200
+characters ending with `:`, `|`, `*` and require the answer within 2 seconds, on the agent contract and on the gateway.
+
+Not executed (needs a host with Hyper-V access): creating a template from a real VM, creating VMs from it, deleting it,
+copy times, the behaviour with checkpoints / differencing / pass-through disks. Here the host side is the test double
+`FakeAgentDispatcher` and the script is checked by parsing and by its text; the e2e agent has no Hyper-V rights, so no
+VM exists there and "Create template" is never offered. Real-host test plan V46–V48. The audit descriptions cover the
+actions the gateway writes today; an action without a description is shown with its code.
+
 ## v0.5.1 — VM groups already on a host imported automatically (2026-11-06, development machine)
 
 | Suite | Count | Result |

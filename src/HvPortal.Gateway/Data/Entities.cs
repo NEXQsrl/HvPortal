@@ -228,6 +228,11 @@ public sealed class ManagedHost
     public string? InventoryWarningsJson { get; set; }
     /// <summary>JSON array of folders on the host that may be used as ISO library (mount / list).</summary>
     public string? IsoLibraryPathsJson { get; set; }
+    /// <summary>
+    /// Folder of the host where VM templates are kept (each template in its own sub-folder). Chosen by a host
+    /// administrator; null = templates cannot be created on this host yet.
+    /// </summary>
+    public string? TemplateLibraryPath { get; set; }
     /// <summary>Mirroring of portal groups to native Hyper-V VM groups (agent 0.3.2+): last attempt, errors, plan hash.</summary>
     public DateTimeOffset? VmGroupsSyncedAt { get; set; }
     public string? VmGroupsSyncError { get; set; }
@@ -248,6 +253,54 @@ public sealed class ManagedHost
     public byte[]? RemotePasswordEncrypted { get; set; }
     public bool RemoteUseHttps { get; set; }
     public DateTimeOffset? RemoteCredentialUpdatedAt { get; set; }
+}
+
+public enum TemplateStatus
+{
+    /// <summary>The disks are being copied (job running).</summary>
+    Creating,
+    Ready,
+    /// <summary>The copy failed; the folder may hold partial files until the template is deleted.</summary>
+    Failed,
+    /// <summary>The outcome of the last operation on the host is not known: not usable until checked (delete and create again).</summary>
+    Unverified,
+    Deleting,
+}
+
+/// <summary>
+/// A VM template (ADR-028): copies of the virtual disks of a prepared VM, kept in &lt;template library&gt;\&lt;id&gt; on the
+/// host, plus the hardware of that VM proposed again for the VMs created from it. A template belongs to one host.
+/// It is a plain copy: the guest is not generalized by the portal (sysprep / cloud-init are the administrator's job).
+/// </summary>
+public sealed class VmTemplate
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid HostId { get; set; }
+    public required string Name { get; set; }
+    public string? Description { get; set; }
+    public TemplateStatus Status { get; set; }
+    public string? Error { get; set; }
+    /// <summary>Template library folder of the host when the template was created (the host setting may change later).</summary>
+    public required string LibraryPath { get; set; }
+    /// <summary>&lt;LibraryPath&gt;\&lt;Id&gt;.</summary>
+    public required string FolderPath { get; set; }
+    public string? SourceVmName { get; set; }
+    public int Generation { get; set; }
+    public int ProcessorCount { get; set; }
+    public long MemoryStartupMb { get; set; }
+    public bool DynamicMemory { get; set; }
+    public long? MemoryMinimumMb { get; set; }
+    public long? MemoryMaximumMb { get; set; }
+    public string? SecureBootTemplate { get; set; }
+    public bool TpmEnabled { get; set; }
+    /// <summary>JSON array of <see cref="HvPortal.Contracts.HyperV.TemplateDisk"/>, the boot disk first.</summary>
+    public string? DisksJson { get; set; }
+    /// <summary>Space taken by the template on the host (sum of the disk files).</summary>
+    public long SizeBytes { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public Guid? CreatedByUserId { get; set; }
+    /// <summary>The job that is creating or deleting the template.</summary>
+    public Guid? JobId { get; set; }
 }
 
 public enum HostConnectionMode

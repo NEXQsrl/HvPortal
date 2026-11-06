@@ -32,6 +32,8 @@ public static class InventoryCleanup
         await db.LogicalGroupMembers.Where(m => vmIds.Contains(m.VmId)).ExecuteDeleteAsync(ct);
         await db.InventoryEvents.Where(e => e.HostId == hostId).ExecuteDeleteAsync(ct);
         await db.GroupNetworks.Where(n => n.HostId == hostId).ExecuteDeleteAsync(ct);
+        // The records only: the template folders stay on the host, which the portal no longer manages.
+        await db.VmTemplates.Where(t => t.HostId == hostId).ExecuteDeleteAsync(ct);
         await db.VirtualMachines.Where(v => v.HostId == hostId).ExecuteDeleteAsync(ct);
         await db.EnrollmentTokens.Where(t => t.HostId == hostId).ExecuteDeleteAsync(ct);
         await db.AgentCertificates.Where(c => c.HostId == hostId).ExecuteDeleteAsync(ct);

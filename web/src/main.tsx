@@ -11,7 +11,9 @@ import { AppShell } from './components/shell/AppShell';
 import { TooltipProvider } from './components/ui/tooltip';
 import { I18nProvider } from './i18n';
 import { Toaster } from './lib/toast';
-import { AccountPage, AuditPage, PlannedPage, SettingsPage, UsersPage } from './pages/AdminPages';
+import { AccountPage, PlannedPage, SettingsPage, UsersPage } from './pages/AdminPages';
+import { AuditPage } from './pages/AuditPage';
+import { TemplatesPage } from './pages/TemplatesPage';
 import { ForcedMfaPage, ForcedPasswordChangePage, LoginPage, SetupPage } from './pages/AuthPages';
 import { ConsolePage } from './pages/ConsolePage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -74,7 +76,7 @@ function Gate() {
               <Route path="troubleshooting" element={<GuideTroubleshooting />} />
             </Route>
             <Route path="/backup" element={<PlannedPage titleKey="nav.backup" milestone="Milestone 3" />} />
-            <Route path="/templates" element={<PlannedPage titleKey="nav.templates" milestone="Milestone 3" />} />
+            <Route path="/templates" element={<TemplatesPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

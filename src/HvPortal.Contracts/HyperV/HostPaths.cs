@@ -23,7 +23,10 @@ public static partial class HostPaths
     ];
 
     /// <summary>Drive-letter path, no UNC/device prefix, no traversal, no wildcard or stream characters.</summary>
-    [GeneratedRegex(@"^[A-Za-z]:\\(?:[^\x00-\x1f""*?<>|:\\/]+\\?)*$", RegexOptions.CultureInvariant)]
+    // Segments separated by single backslashes, written so that every character can be matched in one way only:
+    // the earlier form, "(segment + optional backslash)*", took exponential time on a long name followed by a
+    // refused character (a request could keep a thread busy for hours).
+    [GeneratedRegex(@"^[A-Za-z]:\\(?:[^\x00-\x1f""*?<>|:\\/]+(?:\\[^\x00-\x1f""*?<>|:\\/]+)*\\?)?$", RegexOptions.CultureInvariant)]
     private static partial Regex LocalFolderRegex();
 
     public static bool IsValidLocalFolder(string? path) =>

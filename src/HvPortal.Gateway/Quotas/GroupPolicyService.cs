@@ -247,7 +247,7 @@ public sealed class GroupPolicyService
                 }
                 if (j.Type == JobService.CreateJobType && HvOperations.FromElement<NewVmRequest>(p.Args) is { } spec)
                 {
-                    list.Add(new Reservation(groupId, 1, spec.ProcessorCount, NewVmFootprintMb(spec), spec.DiskSizeGb * Gb, 0));
+                    list.Add(new Reservation(groupId, 1, spec.ProcessorCount, NewVmFootprintMb(spec), (spec.DiskSizeGb + spec.TemplateExtraDiskGb) * Gb, 0));
                 }
                 else if (j.Type == JobService.NetworkJobType && j.Operation == "Create")
                 {
@@ -391,7 +391,7 @@ public sealed class GroupPolicyService
             return (new PolicyViolation("quota_memory_maximum_required",
                 "This folder has a memory limit: with dynamic memory set the maximum memory of the VM (it counts against the limit)."), spec);
         }
-        var violation = await CheckQuotasAsync(levels, 1, spec.ProcessorCount, NewVmFootprintMb(spec), spec.DiskSizeGb * Gb, 0, excludeJobId, ct);
+        var violation = await CheckQuotasAsync(levels, 1, spec.ProcessorCount, NewVmFootprintMb(spec), (spec.DiskSizeGb + spec.TemplateExtraDiskGb) * Gb, 0, excludeJobId, ct);
         return (violation, spec);
     }
 

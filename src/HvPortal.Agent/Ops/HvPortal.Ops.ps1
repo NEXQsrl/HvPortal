@@ -10,7 +10,10 @@
    - new files are created under the host default folders (Get-VMHost) or, for NewVm, under <location>\<VM name>\ where
      location was validated by the agent (local fixed drive, no system/hidden folders, no junctions or symbolic links);
    - ISO paths must be inside the allowed library roots provided by the agent;
-   - VM groups (SyncVmGroups): only groups whose id the gateway lists as portal-owned are renamed, re-membered or removed.
+   - VM groups (SyncVmGroups): only groups whose id the gateway lists as portal-owned are renamed, re-membered or removed;
+   - templates: a template is the folder <template library>\<template id (guid)> holding copies of virtual disks. The
+     library folders come from the agent (validated like a VM location); NewTemplate only creates that folder,
+     RemoveTemplate only deletes disk files directly inside it, NewVm only reads disks from it (they are copied).
   Remote hosts (management agent): HvPortal.Remote.ps1 runs THIS file on the host with Invoke-Command -FilePath and passes
   the same JSON request as the only argument; the response is then written to the pipeline instead of the console.
 #>
@@ -64,6 +67,47 @@ function Test-IsoPath([string]$path, $roots) {
         if ($p.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'ISO paths through junctions or symbolic links are not allowed.' }
         $p = if ($p -is [IO.FileInfo]) { $p.Directory } else { $p.Parent }
     }
+}
+
+function Assert-NoReparsePoint($item) {
+    $p = $item
+    while ($p) {
+        if ($p.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Paths through junctions or symbolic links are not allowed.' }
+        $p = if ($p -is [IO.FileInfo]) { $p.Directory } else { $p.Parent }
+    }
+}
+
+# <template library>\<guid>: returns the full path. The library folder is created only when asked (first template).
+function Get-TemplateFolder([string]$folder, $roots, [switch]$CreateLibrary) {
+    $full = [IO.Path]::GetFullPath($folder).TrimEnd('\')
+    $library = [IO.Path]::GetDirectoryName($full)
+    $id = [guid]::Empty
+    if (-not $library -or -not [guid]::TryParse([IO.Path]::GetFileName($full), [ref]$id)) { throw 'Invalid template folder.' }
+    $inside = $false
+    foreach ($r in @($roots)) {
+        if ([string]::IsNullOrWhiteSpace($r)) { continue }
+        if ([string]::Equals([IO.Path]::GetFullPath([string]$r).TrimEnd('\'), $library, [StringComparison]::OrdinalIgnoreCase)) { $inside = $true; break }
+    }
+    if (-not $inside) { throw 'The template folder is not inside the template library of this host.' }
+    if (-not (Test-Path -LiteralPath $library)) {
+        if (-not $CreateLibrary) { throw "Template library folder not found: $library" }
+        try { New-Item -ItemType Directory -Path $library -Force | Out-Null }
+        catch { throw "Cannot create the template library folder $library with the agent service account: $($_.Exception.Message)" }
+    }
+    Assert-NoReparsePoint (Get-Item -LiteralPath $library -Force)
+    return $full
+}
+
+# A disk file of a template (.vhdx / .vhd directly inside a template folder): returns the file item.
+function Get-TemplateDisk([string]$path, $roots) {
+    $full = [IO.Path]::GetFullPath($path)
+    $ext = [IO.Path]::GetExtension($full)
+    if ($ext -ine '.vhdx' -and $ext -ine '.vhd') { throw 'Template disks must be .vhdx or .vhd files.' }
+    [void](Get-TemplateFolder ([IO.Path]::GetDirectoryName($full)) $roots)
+    $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+    if (-not $item -or $item.PSIsContainer) { throw "Template disk not found: $full" }
+    Assert-NoReparsePoint $item
+    return $item
 }
 
 function Get-GroupId($g) {
@@ -259,6 +303,10 @@ try {
             $name = [string]$a.name
             if (Get-VM -Name $name -ErrorAction SilentlyContinue) { throw "A VM named '$name' already exists on this host." }
             Test-IsoPath ([string]$a.isoPath) $a.isoRoots
+            # From a template: its disks are copied into the folder of the new VM (the first one is the boot disk).
+            $templateDisks = @(@($a.templateDisks) | Where-Object { $_ } | ForEach-Object { Get-TemplateDisk ([string]$_) $a.templateRoots })
+            $copied = New-Object System.Collections.ArrayList
+            $extraDisks = New-Object System.Collections.ArrayList
             $h = Get-VMHost
             $gen = [int16]$a.generation
             $params = @{ Name = $name; Generation = $gen; MemoryStartupBytes = [int64]$a.memoryStartupMb * 1MB }
@@ -283,7 +331,38 @@ try {
                 $params.Path = $location
             }
             $diskPath = $null
-            if ([int64]$a.diskSizeGb -gt 0) {
+            if ($templateDisks.Count -gt 0) {
+                if (-not (Test-Path -LiteralPath $vhdFolder)) { New-Item -ItemType Directory -Path $vhdFolder -Force | Out-Null }
+                $need = [int64]0
+                foreach ($t in $templateDisks) { $need += [int64]$t.Length }
+                $volume = Get-PSDrive -Name ([IO.Path]::GetFullPath($vhdFolder).Substring(0, 1)) -ErrorAction SilentlyContinue
+                if ($volume -and $null -ne $volume.Free -and [int64]$volume.Free -lt $need) {
+                    throw "Not enough free space in $vhdFolder for the disks of the template ($([math]::Ceiling($need / 1GB)) GB needed)."
+                }
+                try {
+                    for ($i = 0; $i -lt $templateDisks.Count; $i++) {
+                        $suffix = if ($i -eq 0) { '' } else { "-disk$i" }
+                        $dest = Join-Path $vhdFolder ((Get-SafeName $name) + $suffix + $templateDisks[$i].Extension.ToLowerInvariant())
+                        if (Test-Path -LiteralPath $dest) { throw "File already exists: $dest" }
+                        Copy-Item -LiteralPath $templateDisks[$i].FullName -Destination $dest
+                        [void]$copied.Add($dest)
+                        if ($i -eq 0) { $diskPath = $dest } else { [void]$extraDisks.Add($dest) }
+                    }
+                    # A larger boot disk can be asked for; the copy is never shrunk (the guest extends its own partition).
+                    if ([int64]$a.diskSizeGb -gt 0) {
+                        $wanted = [uint64]$a.diskSizeGb * 1GB
+                        if ($wanted -gt [uint64](Get-VHD -Path $diskPath).Size) { Resize-VHD -Path $diskPath -SizeBytes $wanted }
+                    }
+                } catch {
+                    foreach ($c in $copied) { Remove-Item -LiteralPath $c -Force -ErrorAction SilentlyContinue }
+                    if ($vmFolder -and -not (Get-ChildItem -LiteralPath $vmFolder -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+                        Remove-Item -LiteralPath $vmFolder -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                    throw
+                }
+                [void]$applied.Add('template-disks')
+                $params.VHDPath = $diskPath
+            } elseif ([int64]$a.diskSizeGb -gt 0) {
                 $diskPath = Join-Path $vhdFolder ((Get-SafeName $name) + '.vhdx')
                 if (Test-Path -LiteralPath $diskPath) { throw "File already exists: $diskPath" }
                 $size = [uint64]$a.diskSizeGb * 1GB
@@ -297,6 +376,7 @@ try {
                 # Leave nothing behind: the fixed disk created above (the path did not exist) and the folders created above
                 # if they are still empty (never pre-existing content).
                 if ([bool]$a.diskFixed -and $diskPath) { Remove-Item -LiteralPath $diskPath -Force -ErrorAction SilentlyContinue }
+                foreach ($c in $copied) { Remove-Item -LiteralPath $c -Force -ErrorAction SilentlyContinue }
                 if ($vmFolder -and -not (Get-ChildItem -LiteralPath $vmFolder -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
                     Remove-Item -LiteralPath $vmFolder -Recurse -Force -ErrorAction SilentlyContinue
                 }
@@ -315,6 +395,7 @@ try {
                     Set-VMMemory -VM $vm -DynamicMemoryEnabled $false
                 }
                 [void]$applied.Add('memory')
+                foreach ($extra in $extraDisks) { Add-VMHardDiskDrive -VM $vm -ControllerType SCSI -Path $extra; [void]$applied.Add('disk') }
                 if ($a.notes) { Set-VM -VM $vm -Notes ([string]$a.notes) }
                 if ($a.checkpointType) { Set-VM -VM $vm -CheckpointType ([string]$a.checkpointType) }
                 if ($a.automaticStartAction) { Set-VM -VM $vm -AutomaticStartAction ([string]$a.automaticStartAction) }
@@ -466,6 +547,79 @@ try {
             if ($used.Count -gt 0) { throw "The switch is used by: $(($used | Select-Object -First 10) -join ', '). Disconnect the VMs first." }
             Remove-VMSwitch -VMSwitch $sw -Force -Confirm:$false
             Write-Response $true @{ id = "$id"; name = $sw.Name } $null @('removed')
+        }
+
+        'NewTemplate' {
+            # A template is a copy of the disks of a VM that is off, plus the hardware the gateway records. The VM is not changed.
+            $vm = Get-VmById $a.vmId
+            if ("$($vm.State)" -ne 'Off') { throw "The VM must be off to create a template from it (it is $($vm.State))." }
+            if (Get-VMSnapshot -VM $vm -ErrorAction SilentlyContinue | Select-Object -First 1) {
+                throw 'The VM has checkpoints: delete them (Hyper-V merges the disks) before creating a template.'
+            }
+            $folder = Get-TemplateFolder ([string]$a.folder) $a.roots -CreateLibrary
+            if (Test-Path -LiteralPath $folder) { throw "The template folder already exists: $folder" }
+            $sources = New-Object System.Collections.ArrayList
+            $need = [int64]0
+            foreach ($d in @(Get-VMHardDiskDrive -VM $vm)) {
+                if ([string]::IsNullOrEmpty($d.Path) -or $d.DiskNumber) { throw 'The VM uses a physical (pass-through) disk: it cannot become a template.' }
+                $ext = [IO.Path]::GetExtension($d.Path).ToLowerInvariant()
+                if ($ext -ne '.vhdx' -and $ext -ne '.vhd') { throw "The disk $($d.Path) is not a .vhdx or .vhd file: it cannot be copied into a template." }
+                $vhd = Get-VHD -Path $d.Path
+                if ($vhd.ParentPath) { throw "The disk $($d.Path) is a differencing disk: merge it before creating a template." }
+                $file = Get-Item -LiteralPath $d.Path
+                $need += [int64]$file.Length
+                [void]$sources.Add(@{ path = $d.Path; ext = $ext; size = [int64]$vhd.Size })
+            }
+            if ($sources.Count -eq 0) { throw 'The VM has no virtual disk: there is nothing to put in a template.' }
+            $volume = Get-PSDrive -Name $folder.Substring(0, 1) -ErrorAction SilentlyContinue
+            if ($volume -and $null -ne $volume.Free -and [int64]$volume.Free -lt $need) {
+                throw "Not enough free space in the template library for the disks of this VM ($([math]::Ceiling($need / 1GB)) GB needed)."
+            }
+            try { New-Item -ItemType Directory -Path $folder | Out-Null }
+            catch { throw "Cannot create $folder with the agent service account: $($_.Exception.Message)" }
+            [void]$applied.Add('folder')
+            $disks = New-Object System.Collections.ArrayList
+            try {
+                for ($i = 0; $i -lt $sources.Count; $i++) {
+                    $name = "disk$i$($sources[$i].ext)"
+                    $dest = Join-Path $folder $name
+                    Copy-Item -LiteralPath $sources[$i].path -Destination $dest
+                    [void]$disks.Add(@{ file = $name; sizeBytes = [int64]$sources[$i].size; fileBytes = [int64](Get-Item -LiteralPath $dest).Length })
+                }
+            } catch {
+                # Leave nothing behind: the folder was created by this operation.
+                Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue
+                throw
+            }
+            [void]$applied.Add('copied')
+            $cfg = Get-Config $vm
+            $sb = $null
+            if ($cfg.generation -eq 2) { $sb = if ($cfg.secureBootEnabled) { $cfg.secureBootTemplate } else { 'Off' } }
+            Write-Response $true @{
+                folder = $folder; disks = @($disks); generation = [int]$cfg.generation; processorCount = [int]$cfg.processorCount
+                memoryStartupMb = [int64]($cfg.memoryStartupBytes / 1MB); dynamicMemory = [bool]$cfg.dynamicMemoryEnabled
+                memoryMinimumMb = [int64]($cfg.memoryMinimumBytes / 1MB); memoryMaximumMb = [int64]($cfg.memoryMaximumBytes / 1MB)
+                secureBootTemplate = $sb; tpmEnabled = [bool]$cfg.tpmEnabled
+            } $null $applied
+        }
+
+        'RemoveTemplate' {
+            $folder = Get-TemplateFolder ([string]$a.folder) $a.roots
+            if (-not (Test-Path -LiteralPath $folder)) {
+                Write-Response $true @{ removed = $false; folder = $folder } $null $applied
+            } else {
+                Assert-NoReparsePoint (Get-Item -LiteralPath $folder -Force)
+                $entries = @(Get-ChildItem -LiteralPath $folder -Force)
+                foreach ($e in $entries) {
+                    if ($e.PSIsContainer -or ($e.Extension -ine '.vhdx' -and $e.Extension -ine '.vhd')) {
+                        throw "The template folder contains something that is not a template disk ($($e.Name)): nothing was deleted."
+                    }
+                }
+                foreach ($e in $entries) { Remove-Item -LiteralPath $e.FullName -Force }
+                Remove-Item -LiteralPath $folder -Force
+                [void]$applied.Add('removed')
+                Write-Response $true @{ removed = $true; folder = $folder } $null $applied
+            }
         }
 
         'ListHostDisks' {

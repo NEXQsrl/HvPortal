@@ -142,6 +142,8 @@ export interface HostDefaultsResponse {
 
 export interface NewVmSpec {
   name: string;
+  /** Created from this template: its disks are copied (the gateway decides which files). */
+  templateId?: string;
   generation: 1 | 2;
   processorCount: number;
   memoryStartupMb: number;
@@ -163,3 +165,31 @@ export interface NewVmSpec {
 }
 
 export interface Accepted { jobId: string; created: boolean }
+
+/** A VM template: copies of the disks of a prepared VM on one host, with the hardware of that VM. */
+export interface VmTemplate {
+  id: string;
+  hostId: string;
+  hostName: string;
+  name: string;
+  description: string | null;
+  status: 'Creating' | 'Ready' | 'Failed' | 'Unverified' | 'Deleting';
+  error: string | null;
+  sourceVmName: string | null;
+  generation: number;
+  processorCount: number;
+  memoryStartupMb: number;
+  dynamicMemory: boolean;
+  memoryMinimumMb: number | null;
+  memoryMaximumMb: number | null;
+  secureBootTemplate: string | null;
+  tpmEnabled: boolean;
+  disks: { file: string; sizeBytes: number; fileBytes: number }[];
+  /** Size of the boot disk: the smallest disk a VM created from the template can have. */
+  bootDiskGb: number;
+  sizeBytes: number;
+  createdAt: string;
+  jobId: string | null;
+  folderPath: string | null;
+  can: { deploy: boolean; manage: boolean; delete: boolean };
+}

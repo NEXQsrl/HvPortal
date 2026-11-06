@@ -1,8 +1,8 @@
-import { Camera, FolderInput, FolderMinus, FolderPlus, Gauge, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save, Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
+import { Camera, FolderInput, LayoutTemplate, FolderMinus, FolderPlus, Gauge, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save, Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { del, newIdempotencyKey, patch, post } from '@/api/client';
-import type { Accepted, Group } from '@/api/ops-types';
+import type { Accepted, Group, VmTemplate } from '@/api/ops-types';
 import { realtime } from '@/api/realtime';
 import type { EnrollmentInfo, Host, PowerOperation, Vm } from '@/api/types';
 import type { Action } from '@/components/actions';
@@ -18,6 +18,7 @@ import { GroupLimitsDialog } from '@/components/ops/GroupLimits';
 import { AddToGroupDialog, AddVmsDialog, MoveGroupDialog, NewGroupDialog } from './GroupDialogs';
 import { AddHostDialog, EnrollmentDialog, RemoteHostDialog, RevokeHostDialog } from './HostDialogs';
 import { LiveManagementEnrollment, NewManagementAgentDialog } from './ManagementAgents';
+import { CaptureTemplateDialog } from './TemplateDialogs';
 import { CreateCheckpointDialog, EditNotesDialog, PowerDialog } from './VmDialogs';
 
 const POWER_ICONS: Record<PowerOperation, typeof Play> = {
@@ -30,7 +31,8 @@ type DialogState =
   | { kind: 'editVm'; vm: Vm }
   | { kind: 'addToGroup'; vms: Vm[] }
   | { kind: 'checkpoint'; vm: Vm }
-  | { kind: 'createVm'; hostId?: string; groupId?: string }
+  | { kind: 'createVm'; hostId?: string; groupId?: string; template?: VmTemplate }
+  | { kind: 'captureTemplate'; vm: Vm }
   | { kind: 'addHost' }
   | { kind: 'enroll'; info: EnrollmentInfo; hostId: string }
   | { kind: 'editHost'; host: Host }
@@ -51,7 +53,7 @@ interface Ops {
   powerActions: (vm: Vm) => Action[];
   hostActions: (host: Host, opts?: { page?: boolean }) => Action[];
   groupActions: (group: Group | null) => Action[];
-  openCreateVm: (opts?: { hostId?: string; groupId?: string }) => void;
+  openCreateVm: (opts?: { hostId?: string; groupId?: string; template?: VmTemplate }) => void;
   openAddHost: () => void;
   openNewManagementAgent: () => void;
   openManagementEnrollment: (info: EnrollmentInfo, agentId: string, name: string) => void;
@@ -135,6 +137,7 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     if (vm.canConfigure) list.push({ key: 'settings', label: t('vm.editSettings'), icon: Settings2, separatorBefore: true, onSelect: () => navigate(`/vms/${vm.id}?tab=settings`) });
     if (vm.canCheckpoint) list.push({ key: 'checkpoint', label: t('vm.createCheckpoint'), icon: Camera, separatorBefore: !vm.canConfigure, onSelect: () => setDialog({ kind: 'checkpoint', vm }) });
     if (vm.canAnnotate) list.push({ key: 'notes', label: t('menu.editNotes'), icon: Pencil, onSelect: () => setDialog({ kind: 'editVm', vm }) });
+    if (vm.canTemplate) list.push({ key: 'template', label: t('tpl.capture'), icon: LayoutTemplate, onSelect: () => setDialog({ kind: 'captureTemplate', vm }) });
     if (manageGroups) {
       list.push({ key: 'add-group', label: t('vm.addToGroup'), icon: FolderPlus, separatorBefore: true, onSelect: () => setDialog({ kind: 'addToGroup', vms: [vm] }) });
       const g = opts.groupId ? inv.groupById.get(opts.groupId) : undefined;
@@ -210,7 +213,7 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<Ops>(() => ({
     vmActions, powerActions, hostActions, groupActions, queued, placeVms, moveGroup, openConsole,
-    openCreateVm: (o) => setDialog({ kind: 'createVm', hostId: o?.hostId, groupId: o?.groupId }),
+    openCreateVm: (o) => setDialog({ kind: 'createVm', hostId: o?.template?.hostId ?? o?.hostId, groupId: o?.groupId, template: o?.template }),
     openAddHost: () => setDialog({ kind: 'addHost' }),
     openNewManagementAgent: () => setDialog({ kind: 'newManagementAgent' }),
     openManagementEnrollment: (info, agentId, name) => setDialog({ kind: 'enrollManagement', info, agentId, name }),
@@ -238,7 +241,8 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
         <AddToGroupDialog vmIds={d.vms.map((v) => v.id)} title={`${t('vm.addToGroup')} ${d.vms.map((v) => v.name).join(', ')}`} onClose={close}
           onAdd={async (groupId) => { await post(`/api/v1/groups/${groupId}/members`, { vmIds: d.vms.map((v) => v.id) }); inv.reload(); }} />
       )}
-      {d?.kind === 'createVm' && <CreateVmWizard hostId={d.hostId} groupId={d.groupId} onQueued={queued} onClose={close} />}
+      {d?.kind === 'createVm' && <CreateVmWizard hostId={d.hostId} groupId={d.groupId} template={d.template} onQueued={queued} onClose={close} />}
+      {d?.kind === 'captureTemplate' && <CaptureTemplateDialog vm={d.vm} onQueued={queued} onClose={close} />}
       {d?.kind === 'addHost' && (
         // The enrollment guide replaces this dialog: closing must not clear it.
         <AddHostDialog onClose={() => setDialog((cur) => (cur?.kind === 'addHost' ? null : cur))}

@@ -596,6 +596,10 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(16)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("TemplateLibraryPath")
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
                     b.Property<long?>("VmGroupsAdoptedAt")
                         .HasColumnType("INTEGER");
 
@@ -1191,6 +1195,98 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .IsUnique();
 
                     b.ToTable("VirtualMachines");
+                });
+
+            modelBuilder.Entity("HvPortal.Gateway.Data.VmTemplate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisksJson")
+                        .HasMaxLength(8000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("DynamicMemory")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FolderPath")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Generation")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("HostId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LibraryPath")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("MemoryMaximumMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("MemoryMinimumMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MemoryStartupMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ProcessorCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SecureBootTemplate")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceVmName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("TpmEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId");
+
+                    b.HasIndex("HostId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("VmTemplates");
                 });
 
             modelBuilder.Entity("HvPortal.Gateway.Data.RoleAssignment", b =>

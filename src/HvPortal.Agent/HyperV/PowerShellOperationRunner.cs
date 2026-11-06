@@ -238,6 +238,39 @@ public sealed class PowerShellOperationRunner
                     {
                         HostFolderBrowser.CheckFolder(location, mustExist: false, files);
                     }
+                    foreach (var root in n.TemplateRoots)
+                    {
+                        HostFolderBrowser.CheckFolder(root, mustExist: true, files);
+                    }
+                    return null;
+                case HvOperation.NewTemplate:
+                    if (HvOperations.FromElement<NewTemplateRequest>(args) is not { } nt)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(nt) is { } invalidTemplate)
+                    {
+                        return invalidTemplate;
+                    }
+                    // The library folder may not exist yet (first template): its existing ancestors are still checked.
+                    foreach (var root in nt.Roots)
+                    {
+                        HostFolderBrowser.CheckFolder(root, mustExist: false, files);
+                    }
+                    return null;
+                case HvOperation.RemoveTemplate:
+                    if (HvOperations.FromElement<TemplateFolderRequest>(args) is not { } rt)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(rt) is { } invalidFolder)
+                    {
+                        return invalidFolder;
+                    }
+                    foreach (var root in rt.Roots)
+                    {
+                        HostFolderBrowser.CheckFolder(root, mustExist: false, files);
+                    }
                     return null;
                 case HvOperation.BrowseFolders:
                     return HvOperations.FromElement<FolderBrowseRequest>(args) is { } b ? OperationValidation.Validate(b) : "invalid_arguments";

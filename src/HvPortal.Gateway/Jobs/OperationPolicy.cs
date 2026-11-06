@@ -15,7 +15,10 @@ public static partial class OperationPolicy
     public const int MaxIsoRoots = 16;
 
     /// <summary>Local absolute folder (drive letter), no traversal, no device paths, no UNC (the agent runs as a virtual account).</summary>
-    [GeneratedRegex(@"^[A-Za-z]:\\(?:[^\x00-\x1f""*?<>|:\\/]+\\?)*$", RegexOptions.CultureInvariant)]
+    // Segments separated by single backslashes, written so that every character can be matched in one way only:
+    // the earlier form, "(segment + optional backslash)*", took exponential time on a long name followed by a
+    // refused character (a request could keep a thread busy for hours).
+    [GeneratedRegex(@"^[A-Za-z]:\\(?:[^\x00-\x1f""*?<>|:\\/]+(?:\\[^\x00-\x1f""*?<>|:\\/]+)*\\?)?$", RegexOptions.CultureInvariant)]
     private static partial Regex LibraryPathRegex();
 
     public static IReadOnlyList<string> PermissionsFor(VmConfigChange c)

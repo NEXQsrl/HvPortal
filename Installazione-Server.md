@@ -2,7 +2,7 @@
 
 Si installa tutto con due file di setup, senza comandi PowerShell:
 
-| File (in `artifacts\release\0.5.1\setup`) | Dove si esegue |
+| File (in `artifacts\release\0.6.0\setup`) | Dove si esegue |
 |---|---|
 | `HvPortal.Gateway.Setup.exe` | sul server del gateway (il portale web), anche a dominio |
 | `HvPortal.Agent.Setup.exe` | sull'host Hyper-V (si può scaricare anche dal portale) |
@@ -52,6 +52,18 @@ Se vuoi creare VM o caricare file in una cartella dell'host con l'utente dedicat
 ```powershell
 icacls D:\Hyper-V /grant "svc-hvportal:(OI)(CI)M"
 ```
+
+### Template (dalla versione 0.6.0)
+
+1. Nel portale apri l'host → **Impostazioni → Libreria template** e indica una cartella su un disco dati dell'host,
+   ad esempio `D:\Templates`. L'account dell'agent deve poterci scrivere:
+   ```powershell
+   icacls D:\Templates /grant "NT SERVICE\HvPortalAgent:(OI)(CI)M"   # oppure l'utente dedicato, se ne usi uno
+   ```
+2. Prepara la VM modello (su Windows esegui Sysprep, su Linux cloud-init o machine-id pulito), **spegnila**, poi dal
+   suo menu scegli **Crea template**. I dischi vengono copiati: la VM resta com'è.
+3. Per creare una VM: **Template → Nuova VM da questo template** (oppure *Nuova VM → Parti da: Template*), scegli nome,
+   CPU, memoria, rete e posizione.
 
 ### Variante: niente sull'host (agent di management)
 

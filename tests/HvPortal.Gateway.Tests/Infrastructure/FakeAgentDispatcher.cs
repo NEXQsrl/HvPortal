@@ -261,14 +261,68 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 return Ok(new { applied = true }, "processor");
             case HvOperation.NewVm:
                 var req = HvOperations.FromElement<NewVmRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(req) is { } invalidVm)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = invalidVm };
+                }
+                // From a template: every disk file must exist in a template folder of this host (they are copied).
+                var templateFolders = TemplateFoldersOf(hostId);
+                if (req.TemplateDisks.FirstOrDefault(d => !templateFolders.TryGetValue(System.IO.Path.GetDirectoryName(d)!, out var files)
+                        || !files.Contains(System.IO.Path.GetFileName(d))) is { } missingDisk)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "Template disk not found: " + missingDisk };
+                }
                 var newId = Guid.NewGuid();
+                if (req.TemplateDisks.Count > 0)
+                {
+                    CreatedFromTemplate[newId] = req;
+                }
                 _vms[newId] = (hostId, req.Name, req.StartAfterCreate ? VmPowerState.Running : VmPowerState.Off, 0);
-                _specs[newId] = (req.ProcessorCount, req.MemoryStartupMb, req.MemoryMaximumMb, req.DynamicMemory, req.DiskSizeGb);
+                _specs[newId] = (req.ProcessorCount, req.MemoryStartupMb, req.MemoryMaximumMb, req.DynamicMemory, req.DiskSizeGb + req.TemplateExtraDiskGb);
                 if (req.Location is not null)
                 {
                     _paths[newId] = req.Location + @"\" + req.Name;
                 }
                 return Ok(new NewVmResult(newId, req.Name, req.Location is null ? @"D:\VMs" : req.Location + @"\" + req.Name, @"D:\VHDs\" + req.Name + ".vhdx", null), "created");
+            case HvOperation.NewTemplate:
+                var nt = HvOperations.FromElement<NewTemplateRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(nt) is { } invalidTemplate)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = invalidTemplate };
+                }
+                if (!_vms.TryGetValue(nt.VmId, out var source) || source.HostId != hostId)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "VM not found on this host." };
+                }
+                if (source.State != VmPowerState.Off)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = $"The VM must be off to create a template from it (it is {source.State})." };
+                }
+                if (TemplateFoldersOf(hostId).ContainsKey(nt.Folder))
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "The template folder already exists: " + nt.Folder };
+                }
+                var sourceGb = _specs.TryGetValue(nt.VmId, out var sourceSpec) ? sourceSpec.DiskGb : 64L;
+                var templateDisks = new List<TemplateDisk> { new("disk0.vhdx", sourceGb << 30, 9L << 30) };
+                if (TemplateDataDiskGb > 0)
+                {
+                    templateDisks.Add(new("disk1.vhdx", (long)TemplateDataDiskGb << 30, 1L << 30));
+                }
+                TemplateFoldersOf(hostId)[nt.Folder] = templateDisks.Select(d => d.File).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                return Ok(new NewTemplateResult
+                {
+                    Folder = nt.Folder, Disks = templateDisks, Generation = 2, ProcessorCount = 2, MemoryStartupMb = 4096, DynamicMemory = false,
+                    MemoryMinimumMb = 512, MemoryMaximumMb = 1048576, SecureBootTemplate = "MicrosoftWindows", TpmEnabled = false,
+                }, "folder", "copied");
+            case HvOperation.RemoveTemplate:
+                var rt = HvOperations.FromElement<TemplateFolderRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(rt) is { } invalidFolder)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = invalidFolder };
+                }
+                return TemplateFoldersOf(hostId).TryRemove(rt.Folder, out _)
+                    ? Ok(new { removed = true, folder = rt.Folder }, "removed")
+                    : Ok(new { removed = false, folder = rt.Folder });
             case HvOperation.ListCheckpoints:
                 return Ok(new[] { new CheckpointInfo(Guid.NewGuid().ToString("D"), "Before update", null, DateTimeOffset.UtcNow, "Production", true) });
             case HvOperation.NewCheckpoint or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint:
@@ -337,6 +391,18 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 return new HvOperationOutcome { Ok = false, Error = "Unsupported operation." };
         }
     }
+
+    /// <summary>Simulated template folders per host: folder path -> disk files in it (NewTemplate / RemoveTemplate / NewVm from a template).</summary>
+    public ConcurrentDictionary<Guid, ConcurrentDictionary<string, HashSet<string>>> TemplateFolders { get; } = new();
+
+    public ConcurrentDictionary<string, HashSet<string>> TemplateFoldersOf(Guid hostId) =>
+        TemplateFolders.GetOrAdd(hostId, _ => new(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>VMs created from a template, with the request the agent received (disks to copy, sizes).</summary>
+    public ConcurrentDictionary<Guid, NewVmRequest> CreatedFromTemplate { get; } = new();
+
+    /// <summary>When greater than 0 the next templates get a second (data) disk of this size.</summary>
+    public int TemplateDataDiskGb { get; set; }
 
     /// <summary>Simulated native Hyper-V VM groups per host (Get-VMGroup), same rules as the operations script.</summary>
     public sealed class NativeGroup

@@ -1,7 +1,7 @@
 import { Check, Cpu, Disc3, FolderOpen, FolderSearch, Info, ListChecks, Network, RotateCcw, Server, Settings2, ShieldCheck, HardDrive } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { get, newIdempotencyKey, post } from '@/api/client';
-import type { Accepted, GroupPolicyView, HostDefaultsResponse, NewVmSpec } from '@/api/ops-types';
+import type { Accepted, GroupPolicyView, HostDefaultsResponse, NewVmSpec, VmTemplate } from '@/api/ops-types';
 import { ErrorAlert, GroupIcon, KeyValue, Notice } from '@/components/common';
 import { Field } from '@/components/dialogs';
 import { useInventory } from '@/components/inventory/InventoryProvider';
@@ -35,10 +35,23 @@ const STEPS = [
 ] as const;
 
 const MEMORY_PRESETS = [512, 1024, 2048, 4096, 8192, 12288, 16384, 32768, 65536];
+
+/** What a template proposes for a new VM: the hardware of the model (everything but the generation can be changed). */
+function fromTemplate(t: VmTemplate): Partial<NewVmSpec> {
+  return {
+    templateId: t.id, generation: t.generation === 1 ? 1 : 2, processorCount: t.processorCount, memoryStartupMb: t.memoryStartupMb, dynamicMemory: t.dynamicMemory,
+    memoryMinimumMb: Math.min(t.memoryMinimumMb ?? 512, t.memoryStartupMb), memoryMaximumMb: Math.max(t.memoryStartupMb, Math.min(t.memoryMaximumMb ?? 8192, 1048576)),
+    diskSizeGb: t.bootDiskGb, diskFixed: false, secureBootTemplate: t.secureBootTemplate ?? 'MicrosoftWindows', enableTpm: t.tpmEnabled,
+  };
+}
 const DISK_PRESETS = [40, 60, 80, 127, 256, 512, 1024];
 
-export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQueued, onClose }: {
-  hostId?: string; groupId?: string; onQueued: (r: Accepted, label: string) => void; onClose: () => void;
+/**
+ * New VM wizard. With <paramref name="template"/> the VM is created from a template: its host, generation and disks
+ * are the template's (the disks are copied); name, resources, network, location and options are chosen here.
+ */
+export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, template, onQueued, onClose }: {
+  hostId?: string; groupId?: string; template?: VmTemplate; onQueued: (r: Accepted, label: string) => void; onClose: () => void;
 }) {
   const { t } = useI18n();
   const inv = useInventory();
@@ -48,18 +61,34 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
   const hosts = useMemo(() => {
     const own = inv.hosts.filter((h) => h.canCreateVm).map((h) => ({ id: h.id, displayName: h.displayName }));
     const viaGroup = (folder.data?.hosts ?? []).filter((h) => h.canCreateVm && !own.some((o) => o.id === h.id)).map((h) => ({ id: h.id, displayName: h.displayName }));
+    // A template is used on its own host (the server checks that the user may create VMs there).
+    if (template) return [{ id: template.hostId, displayName: template.hostName }];
     return [...own, ...viaGroup];
-  }, [inv.hosts, folder.data]);
+  }, [inv.hosts, folder.data, template]);
   const [step, setStep] = useState(0);
   const [hostId, setHostId] = useState(initialHost && hosts.some((h) => h.id === initialHost) ? initialHost : hosts[0]?.id ?? '');
   useEffect(() => {
     if (hosts.length > 0 && !hosts.some((h) => h.id === hostId)) setHostId(hosts[0]!.id);
   }, [hosts, hostId]);
-  const [spec, setSpec] = useState<NewVmSpec>({
+  // The template in use: given by the caller (Templates page) or chosen in the first step among those of the host.
+  const [tpl, setTpl] = useState<VmTemplate | null>(template ?? null);
+  const [spec, setSpec] = useState<NewVmSpec>(() => ({
     name: '', generation: 2, processorCount: 2, memoryStartupMb: 4096, dynamicMemory: false, memoryMinimumMb: 512, memoryMaximumMb: 8192,
     diskSizeGb: 60, diskFixed: false, switchName: '', isoPath: '', secureBootTemplate: 'MicrosoftWindows', enableTpm: false,
     checkpointType: 'Production', automaticStartAction: 'StartIfRunning', startAfterCreate: false, notes: '', location: '',
-  });
+    ...(template ? fromTemplate(template) : {}),
+  }));
+  const available = useLoad(() => (hostId && !template
+    ? get<{ items: VmTemplate[] }>(`/api/v1/templates?hostId=${hostId}${groupId ? `&groupId=${groupId}` : ''}`).then((r) => r.items.filter((i) => i.can.deploy)).catch(() => [])
+    : Promise.resolve([] as VmTemplate[])), [hostId, groupId, template]);
+  const chooseTemplate = (next: VmTemplate | null) => {
+    setTpl(next);
+    setSpec((s) => (next ? { ...s, ...fromTemplate(next) } : { ...s, templateId: undefined, diskSizeGb: 60 }));
+  };
+  // A template belongs to its host: changing host goes back to an empty VM.
+  useEffect(() => {
+    if (!template && tpl && tpl.hostId !== hostId) { setTpl(null); setSpec((s) => ({ ...s, templateId: undefined, diskSizeGb: 60 })); }
+  }, [hostId, tpl, template]);
   const [browsing, setBrowsing] = useState(false);
   const [locationFree, setLocationFree] = useState<number | null>(null);
   const [defaults, setDefaults] = useState<HostDefaultsResponse | null>(null);
@@ -95,7 +124,9 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
   const location = spec.location?.trim() ? normalizeFolder(spec.location) : '';
   const locationCode = location ? validateLocation(location) : null;
   const locationError = locationCode ? t(('wiz.' + locationCode) as TKey) : null;
-  const diskError = spec.diskSizeGb !== 0 && (!Number.isInteger(spec.diskSizeGb) || spec.diskSizeGb < 1 || spec.diskSizeGb > 65536) ? t('wiz.diskInvalid') : null;
+  const diskError = tpl
+    ? (!Number.isInteger(spec.diskSizeGb) || spec.diskSizeGb < tpl.bootDiskGb || spec.diskSizeGb > 65536 ? t('tpl.wiz.diskMin', { gb: tpl.bootDiskGb }) : null)
+    : spec.diskSizeGb !== 0 && (!Number.isInteger(spec.diskSizeGb) || spec.diskSizeGb < 1 || spec.diskSizeGb > 65536) ? t('wiz.diskInvalid') : null;
   const stepValid = [
     !!hostId && !!name && !nameError && !!defaults,
     spec.processorCount >= 1 && spec.processorCount <= 1024 && !memoryError,
@@ -138,7 +169,7 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
     setError(null);
     try {
       const r = await post<Accepted>(`/api/v1/hosts/${hostId}/vms`, { vm: body, groupId: groupId ?? undefined, idempotencyKey: key });
-      onQueued(r, `${t('jobop.vm.create.New')} — ${name}`);
+      onQueued(r, `${t(tpl ? 'jobop.vm.create.FromTemplate' : 'jobop.vm.create.New')} — ${name}`);
       onClose();
     } catch (e) {
       setError(e);
@@ -153,11 +184,20 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
         <Field label={t('cfg.name')} htmlFor="wiz-name" error={nameError}>
           <Input id="wiz-name" value={spec.name} maxLength={100} onChange={(e) => set({ name: e.target.value })} autoFocus />
         </Field>
+        {tpl && <Notice kind="info">{t('tpl.wiz.notice')}</Notice>}
         <Field label={t('wiz.host')} htmlFor="wiz-host">
-          <NativeSelect id="wiz-host" value={hostId} onChange={(e) => setHostId(e.target.value)}>
+          <NativeSelect id="wiz-host" value={hostId} disabled={!!template} onChange={(e) => setHostId(e.target.value)}>
             {hosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)}
           </NativeSelect>
         </Field>
+        {!template && (available.data?.length ?? 0) > 0 && (
+          <Field label={t('tpl.wiz.source')} htmlFor="wiz-source" hint={t('tpl.help')}>
+            <NativeSelect id="wiz-source" value={tpl?.id ?? ''} onChange={(e) => chooseTemplate(available.data?.find((x) => x.id === e.target.value) ?? null)}>
+              <option value="">{t('tpl.wiz.sourceEmpty')}</option>
+              {(available.data ?? []).map((x) => <option key={x.id} value={x.id}>{t('tpl.wiz.sourceTemplate', { name: x.name })}</option>)}
+            </NativeSelect>
+          </Field>
+        )}
         {hosts.length === 0 && !folder.loading && <Notice kind="warn">{t('wiz.noHostForGroup')}</Notice>}
         {loadError ? <ErrorAlert error={loadError} /> : defaults && (
           <p className="text-xs text-muted-foreground">{t('wiz.hostCapacity', { lp: defaults.defaults.logicalProcessorCount, mem: formatBytes(defaults.defaults.memoryCapacityBytes) })}</p>
@@ -182,7 +222,8 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
     ),
     compute: (
       <div className="space-y-4">
-        <Field label={t('wiz.generation')} hint={t('wiz.genFixed')}>
+        {tpl && <div className="rounded-md border px-3 py-2 text-sm">{t('tpl.wiz.generation', { gen: tpl.generation })}</div>}
+        <Field label={t('wiz.generation')} hint={t('wiz.genFixed')} className={tpl ? 'hidden' : undefined}>
           <RadioGroup value={String(spec.generation)} onValueChange={(v) => set({ generation: v === '1' ? 1 : 2 })} className="gap-2">
             {(['2', '1'] as const).map((g) => (
               <label key={g} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm has-[[data-state=checked]]:border-primary/50 has-[[data-state=checked]]:bg-primary/5">
@@ -240,7 +281,19 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
           </div>
         </Field>}
 
-        <div className="space-y-3 rounded-lg border p-3">
+        {tpl && (
+          <div className="space-y-3 rounded-lg border p-3">
+            <Field label={t('tpl.wiz.disk')} htmlFor="wiz-tpl-disk" error={diskError} hint={t('tpl.wiz.diskHint', { gb: tpl.bootDiskGb })}>
+              <PresetInput id="wiz-tpl-disk" value={spec.diskSizeGb} onChange={(v) => set({ diskSizeGb: v })} unit="GB" min={tpl.bootDiskGb} max={65536} invalid={!!diskError}
+                menuLabel={t('wiz.presets')}
+                presets={[tpl.bootDiskGb, ...DISK_PRESETS.filter((g) => g > tpl.bootDiskGb)].map((g) => ({ value: g, label: g >= 1024 ? `${g / 1024} TB` : `${g} GB` }))} />
+            </Field>
+            {tpl.disks.length > 1 && (
+              <p className="text-xs text-muted-foreground">{t('tpl.wiz.extraDisks', { text: tpl.disks.slice(1).map((d) => formatBytes(d.sizeBytes)).join(' + ') })}</p>
+            )}
+          </div>
+        )}
+        <div className={cn('space-y-3 rounded-lg border p-3', tpl && 'hidden')}>
           <label className="flex items-center gap-2 text-sm">
             <Checkbox checked={spec.diskSizeGb === 0} onCheckedChange={(c) => set({ diskSizeGb: c ? 0 : 60 })} />{t('wiz.noDisk')}
           </label>
@@ -330,6 +383,7 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
         [t('cfg.name'), name || '—'],
         [t('wiz.host'), host?.displayName],
         [t('wiz.group'), groupId ? inv.groupPath(groupId).map((g) => g.name).join(' / ') : t('wiz.noGroup')],
+        ...(tpl ? [[t('tpl.wiz.template'), tpl.name] as [string, string]] : []),
         [t('wiz.generation'), spec.generation === 2 ? 'Gen 2 (UEFI)' : 'Gen 1 (BIOS)'],
         [t('cfg.vcpu'), spec.processorCount],
         [t('cfg.memory'), `${formatBytes(spec.memoryStartupMb * 1048576)}${spec.dynamicMemory ? ` (${t('cfg.dynamic')}: ${spec.memoryMinimumMb}–${spec.memoryMaximumMb} MB)` : ''}`],
@@ -350,7 +404,7 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
     <Dialog open onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
       <DialogContent className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl" onInteractOutside={(e) => e.preventDefault()}>
         <DialogHeader className="border-b px-5 py-3">
-          <DialogTitle>{t('wiz.title')}</DialogTitle>
+          <DialogTitle>{tpl ? t('tpl.wiz.title', { name: tpl.name }) : t('wiz.title')}</DialogTitle>
           <DialogDescription className="sr-only">{t(current.label as TKey)}</DialogDescription>
         </DialogHeader>
         {hosts.length === 0 ? <div className="p-5"><Notice kind="warn">{t('wiz.noHosts')}</Notice></div> : (

@@ -93,7 +93,7 @@ public static class VmOperationsEndpoints
         }
     }
 
-    private static async Task<VirtualMachine?> ReadableVmAsync(Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access) =>
+    internal static async Task<VirtualMachine?> ReadableVmAsync(Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access) =>
         await db.VirtualMachines.AsNoTracking().FirstOrDefaultAsync(v => v.Id == id, http.RequestAborted) is { } vm
         && await access.HasAsync(http.User.UserId(), Permissions.InventoryRead, ResourceRef.Vm(id), http.RequestAborted)
             ? vm
@@ -102,7 +102,7 @@ public static class VmOperationsEndpoints
     private static bool IsFresh(ManagedHost host, IAgentDispatcher agents, TimeProvider time) =>
         agents.IsConnected(host.Id) && host.LastInventoryAt is { } at && time.GetUtcNow() - at <= InventoryEndpoints.StaleAfter;
 
-    private static string? IdempotencyKey(HttpContext http, string? fromBody)
+    internal static string? IdempotencyKey(HttpContext http, string? fromBody)
     {
         var key = fromBody ?? http.Request.Headers["Idempotency-Key"].FirstOrDefault();
         return key is not null && !ApiSupport.IdempotencyKeyRegex().IsMatch(key) ? "!" : key;
@@ -774,6 +774,30 @@ public static class VmOperationsEndpoints
             IsoRoots = roots,
             Location = string.IsNullOrWhiteSpace(req.Vm.Location) ? null : HostPaths.Normalize(req.Vm.Location),
         };
+        // From a template (ADR-028): its disks, generation and sizes come from the template record of this host; a
+        // request without a template never carries template fields. Done before the limits, which count those disks.
+        VmTemplate? template = null;
+        if (req.Vm.TemplateId is { } templateId)
+        {
+            template = await db.VmTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == templateId && t.HostId == id, http.RequestAborted);
+            if (template is null)
+            {
+                return ApiSupport.BadRequest("unknown_template", "The template does not exist on this host.");
+            }
+            if (agents.IsConnected(id) && agents.ProtocolVersionOf(id) < TemplateEndpoints.TemplateProtocol)
+            {
+                return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Templates need agent 0.6.0 or later on this host. Update the agent.");
+            }
+            if (template.Status != TemplateStatus.Ready || Templates.TemplateRules.Stamp(spec, template) is not { } fromTemplate)
+            {
+                return ApiSupport.Conflict("template_not_ready", "The template is not ready to be used (see its status in Templates).");
+            }
+            spec = fromTemplate;
+        }
+        else
+        {
+            spec = Templates.TemplateRules.WithoutTemplate(spec);
+        }
         var extra = new List<string>();
         if (req.GroupId is { } groupId)
         {
@@ -825,14 +849,17 @@ public static class VmOperationsEndpoints
         {
             return ApiSupport.BadRequest("invalid_idempotency_key");
         }
-        var timeout = spec.DiskFixed ? Math.Min(1800, 300 + spec.DiskSizeGb * 2) : 600;
+        // From a template the disks are copied: the time depends on their size.
+        var timeout = template is not null ? Templates.TemplateRules.CopyTimeoutSeconds(template.SizeBytes)
+            : spec.DiskFixed ? Math.Min(1800, 300 + spec.DiskSizeGb * 2) : 600;
         var summary = new
         {
-            spec.Name, spec.Generation, spec.ProcessorCount, spec.MemoryStartupMb, spec.DynamicMemory, spec.DiskSizeGb, spec.DiskFixed,
+            spec.Name, template = template?.Name, spec.Generation, spec.ProcessorCount, spec.MemoryStartupMb, spec.DynamicMemory, spec.DiskSizeGb, spec.DiskFixed,
             spec.SwitchName, spec.IsoPath, spec.SecureBootTemplate, spec.EnableTpm, spec.StartAfterCreate, spec.Location, req.GroupId,
         };
-        return await QueueAsync(http, jobs, new JobService.OperationJobSpec(JobService.CreateJobType, "New", ScopeType.Host, id, spec.Name, id,
-            Permissions.VmCreate, new JobService.OperationParameters(HvOperations.ToElement(spec), req.GroupId, extra), timeout,
-            $"Create VM {spec.Name} on {host.DisplayName}"), key, "vm.create.request", summary);
+        return await QueueAsync(http, jobs, new JobService.OperationJobSpec(JobService.CreateJobType, template is null ? "New" : "FromTemplate", ScopeType.Host, id,
+            spec.Name, id, Permissions.VmCreate, new JobService.OperationParameters(HvOperations.ToElement(spec), req.GroupId, extra), timeout,
+            template is null ? $"Create VM {spec.Name} on {host.DisplayName}" : $"Create VM {spec.Name} from template {template.Name} on {host.DisplayName}"),
+            key, "vm.create.request", summary);
     }
 }

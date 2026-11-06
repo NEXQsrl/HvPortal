@@ -19,8 +19,10 @@ public static class AgentProtocol
     ///     TargetsConfiguration and TargetInventory messages, AgentRole in enrollment and Hello.
     /// 7 = v0.5.0: virtual switches (ListNetAdapters, NewSwitch, RemoveSwitch), NewDiskSpec.Folder, RestoreCheckpoint
     ///     turns off a running VM first, VmSummary.MemoryMaximumMb.
+    /// 8 = v0.6.0: VM templates (NewTemplate, RemoveTemplate, NewVm.TemplateDisks: the disks of a template are copied
+    ///     into the new VM); long copies may run for hours (see CommandExecutor).
     /// </summary>
-    public const int Version = 7;
+    public const int Version = 8;
 
     /// <summary>
     /// Lowest agent protocol able to execute the command as intended. The gateway never sends a command to an older
@@ -35,6 +37,16 @@ public static class AgentProtocol
         if (command.Kind is not (AgentCommandKind.HyperVOperation or AgentCommandKind.ConsoleFrame or AgentCommandKind.ConsoleInput))
         {
             return 1;
+        }
+        if (command.Operation is HvOperation.NewTemplate or HvOperation.RemoveTemplate)
+        {
+            return 8;
+        }
+        // An older agent would ignore the template disks and create an empty VM that looks like a successful deployment.
+        if (command.Operation is HvOperation.NewVm && command.OperationArgs is { ValueKind: JsonValueKind.Object } vmArgs
+            && vmArgs.TryGetProperty("templateDisks", out var disks) && disks.ValueKind == JsonValueKind.Array && disks.GetArrayLength() > 0)
+        {
+            return 8;
         }
         if (command.Operation is HvOperation.ListNetAdapters or HvOperation.NewSwitch or HvOperation.RemoveSwitch)
         {

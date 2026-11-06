@@ -18,6 +18,7 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
     public DbSet<LogicalGroup> LogicalGroups => Set<LogicalGroup>();
     public DbSet<LogicalGroupMember> LogicalGroupMembers => Set<LogicalGroupMember>();
     public DbSet<GroupNetwork> GroupNetworks => Set<GroupNetwork>();
+    public DbSet<VmTemplate> VmTemplates => Set<VmTemplate>();
     public DbSet<HostVmGroupLink> HostVmGroupLinks => Set<HostVmGroupLink>();
     public DbSet<ManagedHost> Hosts => Set<ManagedHost>();
     public DbSet<ManagementAgent> ManagementAgents => Set<ManagementAgent>();
@@ -105,6 +106,20 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.Property(x => x.Description).HasMaxLength(1000);
             e.Property(x => x.PolicyJson).HasMaxLength(32000);
         });
+        m.Entity<VmTemplate>(e =>
+        {
+            e.HasIndex(x => new { x.HostId, x.Name }).IsUnique();
+            e.HasIndex(x => x.JobId);
+            e.Property(x => x.Name).HasMaxLength(100);
+            e.Property(x => x.Description).HasMaxLength(2000);
+            e.Property(x => x.Error).HasMaxLength(2000);
+            e.Property(x => x.LibraryPath).HasMaxLength(260);
+            e.Property(x => x.FolderPath).HasMaxLength(300);
+            e.Property(x => x.SourceVmName).HasMaxLength(200);
+            e.Property(x => x.SecureBootTemplate).HasMaxLength(100);
+            e.Property(x => x.DisksJson).HasMaxLength(8000);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        });
         m.Entity<GroupNetwork>(e =>
         {
             e.HasIndex(x => new { x.HostId, x.SwitchName }).IsUnique();
@@ -125,6 +140,7 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.Property(x => x.InventoryWarningsJson).HasMaxLength(16000);
             e.Property(x => x.AccessMessage).HasMaxLength(2000);
             e.Property(x => x.IsoLibraryPathsJson).HasMaxLength(8000);
+            e.Property(x => x.TemplateLibraryPath).HasMaxLength(260);
             e.Property(x => x.VmGroupsSyncError).HasMaxLength(4000);
             e.Property(x => x.VmGroupsPlanHash).HasMaxLength(64);
             e.Property(x => x.RemoteComputerName).HasMaxLength(253);

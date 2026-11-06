@@ -65,7 +65,7 @@ export function AppShell() {
         <div className="min-h-0 flex-1">
           {desktop && !hidden ? (
             <ResizablePanelGroup orientation="horizontal" className="h-full">
-              <ResizablePanel id="tree" defaultSize="20%" minSize="200px" maxSize="45%">
+              <ResizablePanel id="tree" defaultSize="356px" minSize="200px" maxSize="45%">
                 <aside className="sidebar h-full border-r"><Navigator /></aside>
               </ResizablePanel>
               <ResizableHandle />

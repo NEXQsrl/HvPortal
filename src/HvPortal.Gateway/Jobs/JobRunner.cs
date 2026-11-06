@@ -186,7 +186,8 @@ public sealed class JobRunner : BackgroundService
                 }
                 return OperationValidation.Validate(change) is null ? HvOperations.ToElement(change) : null;
             case HvOperation.NewVm when HvOperations.FromElement<NewVmRequest>(args) is { } n:
-                var create = n with { IsoRoots = roots };
+                // Template fields are valid only as stamped from the template record (StampTemplateAsync, just before).
+                var create = (n.TemplateId is null ? Templates.TemplateRules.WithoutTemplate(n) : n) with { IsoRoots = roots };
                 if (create.IsoPath is { Length: > 0 } iso2 && !OperationPolicy.IsInsideLibrary(iso2, roots))
                 {
                     return null;
@@ -199,6 +200,11 @@ public sealed class JobRunner : BackgroundService
                 return OperationValidation.Validate(ns) is null ? HvOperations.ToElement(ns) : null;
             case HvOperation.RemoveSwitch when HvOperations.FromElement<SwitchRef>(args) is { } rs:
                 return OperationValidation.Validate(rs) is null ? HvOperations.ToElement(rs) : null;
+            case HvOperation.NewTemplate when vm is not null && HvOperations.FromElement<NewTemplateRequest>(args) is { } nt:
+                var capture = nt with { VmId = vm.HyperVId };
+                return OperationValidation.Validate(capture) is null ? HvOperations.ToElement(capture) : null;
+            case HvOperation.RemoveTemplate when HvOperations.FromElement<TemplateFolderRequest>(args) is { } rt:
+                return OperationValidation.Validate(rt) is null ? HvOperations.ToElement(rt) : null;
             default:
                 return null;
         }
@@ -293,6 +299,26 @@ public sealed class JobRunner : BackgroundService
             }
             var hostId = host.Id;
             job.HostId = hostId; // resolve the owner at execution time
+
+            // A template is created by who manages templates on the HOST of the VM (the permission has no meaning on folders).
+            if (hvOperation == HvOperation.NewTemplate
+                && !await access.HasAsync(job.RequestedByUserId, Permissions.TemplatesManage, ResourceRef.Host(hostId), ct))
+            {
+                await FinalizeAsync(db, job, JobStatus.Failed, "The requesting user is no longer authorized for this operation.", "authorization_revoked", null,
+                    AuditOutcome.Denied);
+                return;
+            }
+            // Template jobs: folder, library and disk files are taken from the template record now, whatever the job stored.
+            if (hvOperation is { } templateOp && parameters is not null)
+            {
+                var (templateError, withTemplate) = await StampTemplateAsync(db, templateOp, job, parameters.Args, hostId, ct);
+                if (templateError is not null)
+                {
+                    await FinalizeAsync(db, job, JobStatus.Failed, templateError, "template_not_available", null);
+                    return;
+                }
+                parameters = parameters with { Args = withTemplate };
+            }
 
             // Limits of the VM folders are checked again now (other operations may have used the quota meanwhile);
             // server-controlled fields decided by the limits (VM location, new disk folder) are re-stamped.
@@ -447,6 +473,47 @@ public sealed class JobRunner : BackgroundService
             {
                 await db.ResourceLocks.Where(l => l.ResourceKey == lockKey && l.JobId == jobId).ExecuteDeleteAsync(CancellationToken.None);
             }
+        }
+    }
+
+    /// <summary>
+    /// The template a capture/delete job is about: the one whose folder the job stored when it was requested (the
+    /// folder name is the template id). The record is only used to read where the template is; it is never the client's.
+    /// </summary>
+    private static async Task<VmTemplate?> TemplateOfAsync(PortalDbContext db, Job job, Guid? hostId, CancellationToken ct)
+    {
+        if (ReadParameters(job) is not { Args: { ValueKind: JsonValueKind.Object } args }
+            || !args.TryGetProperty("folder", out var f) || f.ValueKind != JsonValueKind.String || f.GetString() is not { Length: > 0 } folder)
+        {
+            return null;
+        }
+        return await db.VmTemplates.FirstOrDefaultAsync(t => t.FolderPath == folder && (hostId == null || t.HostId == hostId), ct);
+    }
+
+    private static async Task<(string? Error, JsonElement Args)> StampTemplateAsync(PortalDbContext db, HvOperation op, Job job, JsonElement args, Guid hostId,
+        CancellationToken ct)
+    {
+        switch (op)
+        {
+            case HvOperation.NewVm when HvOperations.FromElement<NewVmRequest>(args) is { TemplateId: { } templateId } spec:
+                var source = await db.VmTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == templateId && t.HostId == hostId, ct);
+                if (source is not { Status: TemplateStatus.Ready } || Templates.TemplateRules.Stamp(spec, source) is not { } stamped)
+                {
+                    return ("The template is no longer available on this host.", args);
+                }
+                return (null, HvOperations.ToElement(stamped));
+            case HvOperation.NewTemplate when HvOperations.FromElement<NewTemplateRequest>(args) is { } capture:
+                var creating = await TemplateOfAsync(db, job, hostId, ct);
+                return creating is not { Status: TemplateStatus.Creating }
+                    ? ("The template record no longer exists.", args)
+                    : (null, HvOperations.ToElement(capture with { Folder = creating.FolderPath, Roots = [creating.LibraryPath] }));
+            case HvOperation.RemoveTemplate:
+                var deleting = await TemplateOfAsync(db, job, hostId, ct);
+                return deleting is not { Status: TemplateStatus.Deleting }
+                    ? ("The template record no longer exists.", args)
+                    : (null, HvOperations.ToElement(new TemplateFolderRequest { Folder = deleting.FolderPath, Roots = [deleting.LibraryPath] }));
+            default:
+                return (null, args);
         }
     }
 
@@ -802,6 +869,12 @@ public sealed class JobRunner : BackgroundService
         job.Status = status;
         job.CompletedAt = now;
         job.ResultMessage = message is { Length: > 2000 } ? message[..2000] : message;
+        if (job.Type is JobService.TemplateCaptureJobType or JobService.TemplateDeleteJobType
+            && await TemplateOfAsync(db, job, null, CancellationToken.None) is { } template)
+        {
+            // Saved with the job: the template never shows a state its job did not reach.
+            Templates.TemplateRules.ApplyJobOutcome(db, template, job, status, message);
+        }
         job.ErrorCode = errorCode;
         job.HyperVCode = hyperVCode;
         job.LeaseOwner = null;

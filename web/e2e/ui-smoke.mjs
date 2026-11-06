@@ -168,6 +168,24 @@ try {
   await page.getByText('Libreria ISO').first().waitFor();
   check('host settings tab shows the ISO library editor', true);
   await shot(page, '05b-host-settings');
+  // Templates (ADR-028): the host gets its template library folder from the settings; the page lists templates per host.
+  await page.getByLabel('Libreria template').fill('D:/Templates');
+  check('template library: a path that is not a local folder is refused before saving', (await page.getByText('Usa una cartella locale come').count()) === 1);
+  await page.getByLabel('Libreria template').fill('D:' + String.fromCharCode(92) + 'Templates');
+  await page.locator('form', { has: page.getByLabel('Libreria template') }).getByRole('button', { name: 'Salva' }).click();
+  await page.getByText('Impostazioni salvate').first().waitFor();
+  check('template library of the host saved from its settings', (await page.getByLabel('Libreria template').inputValue()) === 'D:' + String.fromCharCode(92) + 'Templates');
+  await page.getByRole('link', { name: 'Template', exact: true }).click();
+  await page.getByRole('heading', { name: /Template/ }).first().waitFor();
+  await page.getByText('Nessun template. Prepara una VM').waitFor();
+  check('templates page explains how to create the first template', (await page.getByText(/Sysprep/).count()) >= 1);
+  await page.getByRole('treeitem', { name: /hv-lab-01/ }).click();
+  await page.getByText('Nessun template su questo host.').waitFor();
+  check('templates tree lists the hosts (filter from the tree)', page.url().includes('/templates?host='));
+  await shot(page, '05c-templates');
+  await page.getByRole('link', { name: 'Inventario', exact: true }).click();
+  await page.getByRole('treeitem', { name: /hv-lab-01/ }).click();
+  await page.getByRole('heading', { name: 'hv-lab-01' }).waitFor();
 
   // Groups (folders) in the tree
   await page.getByRole('button', { name: 'Nuovo gruppo' }).first().click();
@@ -246,7 +264,28 @@ try {
   await page.getByRole('button', { name: 'Verifica integrità' }).click();
   await page.locator('.alert-ok').waitFor();
   check('audit integrity verified from UI', true);
+  // Readable audit: actions in words, the name of the resource, translated outcomes; a click shows the details.
+  await page.locator('tr.audit-row').first().waitFor();
+  const deletedUser = page.locator('tr.audit-row', { hasText: 'Utente eliminato' }).first();
+  check('audit describes actions in words with the name of the resource', (await deletedUser.count()) === 1 && (await deletedUser.innerText()).includes('mario.rossi'), (await page.locator('.audit-title').first().innerText()));
+  check('audit shows who acted and how, and the outcome in the language of the page',
+    (await deletedUser.innerText()).includes('admin') && /account locale/.test(await deletedUser.innerText()) && (await deletedUser.getByText('Riuscito').count()) === 1);
+  check('audit rows never show raw JSON', !(await page.locator('tr.audit-row').allInnerTexts()).some((x) => x.includes('{"')));
+  await deletedUser.click();
+  await page.locator('.audit-details').waitFor();
+  const auditDetails = await page.locator('.audit-details').innerText();
+  check('audit entry expands to its details (action code, fields)', auditDetails.includes('users.delete') && auditDetails.includes('Codice azione') && auditDetails.includes('mario.rossi'));
   await shot(page, '09-audit');
+  await page.getByLabel('Area').selectOption('groups');
+  await deletedUser.waitFor({ state: 'detached' });
+  await page.locator('tr.audit-row', { hasText: 'Gruppo creato' }).first().waitFor();
+  check('audit filters by area', (await page.locator('.audit-title').allInnerTexts()).every((x) => /grupp/i.test(x)));
+  await page.getByPlaceholder('Cerca (nome, utente, indirizzo, testo)…').fill('hv-lab-01');
+  await page.getByLabel('Area').selectOption('');
+  await page.getByRole('button', { name: 'Cerca', exact: true }).click();
+  await page.waitForFunction(() => { const rows = [...document.querySelectorAll('tr.audit-row')]; return rows.length > 0 && rows.every((r) => r.innerText.includes('hv-lab-01')); }, null, { timeout: 15000 }).catch(() => {});
+  await shot(page, '09b-audit-search');
+  check('audit search finds entries by the name of the host', (await page.locator('tr.audit-row').count()) >= 1 && (await page.locator('tr.audit-row').allInnerTexts()).every((x) => x.includes('hv-lab-01')));
   await page.getByRole('link', { name: 'Impostazioni', exact: true }).click();
   await page.getByRole('heading', { name: 'Sicurezza' }).waitFor();
   check('settings are split in tabs', (await Promise.all(['Sicurezza', 'Microsoft Entra ID', 'Backup e ripristino', 'Sistema'].map((n) => page.getByRole('tab', { name: n }).count()))).every((c) => c === 1));
@@ -375,6 +414,14 @@ try {
   check('dark theme applied', await page.evaluate(() => document.documentElement.classList.contains('dark')));
   await page.getByRole('link', { name: 'Inventory', exact: true }).click();
   await page.waitForTimeout(500);
+  // Navigation icons in the dark theme: white, and only the current section is highlighted.
+  await page.mouse.move(700, 500);
+  await page.waitForTimeout(400);
+  const darkNav = await page.locator('nav.nav a').evaluateAll((links) => links.map((a) => { const s = getComputedStyle(a); return { color: s.color, bg: s.backgroundColor, current: a.getAttribute('aria-current') === 'page', h: a.offsetHeight }; }));
+  const transparent = (c) => c === 'rgba(0, 0, 0, 0)' || c === 'transparent';
+  check('dark theme: navigation icons are white and only the current one is highlighted',
+    darkNav.length >= 5 && darkNav.every((i) => i.color === 'rgb(255, 255, 255)' && i.h >= 36) && darkNav.filter((i) => !transparent(i.bg)).length === 1 && darkNav.every((i) => transparent(i.bg) !== i.current),
+    JSON.stringify(darkNav.slice(0, 3)));
   await shot(page, '13-hosts-dark-en');
   check('language switch to English', (await page.getByRole('heading', { name: 'Inventory' }).count()) > 0 && (await page.getByRole('treeitem', { name: /^All VMs/ }).count()) === 1);
   await page.getByRole('link', { name: 'Dashboard', exact: true }).click();

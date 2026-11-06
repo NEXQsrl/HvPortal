@@ -35,6 +35,17 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 - Agent protocol 3 (agent 0.3.1): `BrowseFolders`, `NewVm.Location`; the gateway never sends them to older agents;
   agents reply `Rejected` to commands they cannot parse instead of dropping the channel.
 
+## v0.6.0 — delivered (code + automated tests + browser e2e; real-host validation pending)
+- VM templates (ADR-028, agent protocol 8): create a template from a VM that is off (copy of its disks), create VMs
+  from it choosing name and resources (also from the New VM wizard), rename and delete; permission
+  `templates.manage`; template library folder per host; quotas of the folders count the template disks. Real-host
+  plan V46-V48. Later: copy between hosts, versions, guest customization at first boot.
+- Audit for people: actions in words (IT/EN), names of the resources instead of identifiers, who and how, readable
+  details with before/after, filters by area, outcome, period and free text.
+- Navigation icons larger and spaced, white in the dark theme; only the current section is highlighted (it was a
+  defect: every icon looked selected).
+- Security fix: the folder path patterns no longer backtrack exponentially (threat model D3).
+
 ## v0.5.1 — delivered (code + automated tests; real-host validation pending)
 - The VM groups a host already has are imported automatically the first time the host is mirrored (ADR-027): only
   groups with VMs, nothing removed from Hyper-V, no access gained; the rest stays on request. Real-host plan V45.
@@ -97,7 +108,7 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 ## Milestone 3
 - Failover clusters (`root\MSCluster`): nodes, CSV, quorum, owner resolution per operation, drain/maintenance,
   live and storage migration.
-- Templates (versioned, generalized images, unique identities, secure first-boot injection, no embedded secrets).
+- Templates, next steps (the base is in 0.6.0): versions, generalized images, unique identities, secure first-boot injection, no embedded secrets, copy between hosts.
 - Notifications: email + webhooks with retry, de-duplication, SSRF protection (allow-list, no private ranges unless
   allowed, DNS re-resolution checks).
 - Backup provider interface + first external provider; consistency reporting; restore to new VM; isolated restore

@@ -40,6 +40,10 @@ public enum HvOperation
     NewSwitch,
     /// <summary>Protocol 7. Remove a virtual switch by id; refused while VM adapters are connected to it (SwitchRef).</summary>
     RemoveSwitch,
+    /// <summary>Protocol 8. Copy the disks of a VM that is off into a new template folder (NewTemplateRequest). The VM is not changed.</summary>
+    NewTemplate,
+    /// <summary>Protocol 8. Delete the folder of a template (TemplateFolderRequest): only disk files directly inside it.</summary>
+    RemoveTemplate,
 }
 
 public static class HvOperations
@@ -126,6 +130,52 @@ public sealed record NewVmRequest
     /// </summary>
     public string? Location { get; init; }
     public IReadOnlyList<string> IsoRoots { get; init; } = [];
+    /// <summary>Gateway only: the template this VM is created from (the agent never uses it).</summary>
+    public Guid? TemplateId { get; init; }
+    /// <summary>
+    /// Protocol 8. Disk files of the template, the boot disk first: each one is COPIED into the folder of the new VM and
+    /// attached (no new empty disk). Set by the gateway from its own records, never taken from a client. With a
+    /// template, DiskSizeGb greater than the first disk grows the copy (0 = keep the size); it never shrinks it.
+    /// </summary>
+    public IReadOnlyList<string> TemplateDisks { get; init; } = [];
+    /// <summary>Protocol 8. Template library folders of the host: every TemplateDisks entry must be inside one of them.</summary>
+    public IReadOnlyList<string> TemplateRoots { get; init; } = [];
+    /// <summary>Gateway only: virtual size (GB, rounded up) of the template disks after the first, counted by the folder quotas.</summary>
+    public int TemplateExtraDiskGb { get; init; }
+}
+
+/// <summary>Protocol 8. <see cref="Folder"/> = &lt;template library&gt;\&lt;template id&gt;, set by the gateway; must be inside one of <see cref="Roots"/>.</summary>
+public sealed record NewTemplateRequest
+{
+    public Guid VmId { get; init; }
+    public required string Folder { get; init; }
+    public IReadOnlyList<string> Roots { get; init; } = [];
+}
+
+/// <summary>Protocol 8. Folder of an existing template (RemoveTemplate).</summary>
+public sealed record TemplateFolderRequest
+{
+    public required string Folder { get; init; }
+    public IReadOnlyList<string> Roots { get; init; } = [];
+}
+
+/// <summary>One disk of a template: file name inside the template folder, virtual size, size of the file.</summary>
+public sealed record TemplateDisk(string File, long SizeBytes, long FileBytes);
+
+/// <summary>What NewTemplate copied and the hardware of the source VM, proposed again when a VM is created from the template.</summary>
+public sealed record NewTemplateResult
+{
+    public string? Folder { get; init; }
+    public IReadOnlyList<TemplateDisk> Disks { get; init; } = [];
+    public int Generation { get; init; }
+    public int ProcessorCount { get; init; }
+    public long MemoryStartupMb { get; init; }
+    public bool DynamicMemory { get; init; }
+    public long? MemoryMinimumMb { get; init; }
+    public long? MemoryMaximumMb { get; init; }
+    /// <summary>Generation 2: the Secure Boot template, or "Off".</summary>
+    public string? SecureBootTemplate { get; init; }
+    public bool TpmEnabled { get; init; }
 }
 
 public sealed record IsoListRequest(IReadOnlyList<string> Roots);

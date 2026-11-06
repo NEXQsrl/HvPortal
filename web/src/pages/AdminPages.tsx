@@ -1,8 +1,8 @@
-import { Download, KeyRound, Plus, Save, ScrollText, Settings, ShieldCheck, Trash2, UserRound, Users } from 'lucide-react';
+import { KeyRound, Plus, Save, ScrollText, Settings, Trash2, UserRound, Users } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { del, get, post, put } from '@/api/client';
-import type { Assignment, AuditEntry, Role, SecuritySettings, UserRow } from '@/api/types';
+import type { Assignment, Role, SecuritySettings, UserRow } from '@/api/types';
 import { CopyButton, ErrorAlert, KeyValue, Loading, Notice, PageHeader, Section, StatusBadge } from '@/components/common';
 import { AutoBackupSection, BackupSection } from '@/components/admin/BackupSection';
 import { AddUserDialog, CreatedUserNotice, EntraSettingsSection, type CreatedUser } from '@/components/admin/UserAdmin';
@@ -10,7 +10,6 @@ import { ActionDialog, ConfirmTypedDialog, Field, HelpTip } from '@/components/d
 import { MicrosoftMark } from '@/components/MicrosoftMark';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { GroupPickerList } from '@/components/ops/GroupDialogs';
-import { Pager } from '@/components/OtpInput';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
@@ -171,62 +170,6 @@ function AssignDialog({ onClose, users, roles }: { onClose: () => void; users: U
         <NativeSelect id="as-effect" value={effect} onChange={(e) => setEffect(e.target.value)}><option>Allow</option><option>Deny</option></NativeSelect>
       </Field>
     </ActionDialog>
-  );
-}
-
-export function AuditPage() {
-  const { t, fmtDate } = useI18n();
-  const [params, setParams] = useSearchParams();
-  const outcome = ['Success', 'Failure', 'Denied'].includes(params.get('outcome') ?? '') ? params.get('outcome')! : '';
-  const setOutcome = (o: string) => setParams(o ? { outcome: o } : {}, { replace: true });
-  const [action, setAction] = useState('');
-  const [query, setQuery] = useState('');
-  const [skip, setSkip] = useState(0);
-  const [take, setTake] = useState(50);
-  const qs = `skip=${skip}&take=${take}${outcome ? '&outcome=' + outcome : ''}${query ? '&action=' + encodeURIComponent(query) : ''}`;
-  const data = useLoad(() => get<{ total: number; items: AuditEntry[] }>(`/api/v1/audit?${qs}`), [qs]);
-  const [verify, setVerify] = useState<{ valid: boolean; entriesChecked: number; firstInvalidId: number | null; problem: string | null } | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <PageHeader icon={<ScrollText className="size-5" />} title={t('nav.audit')}
-        actions={<>
-          <Button size="sm" variant="outline" onClick={async () => { setError(null); try { setVerify(await post('/api/v1/audit/verify')); } catch (e) { setError(e); } }}><ShieldCheck />{t('audit.verify')}</Button>
-          <Button size="sm" variant="outline" asChild><a href="/api/v1/audit/export"><Download />{t('audit.export')}</a></Button>
-        </>} />
-      <div className="space-y-2 px-4 empty:hidden">
-        <ErrorAlert error={error ?? data.error} />
-        {verify && (verify.valid
-          ? <Notice kind="ok" className="mt-3">{t('audit.valid', { n: verify.entriesChecked })}</Notice>
-          : <Notice kind="danger" className="mt-3">{t('audit.invalid', { id: verify.firstInvalidId ?? '?', problem: verify.problem ?? '' })}</Notice>)}
-      </div>
-      <Pager total={data.data?.total ?? 0} skip={skip} take={take} onChange={(s, tk) => { setSkip(s); setTake(tk); }}>
-        <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); setSkip(0); setQuery(action.trim()); }}>
-          <Input aria-label={t('audit.action')} placeholder={t('audit.filterAction')} value={action} onChange={(e) => setAction(e.target.value)} className="w-56" />
-          <NativeSelect aria-label={t('audit.outcome')} value={outcome} onChange={(e) => { setSkip(0); setOutcome(e.target.value); }} className="w-40">
-            <option value="">{t('audit.allOutcomes')}</option><option>Success</option><option>Failure</option><option>Denied</option>
-          </NativeSelect>
-          <Button type="submit" size="sm" variant="outline">{t('common.search')}</Button>
-        </form>
-      </Pager>
-      {data.loading && !data.data ? <Loading /> : (
-        <Table containerClassName="min-h-0 flex-1">
-          <TableHeader><TableRow><TableHead>{t('audit.time')}</TableHead><TableHead>{t('audit.actor')}</TableHead><TableHead>{t('audit.action')}</TableHead><TableHead>{t('audit.resource')}</TableHead><TableHead>{t('audit.outcome')}</TableHead><TableHead>{t('audit.source')}</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {(data.data?.items ?? []).map((e) => (
-              <TableRow key={e.id}>
-                <TableCell className="text-xs whitespace-nowrap tabular">{fmtDate(e.timestampUtc)}</TableCell>
-                <TableCell>{e.actorName ?? '—'}<div className="text-xs text-muted-foreground">{e.authMethod}</div></TableCell>
-                <TableCell className="max-w-md"><code className="font-mono text-xs">{e.action}</code>{e.detailsJson && <div className="font-mono text-[11px] break-all text-muted-foreground">{e.detailsJson}</div>}</TableCell>
-                <TableCell className="text-xs">{e.resourceType}{e.resourceId && <div className="font-mono text-muted-foreground">{e.resourceId}</div>}</TableCell>
-                <TableCell><StatusBadge tone={e.outcome === 'Success' ? 'ok' : 'danger'}>{e.outcome}</StatusBadge></TableCell>
-                <TableCell className="text-xs">{e.sourceIp}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </div>
   );
 }
 

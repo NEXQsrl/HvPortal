@@ -98,6 +98,57 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-028 VM templates: a copy of the disks of a prepared VM (agent protocol 8)
+- **Context**: administrators want the VMware workflow: prepare a VM once, keep it as a model, create new VMs from it
+  choosing name and resources. Hyper-V has no template object.
+- **Decision**: a template is a folder `<template library of the host>\<template id>` holding **copies** of the
+  virtual disks of a VM, plus a record in the portal (`VmTemplates`) with the hardware of that VM.
+  - *Create* (`POST /vms/{id}/template`, job `template.capture`): the VM must be off, without checkpoints, with plain
+    .vhdx/.vhd disks (no pass-through, no differencing disks). `NewTemplate` copies the disk files; the VM is never
+    changed, removed or exported, and can be used again when the job ends. A failed copy removes the folder it
+    created.
+  - *Use* (`POST /hosts/{id}/vms` with `vm.templateId`, job `vm.create` / `FromTemplate`): the ordinary creation with
+    the template's disks copied into the folder of the new VM (`NewVm.TemplateDisks`): the first as boot disk, the
+    others attached to the SCSI controller. Name, vCPU, memory, network, location, options are the caller's; the
+    generation is the template's; the boot disk can be made larger (never smaller: the guest extends its partition).
+    The template files are only read.
+  - *Delete* (`POST /templates/{id}/delete`, typed name, job `template.delete`): `RemoveTemplate` deletes the disk
+    files directly inside the template folder and then the folder; anything else in it stops the operation with
+    nothing deleted. Never a recursive delete of a path received in a request.
+  - Why copies and not "convert the VM": a copy cannot lose anything (the VM stays), does not depend on
+    `Export-VM`/`Import-VM` compatibility between configurations, and a template can never be started by mistake.
+    The price is disk space and copy time.
+  - **Paths are the gateway's**: the library folder is chosen per host by `hosts.manage` (`Hosts.TemplateLibraryPath`,
+    same syntax rules as the ISO library, system folders excluded); the folder of a template is derived from its id;
+    the disk list is what the agent reported when it copied. The API never accepts those from a client and the job
+    runner stamps them again from the record at execution (`StampTemplateAsync`); a creation without `templateId`
+    never carries template fields. The agent validates again (text + real file system: fixed local drive, no
+    hidden/system folders, no junctions) and the script checks that every path is `<library>\<guid>[\file.vhdx]`.
+  - **Permissions**: new `templates.manage` (host scope) to create, rename, delete; `vm.create` to use a template
+    (on the host, or inside a folder whose limits open the host). Templates are listed only to those two groups of
+    people; the location of the files only to who manages them. Inside a folder (ADR-024) every disk of the template
+    counts against the disk quota and the usual network/storage rules apply.
+  - **Truthful states**: `Creating`, `Ready`, `Failed`, `Unverified`, `Deleting`, written in the same transaction
+    as the final state of the job. A template is `Ready` only when the agent returned the list of disks it copied;
+    a lost result is `Unverified` (not usable; delete and create again); a request that never reached the host
+    leaves no record. A template that stops being ready while a creation from it is queued makes that job fail
+    (`template_not_available`): never an empty VM passed off as a deployment.
+  - Protocol 8 (agent 0.6.0): `NewTemplate`, `RemoveTemplate`, `NewVm.TemplateDisks`; older agents never receive
+    them (an older agent would create an empty VM). Copies may run up to 8 hours (30 minutes for everything else);
+    the time allowed is 15 minutes plus 20 seconds per GB.
+- **Not done by the portal**: generalizing the guest. A template is an exact copy: without Sysprep (Windows) or
+  cloud-init / a cleaned machine-id (Linux) every VM created from it has the same computer name and identifiers. The
+  UI says so where templates are created and listed. A vTPM is not copied (a new one is created if asked).
+- **Limits of this version**: a template is used on the host where it lives (no copy between hosts); no versions; no
+  progress percentage during the copy; creations and template deletions on the same host run one at a time (they
+  share the host creation lock). A template contains everything that was on the disks, secrets included: who can
+  create VMs from it gets a copy.
+- **Alternatives**: `Export-VM` + `Import-VM -Copy -GenerateNewId` (keeps devices but ties the template to switch
+  names and processor features of the source, and import errors are opaque); differencing disks on a shared parent
+  (fast and small, but every VM then depends on the template file forever); converting the VM in place (no copy
+  time, but the VM is gone).
+- Not validated on a real host yet: real-host plan V46-V48.
+
 ## ADR-027 VM groups already on a host are imported automatically, once
 - **Context**: a host can already be organised in Hyper-V VM groups when it is added: by hand, or because another
   gateway mirrored its groups there (a reinstalled or moved gateway). ADR-017 imported them only on request (host page >

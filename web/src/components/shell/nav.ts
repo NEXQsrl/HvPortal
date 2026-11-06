@@ -1,4 +1,4 @@
-import { Archive, BookOpen, HardDrive, LayoutDashboard, Layers, ListChecks, Network, ScrollText, Settings, Users, type LucideIcon } from 'lucide-react';
+import { Archive, BookOpen, HardDrive, LayoutDashboard, LayoutTemplate, Layers, ListChecks, Network, ScrollText, Settings, Users, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -22,7 +22,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/jobs', label: 'nav.jobs', icon: ListChecks, section: 'ops' },
   { to: '/guide', label: 'nav.guide', icon: BookOpen, section: 'ops', permission: ['hosts.manage'] },
   { to: '/backup', label: 'nav.backup', icon: Archive, section: 'ops', planned: true },
-  { to: '/templates', label: 'nav.templates', icon: Layers, section: 'ops', planned: true },
+  { to: '/templates', label: 'nav.templates', icon: LayoutTemplate, section: 'main' },
   { to: '/users', label: 'nav.users', icon: Users, section: 'admin', permission: ['users.manage', 'roles.manage'] },
   { to: '/audit', label: 'nav.audit', icon: ScrollText, section: 'admin', permission: ['audit.read'] },
   { to: '/settings', label: 'nav.settings', icon: Settings, section: 'admin', permission: ['settings.manage'] },

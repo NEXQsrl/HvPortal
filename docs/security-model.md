@@ -91,6 +91,10 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
   message; Origin required; permission and session re-checked every 60 s; idle 15 min, max 8 h; audited
   ([console.md](console.md)).
 - Native Hyper-V VM groups are inventory objects and never grant portal permissions.
+- **Templates** (ADR-028): `templates.manage` (host scope) creates, renames and deletes templates; `vm.create` uses
+  them. Where a template lives (library folder, its own folder, its disk files) is decided by the gateway from its
+  records and re-stamped when the job runs; a client never supplies a path. A template is a full copy of the disks
+  of its source VM, so whoever may create VMs from it obtains what those disks contain.
 - **Limits of groups** (ADR-024): `vm.create`, `network.manage` and `host.files.*` held on a group work only on the
   hosts, networks and storage paths that the group's limits open, and within its quotas (VMs, vCPU, memory, disk,
   private networks; totals include subgroups and queued creations). Checked when the operation is requested and

@@ -39,7 +39,7 @@ public sealed class CommandExecutor
         AgentCommandKind.VmPower or AgentCommandKind.DeleteVm => true,
         AgentCommandKind.HyperVOperation => c.Operation is HvOperation.SetVmConfig or HvOperation.NewVm or HvOperation.NewCheckpoint
             or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint or HvOperation.SyncVmGroups
-            or HvOperation.NewSwitch or HvOperation.RemoveSwitch,
+            or HvOperation.NewSwitch or HvOperation.RemoveSwitch or HvOperation.NewTemplate or HvOperation.RemoveTemplate,
         _ => false,
     };
 
@@ -168,9 +168,19 @@ public sealed class CommandExecutor
         }
     }
 
+    /// <summary>Copying the disks of a template (to create it, or to create a VM from it) can take hours on large disks.</summary>
+    private static readonly TimeSpan MaxCopyTimeout = TimeSpan.FromHours(8);
+
+    internal static TimeSpan TimeoutFor(AgentCommand command, HvOperation op)
+    {
+        var copies = op == HvOperation.NewTemplate || (op == HvOperation.NewVm && command.OperationArgs is { ValueKind: System.Text.Json.JsonValueKind.Object } a
+            && a.TryGetProperty("templateDisks", out var d) && d.ValueKind == System.Text.Json.JsonValueKind.Array && d.GetArrayLength() > 0);
+        return TimeSpan.FromSeconds(Math.Clamp(command.TimeoutSeconds, 10, (int)(copies ? MaxCopyTimeout : MaxTimeout).TotalSeconds));
+    }
+
     private async Task<AgentCommandResult> RunOperationAsync(AgentCommand command, HvOperation op, CancellationToken ct)
     {
-        var timeout = TimeSpan.FromSeconds(Math.Clamp(command.TimeoutSeconds, 10, (int)MaxTimeout.TotalSeconds));
+        var timeout = TimeoutFor(command, op);
         SemaphoreSlim? gate = null;
         if (IsMutating(command) && command.VmId is { } vmId && vmId != Guid.Empty)
         {

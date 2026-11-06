@@ -17,6 +17,7 @@ public static class Permissions
     public const string VmCreate = "vm.create";
     public const string GroupsManage = "groups.manage";
     public const string NetworkManage = "network.manage";
+    public const string TemplatesManage = "templates.manage";
     public const string VmConfigCompute = "vm.config.compute";
     public const string VmConfigStorage = "vm.config.storage";
     public const string VmConfigNetwork = "vm.config.network";
@@ -41,6 +42,7 @@ public static class Permissions
 
     private static readonly ScopeType[] VmScopes = [ScopeType.Global, ScopeType.Cluster, ScopeType.Host, ScopeType.Group, ScopeType.Vm];
     private static readonly ScopeType[] GlobalOnly = [ScopeType.Global];
+    private static readonly ScopeType[] HostScopes = [ScopeType.Global, ScopeType.Cluster, ScopeType.Host];
     /// <summary>
     /// Host-level permissions that can also be held on a VM folder: there they apply only on the hosts, networks and
     /// storage paths opened to the folder by its limits (ADR-024).
@@ -55,6 +57,7 @@ public static class Permissions
         new(VmPowerForce, "Turn off and hard reset (may lose guest data)", VmScopes, true),
         new(VmCreate, "Create VMs on a host, or inside a folder within the folder's limits", HostOrFolder, true),
         new(NetworkManage, "Create and delete virtual switches on a host (any type), or private networks of a folder within its limits", HostOrFolder, true),
+        new(TemplatesManage, "Create templates from the VMs of a host, rename and delete them (creating VMs from a template needs vm.create)", HostScopes, true),
         new(VmConfigCompute, "Change general settings, CPU, memory, firmware", VmScopes, true),
         new(VmConfigStorage, "Change disks and DVD/ISO", VmScopes, true),
         new(VmConfigNetwork, "Change network adapters", VmScopes, true),

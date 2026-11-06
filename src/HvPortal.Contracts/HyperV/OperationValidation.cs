@@ -123,8 +123,54 @@ public static partial class OperationValidation
         if (r.Notes is { Length: > MaxNotes }) return "notes_too_long";
         if (HostPaths.ValidateLocation(r.Location) is { } loc) return loc;
         if (r.IsoRoots.Count > 16 || r.IsoRoots.Any(x => x.Length > 260)) return "invalid_iso_roots";
+        if (r.TemplateDisks.Count > 0)
+        {
+            if (r.TemplateDisks.Count > MaxTemplateDisks || InvalidTemplateRoots(r.TemplateRoots)) return "invalid_template";
+            if (r.TemplateDisks.Any(d => !IsTemplateDiskPath(d) || !IsInside(d, r.TemplateRoots))) return "invalid_template";
+            if (r.TemplateExtraDiskGb is < 0 or > MaxDiskGb * MaxTemplateDisks) return "invalid_template";
+        }
+        else if (r.TemplateRoots.Count > 0 || r.TemplateExtraDiskGb != 0)
+        {
+            return "invalid_template";
+        }
         return null;
     }
+
+    public const int MaxTemplateDisks = 16;
+    public const int MaxTemplateRoots = 4;
+
+    /// <summary>A virtual disk file (.vhdx / .vhd) with a valid local path.</summary>
+    public static bool IsTemplateDiskPath(string? path) =>
+        HostPaths.IsValidFilePath(path) && !HostPaths.IsBlocked(path!)
+        && (path!.EndsWith(".vhdx", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".vhd", StringComparison.OrdinalIgnoreCase));
+
+    private static bool InvalidTemplateRoots(IReadOnlyList<string> roots) =>
+        roots.Count is 0 or > MaxTemplateRoots || roots.Any(r => !HostPaths.IsValidLocalFolder(r) || HostPaths.IsBlocked(r) || r.Contains("..", StringComparison.Ordinal));
+
+    /// <summary>Text containment (the agent checks the real file system as well: no junctions or symbolic links).</summary>
+    private static bool IsInside(string path, IReadOnlyList<string> roots) =>
+        !path.Contains("..", StringComparison.Ordinal)
+        && roots.Any(r => path.Length > r.TrimEnd('\\').Length + 1 && path.StartsWith(r.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Template folder = &lt;root&gt;\&lt;guid&gt;: exactly one level below a template library folder, named by the template id.</summary>
+    public static bool IsTemplateFolder(string? folder, IReadOnlyList<string> roots)
+    {
+        if (!HostPaths.IsValidLocalFolder(folder) || HostPaths.IsBlocked(folder!) || folder!.Contains("..", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        var trimmed = folder.TrimEnd('\\');
+        var cut = trimmed.LastIndexOf('\\');
+        return cut > 2 && Guid.TryParseExact(trimmed[(cut + 1)..], "D", out _)
+            && roots.Any(r => string.Equals(r.TrimEnd('\\'), trimmed[..cut], StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static string? Validate(NewTemplateRequest r) =>
+        r.VmId == Guid.Empty ? "invalid_vm"
+        : InvalidTemplateRoots(r.Roots) || !IsTemplateFolder(r.Folder, r.Roots) ? "invalid_template_folder" : null;
+
+    public static string? Validate(TemplateFolderRequest r) =>
+        InvalidTemplateRoots(r.Roots) || !IsTemplateFolder(r.Folder, r.Roots) ? "invalid_template_folder" : null;
 
     public static string? Validate(VmGroupSyncRequest r)
     {

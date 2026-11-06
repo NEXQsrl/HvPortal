@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { HostVmGroups } from '@/components/vm/HostVmGroups';
 import { VmTable } from '@/components/vm/VmTable';
 import { useI18n, type TKey } from '@/i18n';
+import { TemplateLibrarySection } from '@/components/ops/TemplateDialogs';
 import { formatBytes, formatDuration, LIBRARY_PATH, percent } from '@/lib/format';
 import { useLive, useLoad } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
@@ -291,6 +292,7 @@ function HostSettings({ host, onChanged }: { host: Host; onChanged: () => void }
         <ErrorAlert error={error} />
         {isos.data && <div className="text-xs text-muted-foreground">{t('host.isoFiles', { n: isos.data.files.length })}</div>}
       </Section>
+      <TemplateLibrarySection key={host.templateLibraryPath ?? ''} host={host} onChanged={onChanged} />
       {manage && (
         <Section title={t('host.dangerZone')} bodyClassName="flex flex-wrap gap-2 p-3">
           {ops.hostActions(host, { page: true }).filter((a) => a.danger || a.key === 'token' || a.key === 'edit').map((a) => (

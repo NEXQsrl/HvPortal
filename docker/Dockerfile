@@ -1,5 +1,5 @@
 # HvPortal gateway (web console + agent channel) for Linux containers.
-# Build from the repository root:   docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.5.1 .
+# Build from the repository root:   docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.6.0 .
 # The Hyper-V agents stay Windows services on the hosts; they connect to this container on the agent port (mTLS).
 
 # ---------------------------------------------------------------- web UI (React/Vite)

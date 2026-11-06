@@ -29,7 +29,7 @@
 | GET `/permissions`, GET/POST/PUT/DELETE `/roles` | roles | `roles.manage` (+ re-auth) |
 | GET/POST/DELETE `/role-assignments` | assignments | `roles.manage` (+ re-auth), anti-escalation |
 | GET/PUT `/settings/security` | security policy | `settings.manage` (+ re-auth) |
-| GET `/audit`, GET `/audit/export`, POST `/audit/verify` | audit | `audit.read` |
+| GET `/audit?skip=&take=&action=&outcome=&q=&from=&to=`, GET `/audit/export`, POST `/audit/verify` | audit. List filters: `action` = one prefix or several separated by commas, `outcome`, period (`from` / `to`, ISO dates), `q` = free text (action, actor, address, details, correlation id, and the current names of hosts, VMs, users and groups). Each entry carries `resourceName` and `resourceExists` (false = the name comes from the entry, the resource is gone) | `audit.read` |
 | GET `/hosts`, GET `/hosts/{id}` | hosts | visible if `hosts.manage` or any readable VM / host scope |
 | POST `/hosts`, `/hosts/{id}/enrollment-token`, `/hosts/{id}/revoke` | enrollment lifecycle | `hosts.manage` (+ re-auth) |
 | POST `/hosts/{id}/refresh` | collect inventory now | `inventory.read` on host |
@@ -68,6 +68,10 @@ message, 501 `agent_outdated`). Changes are jobs (202 + `jobId`), re-authorized 
 | GET `/hosts/{id}/vm-groups` | native Hyper-V VM groups (Get-VMGroup) with members, owner portal group, mirroring status (`status {syncedAt, error, adoptedAt, autoImport}`: `adoptedAt` null with `autoImport` true = the groups already on the host are still to be imported automatically, ADR-027); `supported:false` before agent 0.3.2 | host read |
 | POST `/hosts/{id}/vm-groups/sync` | force the mirroring now | `groups.manage` |
 | POST `/hosts/{id}/vm-groups/import` | import native groups not owned by the portal as portal groups, then mirror (all of them, also the ones the automatic import of ADR-027 leaves alone) | `hosts.manage` + `groups.manage` |
+| GET `/templates?hostId=&groupId=` | VM templates (ADR-028) of the hosts where the caller may create VMs (directly, or inside `groupId`) or manages templates: status (`Creating`, `Ready`, `Failed`, `Unverified`, `Deleting`), hardware of the model, disks, size, `can {deploy, manage, delete}`; `folderPath` only for who manages them | `vm.create` or `templates.manage` on the host (others get an empty list) |
+| POST `/vms/{id}/template` `{name, description?}` | create a template from a VM that is off (job `template.capture`: the disks are copied, the VM is not changed); 409 `invalid_state`, `template_library_not_set`, `template_name_exists`; 501 `agent_outdated` before agent 0.6.0 | `templates.manage` on the host of the VM; audited |
+| PATCH `/templates/{id}` `{name?, description?}` · POST `/templates/{id}/delete` `{confirmName}` | rename · delete the template and its files (job `template.delete`); 409 `template_busy` | `templates.manage` on the host; audited |
+| PUT `/hosts/{id}/template-library` `{path}` | folder of the host where templates are kept (null clears it); 400 `invalid_template_library` | `hosts.manage`; audited |
 | GET `/hosts/{id}/files?path=&groupId=` | drives (no path) or folders + files of a folder (agent 0.3.3+). With `groupId` (also on download/upload): only the storage paths of the group, 403 `storage_not_allowed` outside | `host.files.read` on host, or on the group (ADR-024) |
 | GET `/hosts/{id}/files/download?path=` | file download (streamed, 4 MB chunks); 409 `file_in_use` for files open for writing | `host.files.read` on host; audited |
 | POST `/hosts/{id}/files/upload?folder=&name=&overwrite=` | raw body (`application/octet-stream`, Content-Length required); 409 `file_exists` unless `overwrite=true`; returns path, size, SHA-256 | `host.files.write` on host; audited |

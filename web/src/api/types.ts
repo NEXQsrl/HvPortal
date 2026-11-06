@@ -66,6 +66,10 @@ export interface VmDetails { vmId: string; collectedAtUtc: string; disks: VmDisk
 
 export interface Host {
   id: string;
+  /** Folder of the host where its templates are kept (null = not chosen yet). */
+  templateLibraryPath: string | null;
+  /** The host can work with templates (connected, Hyper-V access, agent 0.6.0+). */
+  templates: boolean;
   displayName: string;
   description: string | null;
   machineName: string | null;
@@ -178,6 +182,8 @@ export interface Vm {
   canConsole: boolean;
   canConfigure: boolean;
   canCheckpoint: boolean;
+  /** May create a template from this VM (templates.manage on its host, agent 0.6.0+). */
+  canTemplate: boolean;
   canApplyCheckpoint: boolean;
 }
 
@@ -221,6 +227,9 @@ export interface AuditEntry {
   outcome: 'Success' | 'Failure' | 'Denied';
   correlationId: string;
   detailsJson: string | null;
+  /** Name of the resource: its current one, or the one recorded in the entry when the resource is gone. */
+  resourceName: string | null;
+  resourceExists: boolean;
 }
 
 export interface UserRow {

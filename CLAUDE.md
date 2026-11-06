@@ -29,7 +29,7 @@ npx vite build
 node web\e2e\ui-smoke.mjs --url https://localhost:28443 --data <gw-data> --agent-data <agent-data> --agent-exe <HvPortal.Agent.exe> --agent-port 28444 --out <screenshots>
 
 # Docker (gateway only; the agent stays a Windows service)
-docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.5.1 .      # compose + .env example in docker/
+docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.6.0 .      # compose + .env example in docker/
 
 # Packaging / release
 .\installer\New-AgentPackage.ps1 -OutputDirectory artifacts\packages   # zip served by the gateway (/api/v1/downloads)
@@ -84,12 +84,12 @@ Three .NET projects plus the SPA:
   (left panel of every page) shows the main navigation as icons and a tree that follows the route (inventory tree, or a
   page tree whose nodes are links with URL parameters such as `/networks?host=`, `/jobs?status=`). `OperationsProvider` owns all action menus
   (`vmActions`/`hostActions`/`groupActions`) and dialogs, reused by tree, tables and pages. Inventory is the single
-  entry point (tree: Hosts / Groups / All VMs). i18n: `i18n.tsx` + `i18n-ops.ts` + `i18n-guide.ts` + `i18n-limits.ts` (IT and EN, same keys).
+  entry point (tree: Hosts / Groups / All VMs). i18n: `i18n.tsx` + `i18n-ops.ts` + `i18n-guide.ts` + `i18n-limits.ts` + `i18n-audit.ts` + `i18n-templates.ts` (IT and EN, same keys). An audit action or job type added on the server needs its text in `i18n-audit.ts` (`audit.a.<action>`) and `jobop.<type>.<Operation>`.
 
 Key cross-cutting flows:
 - **Commands are typed and closed.** There is no "run script/WQL/path" command anywhere; adding a capability means a
   new `HvOperation` value + argument record + validation in Contracts + a branch in the script/agent + gateway endpoint.
-- **Protocol versioning.** `AgentProtocol.Version` (currently 7) is announced in `AgentHello`.
+- **Protocol versioning.** `AgentProtocol.Version` (currently 8) is announced in `AgentHello`.
   `AgentProtocol.RequiredVersion(command)` is checked in `AgentConnectionManager.SendAsync` (and mirrored in
   `FakeAgentDispatcher`): never send a command an older agent cannot parse or would silently misinterpret. Bump it
   when adding enum values or semantics-changing fields. Product version is in `Directory.Build.props` (+ `web/package.json`).
@@ -104,6 +104,11 @@ Key cross-cutting flows:
   only where those limits allow (`HoldsViaGroupAsync`); every creation/resize is checked at request time **and** in
   `JobRunner.ApplyFolderLimitsAsync`, which also re-stamps the VM location and the new-disk folder. Any new operation
   that creates or grows something inside a group must go through this service.
+- **VM templates** (ADR-028, `Templates/TemplateRules`, `Api/TemplateEndpoints`): a template is a copy of the disks of
+  a VM that is off, in `<template library of the host>\<template id>`; VMs are created from it through the normal
+  creation job (`NewVm.TemplateDisks`). Library, folder and disk paths always come from the gateway's records and are
+  re-stamped by `JobRunner.StampTemplateAsync`; the template state is written with the final state of its job
+  (`TemplateRules.ApplyJobOutcome`): never `Ready` without the list of copied disks.
 - **Security middleware order** (`Program.cs`): routing → WebSockets → cross-site protection (Origin + antiforgery;
   WebSocket handshakes incl. HTTP/2 CONNECT skip antiforgery) → authorization. Console: one-time ticket sent as the
   first WebSocket message (`VmConsole/`).
@@ -121,6 +126,8 @@ Verified Hyper-V APIs and required privileges: `docs/capability-matrix.md`.
 - Never log passwords, tokens or credentials; external telemetry off by default; no Domain Admin requirement.
 - Do not call an RDP session a Hyper-V console; do not call checkpoints/exports/VHDX copies application-consistent backups.
 - Prefer the .NET BCL and native Windows tools; new dependencies need a license check (`docs/licensing.md`).
+- Patterns applied to text from clients (paths, names) must not backtrack: no optional separator inside a repeated
+  group (`(segment\\?)*`); write `segment(\\segment)*` and add a test with a long refused input.
 - C#: nullable + analyzers, file-scoped namespaces, `TimeProvider` for time, async throughout.
   TypeScript: strict, no `any`, all user-visible text in the i18n dictionaries.
 - Commits only when asked, locally on `main`, message explaining *why*.

@@ -1,7 +1,9 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { enAudit, itAudit } from './i18n-audit';
 import { enGuide, itGuide } from './i18n-guide';
 import { enLimits, itLimits } from './i18n-limits';
 import { enOps, itOps } from './i18n-ops';
+import { enTemplates, itTemplates } from './i18n-templates';
 
 const enBase = {
   'app.name': 'HvPortal',
@@ -370,7 +372,7 @@ const enBase = {
   'state.Unknown': 'Unknown',
 };
 
-const en = { ...enBase, ...enOps, ...enGuide, ...enLimits };
+const en = { ...enBase, ...enOps, ...enGuide, ...enLimits, ...enAudit, ...enTemplates };
 type Key = keyof typeof en;
 
 const itBase: Record<keyof typeof enBase, string> = {
@@ -740,7 +742,7 @@ const itBase: Record<keyof typeof enBase, string> = {
   'state.Unknown': 'Sconosciuto',
 };
 
-const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide, ...itLimits };
+const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide, ...itLimits, ...itAudit, ...itTemplates };
 
 export type Lang = 'it' | 'en';
 const dictionaries: Record<Lang, Record<Key, string>> = { en, it };

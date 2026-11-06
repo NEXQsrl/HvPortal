@@ -261,6 +261,7 @@ namespace HvPortal.Gateway
             VmOperationsEndpoints.Map(app);
             ConsoleEndpoints.Map(app);
             HvPortal.Gateway.VmGroups.VmGroupEndpoints.Map(app);
+            HvPortal.Gateway.Api.TemplateEndpoints.Map(app);
             HostFileEndpoints.Map(app);
             HvPortal.Gateway.Backup.ConfigBackup.Map(app);
             HvPortal.Gateway.Backup.DatabaseBackupService.Map(app);

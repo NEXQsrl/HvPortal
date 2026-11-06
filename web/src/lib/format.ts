@@ -27,7 +27,9 @@ export function percent(used: number | null | undefined, total: number | null | 
 export const VM_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._()-]{0,99}$/u;
 export const GROUP_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._()-]{0,63}$/u;
 export const CHECKPOINT_NAME = /^[\p{L}\p{N}][\p{L}\p{N} ._():-]{0,99}$/u;
-export const LIBRARY_PATH = /^[A-Za-z]:\\(?:[^\x00-\x1f"*?<>|:\\/]+\\?)*$/;
+// Segments separated by single backslashes, each character matched in one way only: the earlier form
+// "(segment + optional backslash)*" froze the page on a long name followed by a refused character.
+export const LIBRARY_PATH = /^[A-Za-z]:\\(?:[^\x00-\x1f"*?<>|:\\/]+(?:\\[^\x00-\x1f"*?<>|:\\/]+)*\\?)?$/;
 
 /** major.minor.patch of "0.3.0", "0.3.0.0" or "0.3.0+abc"; null when unknown. */
 export function semver(v: string | null | undefined): [number, number, number] | null {
