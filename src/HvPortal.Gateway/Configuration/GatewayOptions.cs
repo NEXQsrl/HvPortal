@@ -72,6 +72,11 @@ public sealed class VmGroupOptions
     public bool SyncEnabled { get; set; } = true;
     /// <summary>Full re-apply (corrects changes made directly in Hyper-V).</summary>
     public int PeriodicMinutes { get; set; } = 30;
+    /// <summary>
+    /// Import the VM groups that already exist on a host the first time it is mirrored (only those that can be taken
+    /// over without changing Hyper-V). Off = existing groups are imported only on request from the host page.
+    /// </summary>
+    public bool AutoImport { get; set; } = true;
 }
 
 public sealed class GatewayPaths

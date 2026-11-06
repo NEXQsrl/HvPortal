@@ -232,6 +232,11 @@ public sealed class ManagedHost
     public DateTimeOffset? VmGroupsSyncedAt { get; set; }
     public string? VmGroupsSyncError { get; set; }
     public string? VmGroupsPlanHash { get; set; }
+    /// <summary>
+    /// When the VM groups that already existed on the host were taken over (automatic import at the first connection,
+    /// or the first import on request). Null = not done yet: the next mirroring pass does it once (ADR-027).
+    /// </summary>
+    public DateTimeOffset? VmGroupsAdoptedAt { get; set; }
 
     /// <summary>Agent: an agent runs on the host (default). Remote: reached by a management agent with stored credentials.</summary>
     public HostConnectionMode ConnectionMode { get; set; } = HostConnectionMode.Agent;

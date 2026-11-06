@@ -1,5 +1,20 @@
 # Testing
 
+## v0.5.1 — VM groups already on a host imported automatically (2026-11-06, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 189 | pass — adds to `VmGroupTests` (ADR-027): the first mirroring pass of a host imports the groups it already has with nobody signed in (management collection with its VM collections, standalone VM collection), the native groups are byte-for-byte as before (nothing created, renamed, emptied or removed), audit entry by `system`; empty groups and a management collection with an empty member are left alone and listed as not imported; it runs once per host (a group made later is taken only by the import on request, which still takes everything); a portal group with role assignments is never filled (suffixed group, the scoped operator still gets 404 on the VM, the VM keeps its native group); a group naming a VM the inventory has not reported waits, attempts are spaced, and it is imported once the VM is known; `Gateway:VmGroups:AutoImport=false` switches it off (no listing sent to the host); the selection rules alone (VM collection in two management collections, empty management collection, member added to an owned collection, unknown VM) |
+| `tests/HvPortal.Agent.Tests` | 101 | pass (no agent change) |
+| `web`: `tsc -b`, `vitest` (IT/EN keys), `vite build` | — | pass |
+| `web/e2e/ui-smoke.mjs` (Edge headless, fresh gateway + real agent on this machine, packages directory of the release) | 69 | pass — unchanged checks on the 0.5.1 build |
+| Update of an existing database: gateway 0.5.1 started on a copy of the data directory left by the 0.5.0 e2e | — | pass — migration `VmGroupAdoption` applied, `PRAGMA integrity_check` ok, portal answers; the statement that marks the hosts already organised by the portal was run verbatim on that copy with a link row added (host marked with its last mirroring time, integer like the other dates) |
+| `installer/Build-Release.ps1 -SigningCertificateThumbprint <self-signed NEXQ S.r.l.>` (full, with tests) | 101 + 189 | pass — release 0.5.1, 13 files signed plus the two setups |
+
+Not executed (needs a host with Hyper-V access and existing VM groups): the automatic import against real `Get-VMGroup`
+output, and that Hyper-V is left unchanged by the mirroring pass that follows it. Here the host side is the test double
+`FakeAgentDispatcher`; the e2e agent has no Hyper-V rights, so the import never starts there. Real-host test plan V45.
+
 ## v0.5.0 — networks, group limits, user deletion, automatic database copies, navigator, graphical setups (2026-11-06, development machine)
 
 | Suite | Count | Result |

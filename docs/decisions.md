@@ -98,6 +98,38 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-027 VM groups already on a host are imported automatically, once
+- **Context**: a host can already be organised in Hyper-V VM groups when it is added: by hand, or because another
+  gateway mirrored its groups there (a reinstalled or moved gateway). ADR-017 imported them only on request (host page >
+  Hyper-V VM groups > Import), so a new gateway showed every VM as ungrouped and looked as if the folders were lost.
+- **Decision**: the first mirroring pass of a host (`VmGroupSyncService.SyncHostAsync`, i.e. after the first inventory
+  with Hyper-V access) imports the native groups that are already there, then marks the host
+  (`Hosts.VmGroupsAdoptedAt`); it never runs again for that host.
+  - Nobody asked for it, so it takes only what can be taken over **without changing Hyper-V**
+    (`VmGroupImporter.Adoptable`). Once imported, a group is owned by the mirroring, which removes native groups
+    without VMs and re-writes memberships; therefore: a VM collection is taken only if it has VMs and the portal knows
+    all of them; a management collection only if every group inside it is such a VM collection, belonging to no other
+    management collection; a VM collection inside a management collection is taken with it or not at all. Everything
+    else (empty groups such as placeholders of other tools, ambiguous hierarchies) is left untouched, listed as "not
+    imported", and can still be imported on request.
+  - Access: the importer is the one of the request (ADR-017). Imported groups carry no role assignments and a portal
+    group that has assignments is never filled (a suffixed group is created instead), so nobody gains access to a VM.
+    The native group is then renamed like its portal group; that rename, and the one for characters that are not valid
+    in portal names, are the only changes the automatic import can cause on a host. It never deletes a native group
+    and never removes a VM from one.
+  - A group naming a VM the inventory has not reported yet waits: attempts every 5 minutes (each starts PowerShell on
+    the host) for at most 30 minutes, then it is left to the import on request.
+  - Audited as `hosts.vmgroups.import`, actor `system`, `automatic: true`. `Gateway:VmGroups:AutoImport=false`
+    switches it off. An import on request also marks the host.
+  - Upgrade: the migration marks the hosts where the portal already owns native groups; the others (nothing mirrored
+    or imported yet) get the automatic import at the first pass after the upgrade.
+- **Alternatives**: leave it on request and make the button more visible: the folders still look lost after adding a
+  host. Import everything, like the request does: an unattended step would then delete empty native groups created by
+  other tools. Continuous two-way synchronisation: two sources of truth, and conflicts between hosts.
+- **Consequences**: groups created directly in Hyper-V after the host was added are imported on request only; the
+  portal stays the source of truth afterwards (ADR-017). Hierarchies deeper than two levels were flattened by the
+  mirroring that wrote them and come back flattened. Not validated on a real host yet (real-host plan V45).
+
 ## ADR-026 Graphical setup for the gateway and the agent
 - **Context**: installing with PowerShell commands (parameters to remember, names to repeat on every update, PFX
   import by hand) is not friendly for occasional administrators.
@@ -317,6 +349,7 @@ Format: context → decision → consequences. Status of all records: **accepted
   parent its direct VMs). Existing portal groups are reused only when no role assignment applies to them, otherwise a
   suffixed group is created, so importing never changes who can access a VM.
 - Protocol 4 (agent 0.3.2): older agents never receive these commands.
+- (0.5.1) The groups a host already has are imported automatically at its first mirroring pass: ADR-027.
 
 ## ADR-016 Host folder browser and VM location (agent protocol 3)
 - The location and ISO pickers need to see the host's folders. `BrowseFolders` is a read-only operation executed

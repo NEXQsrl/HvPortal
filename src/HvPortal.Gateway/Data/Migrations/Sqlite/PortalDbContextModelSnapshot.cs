@@ -596,6 +596,9 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(16)
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("VmGroupsAdoptedAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("VmGroupsPlanHash")
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");

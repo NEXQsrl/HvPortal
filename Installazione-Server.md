@@ -2,7 +2,7 @@
 
 Si installa tutto con due file di setup, senza comandi PowerShell:
 
-| File (in `artifacts\release\0.5.0\setup`) | Dove si esegue |
+| File (in `artifacts\release\0.5.1\setup`) | Dove si esegue |
 |---|---|
 | `HvPortal.Gateway.Setup.exe` | sul server del gateway (il portale web), anche a dominio |
 | `HvPortal.Agent.Setup.exe` | sull'host Hyper-V (si può scaricare anche dal portale) |

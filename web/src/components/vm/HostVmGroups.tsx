@@ -22,12 +22,13 @@ interface NativeGroupRow {
   vms: { id: string | null; name: string }[];
   groups: string[];
 }
-interface VmGroupsResponse { supported: boolean; connected: boolean; status: { syncedAt: string | null; error: string | null }; groups: NativeGroupRow[] }
+interface VmGroupsResponse { supported: boolean; connected: boolean; status: { syncedAt: string | null; error: string | null; adoptedAt: string | null; autoImport: boolean }; groups: NativeGroupRow[] }
 interface ImportResponse { result: { groupsCreated: number; groupsReused: number; vmsAdded: number; linked: number; warnings: string[] }; sync: { status: string; errors: string[] } }
 
 /**
- * Native Hyper-V VM groups of a host (Get-VMGroup). Portal groups are mirrored here automatically (agent 0.3.2+);
- * groups created directly in Hyper-V can be imported once, after which the portal manages them.
+ * Native Hyper-V VM groups of a host (Get-VMGroup). Portal groups are mirrored here automatically (agent 0.3.2+).
+ * The groups a host already has are imported by the gateway the first time it mirrors the host (those with VMs);
+ * the others, and groups created in Hyper-V later, can be imported on request. After that the portal manages them.
  */
 export function HostVmGroups({ host }: { host: Host }) {
   const { t, fmtDate } = useI18n();
@@ -83,6 +84,9 @@ export function HostVmGroups({ host }: { host: Host }) {
             {canSync && <Button size="sm" variant="outline" disabled={!!busy} onClick={() => void run('sync')}><RefreshCw className={busy === 'sync' ? 'animate-spin' : ''} />{t('vmg.syncNow')}</Button>}
           </div>
           {d.status.error && <Notice kind="danger">{d.status.error}</Notice>}
+          {/* The groups found on the host: still to be taken by the automatic import, or left to the button. */}
+          {unmanaged > 0 && d.status.autoImport && !d.status.adoptedAt && <Notice kind="info" className="vmg-auto-pending">{t('vmg.autoPending')}</Notice>}
+          {unmanaged > 0 && (!d.status.autoImport || d.status.adoptedAt) && <p className="vmg-leftover text-xs text-muted-foreground">{t('vmg.leftover')}</p>}
           <ErrorAlert error={error} />
           <Section title={<span className="flex items-center gap-2"><FolderTree className="size-4 text-muted-foreground" />Get-VMGroup<HelpTip>{t('vmg.help')}</HelpTip></span>}>
             {d.groups.length === 0 ? <Empty>{t('vmg.none')}</Empty> : (

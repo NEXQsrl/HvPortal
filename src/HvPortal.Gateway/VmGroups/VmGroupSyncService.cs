@@ -40,6 +40,10 @@ public sealed class VmGroupSyncService : BackgroundService
     private readonly VmGroupOptions _options;
     private readonly ILogger<VmGroupSyncService> _logger;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _hostLocks = new();
+    /// <summary>Automatic import still open per host: first and last attempt (each attempt starts PowerShell on the host).</summary>
+    private readonly ConcurrentDictionary<Guid, (DateTimeOffset First, DateTimeOffset Last)> _adoptions = new();
+    /// <summary>How long the automatic import waits for VMs that the inventory has not reported yet before it gives up on them.</summary>
+    private static readonly TimeSpan AdoptionWait = TimeSpan.FromMinutes(30);
 
     public VmGroupSyncService(IServiceScopeFactory scopes, IAgentDispatcher agents, AuditLog audit, VmGroupSyncSignal signal, TimeProvider time,
         IOptions<GatewayOptions> options, ILogger<VmGroupSyncService> logger)
@@ -134,6 +138,8 @@ public sealed class VmGroupSyncService : BackgroundService
         await gate.WaitAsync(ct);
         try
         {
+            // First the groups that already exist on the host (once per host), then the mirroring of the portal's.
+            await AdoptExistingGroupsAsync(hostId, force, ct);
             using var scope = _scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
             var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == hostId && h.Status == HostStatus.Active, ct);
@@ -198,6 +204,79 @@ public sealed class VmGroupSyncService : BackgroundService
         finally
         {
             gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Automatic import (ADR-027): the first time a host is mirrored, the VM groups it already has become portal groups,
+    /// so a host that was organised before (by hand, or by another gateway) shows its folders without anyone pressing
+    /// "Import". Only groups that can be taken over without changing Hyper-V (<see cref="VmGroupImporter.Adoptable"/>);
+    /// imported groups carry no role assignments, so nobody gains access. Done once per host
+    /// (<see cref="ManagedHost.VmGroupsAdoptedAt"/>): groups created in Hyper-V later are imported on request only.
+    /// Runs in its own scope: a failure here is logged and retried, it never blocks the mirroring.
+    /// </summary>
+    private async Task AdoptExistingGroupsAsync(Guid hostId, bool force, CancellationToken ct)
+    {
+        if (!_options.AutoImport)
+        {
+            return;
+        }
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
+            var host = await db.Hosts.FirstOrDefaultAsync(h => h.Id == hostId && h.Status == HostStatus.Active, ct);
+            if (host is null || host.VmGroupsAdoptedAt is not null || host.Access != HyperVAccessStatus.Ok || host.LastInventoryAt is null
+                || !_agents.IsConnected(hostId) || !Supported(_agents, hostId))
+            {
+                return;
+            }
+            var now = _time.GetUtcNow();
+            var attempt = _adoptions.GetOrAdd(hostId, _ => (now, DateTimeOffset.MinValue));
+            if (!force && now - attempt.Last < RetryAfterFailure)
+            {
+                return;
+            }
+            _adoptions[hostId] = (attempt.First, now);
+            var (native, error) = await ListAsync(hostId, ct);
+            if (native is null)
+            {
+                _logger.LogWarning("Automatic import of the VM groups of host {HostId} postponed: {Error}", hostId, error);
+                return;
+            }
+            var linked = (await db.HostVmGroupLinks.AsNoTracking().Where(l => l.HostId == hostId).Select(l => l.NativeId).ToListAsync(ct)).ToHashSet();
+            var known = (await db.VirtualMachines.AsNoTracking().Where(v => v.HostId == hostId && !v.IsMissing).Select(v => v.HyperVId).ToListAsync(ct)).ToHashSet();
+            var adoption = VmGroupImporter.Adoptable(native, linked, known);
+            // A group naming a VM the portal does not know yet: the inventory may still be arriving. Keep the decision
+            // open for a while, then leave that group to the import on request.
+            var final = !adoption.WaitingForInventory || now - attempt.First >= AdoptionWait;
+            if (final)
+            {
+                host.VmGroupsAdoptedAt = now;
+                _adoptions.TryRemove(hostId, out _);
+            }
+            if (adoption.Groups.Count == 0)
+            {
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+            var result = await VmGroupImporter.ImportAsync(db, host, adoption.Groups, _time, ct);
+            scope.ServiceProvider.GetRequiredService<Authorization.AccessEvaluator>().Invalidate();
+            await _audit.WriteAsync(new AuditRecord
+            {
+                Action = "hosts.vmgroups.import",
+                Outcome = AuditOutcome.Success,
+                ActorName = "system",
+                AuthMethod = "system",
+                ResourceType = "host",
+                ResourceId = hostId.ToString("D"),
+                Details = new { automatic = true, result.GroupsCreated, result.GroupsReused, result.VmsAdded, result.Linked, notImported = adoption.NotImported, warnings = result.Warnings.Take(20) },
+            }, ct);
+            await scope.ServiceProvider.GetRequiredService<Realtime.IRealtimeNotifier>().GroupsChangedAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Automatic import of the VM groups of host {HostId} failed", hostId);
         }
     }
 

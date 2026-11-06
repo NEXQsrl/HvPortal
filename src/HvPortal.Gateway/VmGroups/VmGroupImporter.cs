@@ -33,6 +33,54 @@ public static partial class VmGroupImporter
         return s.Length > 64 ? s[..64].TrimEnd() : s;
     }
 
+    /// <summary>
+    /// What the automatic import takes: <paramref name="Groups"/> to import now; <paramref name="NotImported"/> groups left
+    /// to the import on request; <paramref name="WaitingForInventory"/> when some group names a VM the portal does not
+    /// know yet (the inventory may still be arriving, so the decision is not final).
+    /// </summary>
+    public sealed record Adoption(IReadOnlyList<NativeVmGroup> Groups, int NotImported, bool WaitingForInventory);
+
+    /// <summary>
+    /// The native groups the portal may take over by itself the first time it meets a host (ADR-027). Nobody asked for it,
+    /// so only groups whose import leaves Hyper-V as it is: once imported a group is owned by the mirroring, which
+    /// removes native groups without VMs and re-writes memberships. Hence:
+    ///  - a VM collection is taken only if it has VMs and the portal knows all of them;
+    ///  - a management collection is taken only if every group inside it is such a VM collection, belonging to no other
+    ///    management collection (otherwise the mirroring would drop members from it);
+    ///  - a VM collection inside a management collection follows it (taken together or not at all), so the hierarchy
+    ///    is never imported in pieces.
+    /// Everything else stays untouched and can still be imported on request.
+    /// </summary>
+    public static Adoption Adoptable(IReadOnlyList<NativeVmGroup> native, IReadOnlySet<Guid> linkedNativeIds, IReadOnlySet<Guid> knownVmIds)
+    {
+        var byId = native.GroupBy(n => n.Id).ToDictionary(g => g.Key, g => g.First());
+        var parents = native.Where(n => n.GroupType == VmGroupTypes.Management)
+            .SelectMany(m => m.GroupIds.Distinct().Select(child => (child, m.Id)))
+            .GroupBy(x => x.child).ToDictionary(g => g.Key, g => g.Select(x => x.Id).ToList());
+
+        bool VmCollection(NativeVmGroup n) =>
+            n.GroupType == VmGroupTypes.Vm && !linkedNativeIds.Contains(n.Id) && n.VmIds.Count > 0 && n.VmIds.All(knownVmIds.Contains);
+
+        bool ManagementCollection(NativeVmGroup m) =>
+            m.GroupType == VmGroupTypes.Management && !linkedNativeIds.Contains(m.Id) && m.GroupIds.Count > 0
+            && m.GroupIds.All(id => byId.TryGetValue(id, out var child) && VmCollection(child) && parents[id].Count == 1);
+
+        var taken = new List<NativeVmGroup>();
+        foreach (var n in native.Where(n => !linkedNativeIds.Contains(n.Id)))
+        {
+            var ok = n.GroupType == VmGroupTypes.Management
+                ? ManagementCollection(n)
+                : VmCollection(n) && (!parents.TryGetValue(n.Id, out var p) || (p.Count == 1 && ManagementCollection(byId[p[0]])));
+            if (ok)
+            {
+                taken.Add(n);
+            }
+        }
+        var unlinked = native.Count(n => !linkedNativeIds.Contains(n.Id));
+        var waiting = native.Any(n => !linkedNativeIds.Contains(n.Id) && n.GroupType == VmGroupTypes.Vm && n.VmIds.Any(id => !knownVmIds.Contains(id)));
+        return new Adoption(taken, unlinked - taken.Count, waiting);
+    }
+
     public static async Task<ImportResult> ImportAsync(PortalDbContext db, ManagedHost host, IReadOnlyList<NativeVmGroup> native, TimeProvider time, CancellationToken ct)
     {
         var warnings = new List<string>();

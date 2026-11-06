@@ -2,10 +2,12 @@ using HvPortal.Gateway.Agents;
 using HvPortal.Gateway.Api;
 using HvPortal.Gateway.Audit;
 using HvPortal.Gateway.Authorization;
+using HvPortal.Gateway.Configuration;
 using HvPortal.Gateway.Data;
 using HvPortal.Gateway.Realtime;
 using HvPortal.Gateway.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace HvPortal.Gateway.VmGroups;
 
@@ -29,14 +31,15 @@ public static class VmGroupEndpoints
             : ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Native VM groups need agent 0.3.2 or later on this host. Update the agent.");
 
     private static async Task<IResult> ListAsync(Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents,
-        VmGroupSyncService sync)
+        VmGroupSyncService sync, IOptions<GatewayOptions> options)
     {
         var host = await HostAsync(id, http, db);
         if (host is null || !await access.HasAsync(http.User.UserId(), Permissions.InventoryRead, ResourceRef.Host(id), http.RequestAborted))
         {
             return ApiSupport.NotFound();
         }
-        var status = new { syncedAt = host.VmGroupsSyncedAt, error = host.VmGroupsSyncError };
+        // adoptedAt null with autoImport on = the groups already on the host are still to be imported automatically.
+        var status = new { syncedAt = host.VmGroupsSyncedAt, error = host.VmGroupsSyncError, adoptedAt = host.VmGroupsAdoptedAt, autoImport = options.Value.VmGroups.AutoImport };
         if (!agents.IsConnected(id) || !VmGroupSyncService.Supported(agents, id))
         {
             return Results.Ok(new { supported = false, connected = agents.IsConnected(id), status, groups = Array.Empty<object>() });
@@ -118,6 +121,8 @@ public static class VmGroupEndpoints
         {
             return ApiSupport.Error(StatusCodes.Status502BadGateway, "host_operation_failed", error);
         }
+        // An import on request settles the host: the automatic import of existing groups has nothing left to decide.
+        host.VmGroupsAdoptedAt ??= time.GetUtcNow();
         var result = await VmGroupImporter.ImportAsync(db, host, native, time, http.RequestAborted);
         access.Invalidate();
         await http.WriteAuditAsync("hosts.vmgroups.import", resourceType: "host", resourceId: id.ToString("D"), details: result);

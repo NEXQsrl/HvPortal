@@ -29,7 +29,7 @@ npx vite build
 node web\e2e\ui-smoke.mjs --url https://localhost:28443 --data <gw-data> --agent-data <agent-data> --agent-exe <HvPortal.Agent.exe> --agent-port 28444 --out <screenshots>
 
 # Docker (gateway only; the agent stays a Windows service)
-docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.5.0 .      # compose + .env example in docker/
+docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.5.1 .      # compose + .env example in docker/
 
 # Packaging / release
 .\installer\New-AgentPackage.ps1 -OutputDirectory artifacts\packages   # zip served by the gateway (/api/v1/downloads)
@@ -98,7 +98,7 @@ Key cross-cutting flows:
   ISO library roots). Unknown outcomes are reconciled, never reported as success. Reads are live agent calls.
 - **RBAC**: scopes Global/Host/Group/VM, default deny, explicit deny wins; logical groups are nested folders whose
   assignments apply to sub-groups (ADR-015). Membership/tree moves go through `GroupTree.CheckAccessChangeAsync`
-  (anti-escalation). Portal groups are mirrored to native Hyper-V VM groups by `VmGroups/VmGroupSyncService` (ADR-017); only native groups linked in `HostVmGroupLinks` are ever touched.
+  (anti-escalation). Portal groups are mirrored to native Hyper-V VM groups by `VmGroups/VmGroupSyncService` (ADR-017); only native groups linked in `HostVmGroupLinks` are ever touched. The groups a host already has are imported once, by the first mirroring pass (ADR-027): only those `VmGroupImporter.Adoptable` accepts, i.e. whose import changes nothing in Hyper-V; the rest on request.
 - **Limits of VM groups** (ADR-024, `Quotas/GroupPolicyService`): a group may carry quotas and lists of hosts, networks
   and storage paths (`LogicalGroups.PolicyJson`). `vm.create`, `network.manage` and `host.files.*` held on a group work
   only where those limits allow (`HoldsViaGroupAsync`); every creation/resize is checked at request time **and** in

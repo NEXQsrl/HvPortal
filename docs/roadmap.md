@@ -35,6 +35,10 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 - Agent protocol 3 (agent 0.3.1): `BrowseFolders`, `NewVm.Location`; the gateway never sends them to older agents;
   agents reply `Rejected` to commands they cannot parse instead of dropping the channel.
 
+## v0.5.1 — delivered (code + automated tests; real-host validation pending)
+- The VM groups a host already has are imported automatically the first time the host is mirrored (ADR-027): only
+  groups with VMs, nothing removed from Hyper-V, no access gained; the rest stays on request. Real-host plan V45.
+
 ## v0.5.0 — delivered (code + automated tests + browser e2e; real-host validation pending)
 - Networks: create and remove virtual switches from the portal (External / Internal / Private) with contextual help
   (ADR-025, agent protocol 7).

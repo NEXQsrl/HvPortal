@@ -29,6 +29,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     public FakeAgentDispatcher Agent { get; } = new();
     public FakeEntraClient Entra { get; } = new();
     public string PackagesDirectory => Path.Combine(DataDirectory, "packages-test");
+    /// <summary>Configuration values of a single test (e.g. an option switched off).</summary>
+    public Dictionary<string, string> ExtraSettings { get; } = [];
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -39,6 +41,10 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         builder.UseSetting("Gateway:Jobs:RunnerEnabled", "false");
         builder.UseSetting("Gateway:VmGroups:SyncEnabled", "false");
         builder.UseSetting("Gateway:PackagesDirectory", PackagesDirectory);
+        foreach (var (key, value) in ExtraSettings)
+        {
+            builder.UseSetting(key, value);
+        }
         builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IAgentDispatcher>();
