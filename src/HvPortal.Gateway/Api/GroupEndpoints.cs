@@ -33,7 +33,7 @@ public static class GroupEndpoints
         g.MapPost("/{id:guid}/members/remove", RemoveMembersAsync);
     }
 
-    private static async Task<IResult> ListAsync(HttpContext http, PortalDbContext db, AccessEvaluator access)
+    private static async Task<IResult> ListAsync(HttpContext http, PortalDbContext db, AccessEvaluator access, Quotas.GroupPolicyService policies)
     {
         var uid = http.User.UserId();
         var ct = http.RequestAborted;
@@ -67,19 +67,25 @@ public static class GroupEndpoints
             }
         }
         var canManage = await access.HasAsync(uid, Permissions.GroupsManage, ResourceRef.Global, ct);
-        return Results.Ok(new
+        var list = new List<object>();
+        foreach (var x in groups.Where(x => visible.Contains(x.Id)))
         {
-            canManage,
-            groups = groups.Where(x => visible.Contains(x.Id)).Select(x => new
+            list.Add(new
             {
                 x.Id,
                 parentId = x.ParentId is { } p && visible.Contains(p) ? x.ParentId : null,
                 x.Name,
                 x.Description,
                 x.CreatedAt,
+                // The folder has limits of its own (quotas, hosts, networks, storage): details in GET /groups/{id}/policy.
+                limited = Quotas.GroupPolicy.Parse(x.PolicyJson) is not null,
+                // The user may create VMs inside the folder on the hosts its limits open (ADR-024).
+                canCreateVm = await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Group(x.Id), ct)
+                              && Quotas.GroupPolicyService.DelegatedHosts(await policies.ChainAsync(x.Id, ct)) is { Count: > 0 },
                 vmIds = members.Where(m => m.GroupId == x.Id && visibleVms.Contains(m.VmId)).Select(m => m.VmId),
-            }),
-        });
+            });
+        }
+        return Results.Ok(new { canManage, groups = list });
     }
 
     private static async Task<IResult?> ValidateNameAsync(PortalDbContext db, string name, Guid? parentId, Guid? self, CancellationToken ct)
@@ -231,9 +237,12 @@ public static class GroupEndpoints
         }
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.LogicalGroupMembers.Where(m => m.GroupId == id).ExecuteDeleteAsync(ct);
+        // Networks created for the folder stay on their hosts and from now on belong to nobody (host administrators only).
+        var networksReleased = await db.GroupNetworks.Where(n => n.GroupId == id).ExecuteDeleteAsync(ct);
         await db.LogicalGroups.Where(x => x.Id == id).ExecuteDeleteAsync(ct);
         await tx.CommitAsync(ct);
-        await http.WriteAuditAsync("groups.delete", resourceType: "group", resourceId: scope, details: new { group.Name, membersRemoved = memberIds.Count });
+        await http.WriteAuditAsync("groups.delete", resourceType: "group", resourceId: scope,
+            details: new { group.Name, membersRemoved = memberIds.Count, networksReleased, hadLimits = group.PolicyJson is not null });
         await notifier.GroupsChangedAsync();
         return Results.NoContent();
     }
@@ -342,6 +351,12 @@ public static class GroupEndpoints
         if (!tree.Exists(groupId))
         {
             return "unknown_group";
+        }
+        // Whoever may create VMs in the folder places them there by definition (ADR-024): the folder's role assignments
+        // then apply to the new VM, which is what a folder of a team or customer is for.
+        if (await access.HasAsync(actor, Permissions.VmCreate, ResourceRef.Group(groupId), ct))
+        {
+            return null;
         }
         if (!await access.HasAsync(actor, Permissions.GroupsManage, ResourceRef.Global, ct))
         {

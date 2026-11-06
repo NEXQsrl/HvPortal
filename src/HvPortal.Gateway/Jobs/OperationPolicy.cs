@@ -21,7 +21,7 @@ public static partial class OperationPolicy
     public static IReadOnlyList<string> PermissionsFor(VmConfigChange c)
     {
         var list = new List<string>();
-        var compute = c.NewName is not null || c.Notes is not null || c.ProcessorCount is not null || c.ProcessorReserve is not null
+        var compute = c.NewName is not null || c.ProcessorCount is not null || c.ProcessorReserve is not null
                       || c.ProcessorLimit is not null || c.ProcessorWeight is not null || c.MemoryStartupMb is not null
                       || c.DynamicMemoryEnabled is not null || c.MemoryMinimumMb is not null || c.MemoryMaximumMb is not null
                       || c.MemoryBuffer is not null || c.MemoryPriority is not null || c.AutomaticStartAction is not null
@@ -29,6 +29,11 @@ public static partial class OperationPolicy
                       || c.SecureBootEnabled is not null || c.SecureBootTemplate is not null;
         var storage = c.DvdIsoPath is not null || c.NewDisk is not null || c.ExpandDisk is not null;
         var network = c.NetworkAdapterChanges is { Count: > 0 } || c.AddNetworkAdapterSwitch is not null;
+        // The Hyper-V notes are the VM's annotation (the portal has no description of its own): inventory.annotate.
+        if (c.Notes is not null)
+        {
+            list.Add(Permissions.InventoryAnnotate);
+        }
         if (compute)
         {
             list.Add(Permissions.VmConfigCompute);

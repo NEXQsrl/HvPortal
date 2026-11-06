@@ -24,14 +24,15 @@ function inside(path: string, roots: string[]) {
  * host's drives. Picking an ISO outside the library adds its folder to the library (audited, hosts.manage), because the
  * agent mounts only ISOs inside library folders.
  */
-export function IsoPicker({ id, host, value, onChange, emptyLabel, disabled }: {
-  id: string; host: Host; value: string; onChange: (path: string) => void; emptyLabel: string; disabled?: boolean;
+export function IsoPicker({ id, host, groupId, value, onChange, emptyLabel, disabled }: {
+  id: string; host: Pick<Host, 'id' | 'isoLibrary' | 'canBrowseFolders' | 'connected'>; groupId?: string;
+  value: string; onChange: (path: string) => void; emptyLabel: string; disabled?: boolean;
 }) {
   const { t } = useI18n();
   const { can } = useSession();
   const [browsing, setBrowsing] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const isos = useLoad(() => get<IsosResponse>(`/api/v1/hosts/${host.id}/isos`), [host.id]);
+  const isos = useLoad(() => get<IsosResponse>(`/api/v1/hosts/${host.id}/isos${groupId ? `?groupId=${groupId}` : ''}`), [host.id, groupId]);
   const roots = isos.data?.roots ?? host.isoLibrary;
   const files = isos.data?.files ?? [];
   const canBrowse = can('hosts.manage') && !!host.canBrowseFolders && host.connected;

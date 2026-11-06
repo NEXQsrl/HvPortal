@@ -7,6 +7,7 @@ using HvPortal.Gateway.Audit;
 using HvPortal.Gateway.Authorization;
 using HvPortal.Gateway.Configuration;
 using HvPortal.Gateway.Data;
+using HvPortal.Gateway.Quotas;
 using HvPortal.Gateway.Realtime;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -194,6 +195,10 @@ public sealed class JobRunner : BackgroundService
             case HvOperation.NewCheckpoint or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint
                 when vm is not null && HvOperations.FromElement<CheckpointRequest>(args) is { } cp:
                 return HvOperations.ToElement(cp with { VmId = vm.HyperVId });
+            case HvOperation.NewSwitch when HvOperations.FromElement<NewSwitchRequest>(args) is { } ns:
+                return OperationValidation.Validate(ns) is null ? HvOperations.ToElement(ns) : null;
+            case HvOperation.RemoveSwitch when HvOperations.FromElement<SwitchRef>(args) is { } rs:
+                return OperationValidation.Validate(rs) is null ? HvOperations.ToElement(rs) : null;
             default:
                 return null;
         }
@@ -245,7 +250,14 @@ public sealed class JobRunner : BackgroundService
                 required.AddRange(OperationPolicy.PermissionsFor(requested));
             }
             var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == job.RequestedByUserId, ct);
-            if (user is null || !user.IsEnabled || !await access.HoldsAllAsync(job.RequestedByUserId, required.Distinct(), resource, ct))
+            var policies = scope.ServiceProvider.GetRequiredService<GroupPolicyService>();
+            var authorized = user is { IsEnabled: true } && await access.HoldsAllAsync(job.RequestedByUserId, required.Distinct(), resource, ct);
+            if (!authorized && user is { IsEnabled: true } && job.TargetType == ScopeType.Host && parameters?.GroupId is { } viaGroup)
+            {
+                // Created inside a folder by one of its users: the permission is held on the folder, whose limits open this host (ADR-024).
+                authorized = await policies.HoldsViaGroupAsync(job.RequestedByUserId, job.RequiredPermission, viaGroup, job.TargetId, ct);
+            }
+            if (!authorized)
             {
                 await FinalizeAsync(db, job, JobStatus.Failed, "The requesting user is no longer authorized for this operation.", "authorization_revoked", null,
                     AuditOutcome.Denied);
@@ -281,6 +293,19 @@ public sealed class JobRunner : BackgroundService
             }
             var hostId = host.Id;
             job.HostId = hostId; // resolve the owner at execution time
+
+            // Limits of the VM folders are checked again now (other operations may have used the quota meanwhile);
+            // server-controlled fields decided by the limits (VM location, new disk folder) are re-stamped.
+            if (hvOperation is { } limited && parameters is not null)
+            {
+                var (violation, stamped) = await ApplyFolderLimitsAsync(policies, limited, parameters, vm, hostId, job.Id, ct);
+                if (violation is not null)
+                {
+                    await FinalizeAsync(db, job, JobStatus.Failed, violation.Message, violation.Code, null, AuditOutcome.Denied);
+                    return;
+                }
+                parameters = parameters with { Args = stamped };
+            }
 
             AgentCommand command;
             if (job.Type is JobService.PowerJobType or JobService.DeleteJobType)
@@ -374,14 +399,20 @@ public sealed class JobRunner : BackgroundService
                     }
                 }
             }
+            // The new VM joins its folder before the job is reported as finished: until then the job itself counts
+            // against the folder quotas, afterwards the VM does.
+            if (created is not null && parameters?.GroupId is { } groupId)
+            {
+                await PlaceCreatedVmAsync(db, job, hostId, created, groupId);
+            }
+            if (status == JobStatus.Succeeded && job.Type == JobService.NetworkJobType)
+            {
+                await RecordSwitchOwnershipAsync(db, job, hostId, parameters!, result.Operation?.Result);
+            }
             await FinalizeAsync(db, job, status, message, code, result.HyperVCode);
             if (job.Type == JobService.DeleteJobType && status == JobStatus.Succeeded)
             {
                 await InventoryCleanup.RemoveVmAsync(db, vm!.Id, vm.HostId, "vm.deleted", _time.GetUtcNow(), CancellationToken.None);
-            }
-            if (created is not null && parameters?.GroupId is { } groupId)
-            {
-                await PlaceCreatedVmAsync(db, job, hostId, created, groupId);
             }
         }
         catch (HostNotConnectedException)
@@ -416,6 +447,56 @@ public sealed class JobRunner : BackgroundService
             {
                 await db.ResourceLocks.Where(l => l.ResourceKey == lockKey && l.JobId == jobId).ExecuteDeleteAsync(CancellationToken.None);
             }
+        }
+    }
+
+    private static async Task<(PolicyViolation? Violation, JsonElement Args)> ApplyFolderLimitsAsync(GroupPolicyService policies, HvOperation op,
+        JobService.OperationParameters parameters, VirtualMachine? vm, Guid hostId, Guid jobId, CancellationToken ct)
+    {
+        switch (op)
+        {
+            case HvOperation.NewVm when parameters.GroupId is { } g && HvOperations.FromElement<NewVmRequest>(parameters.Args) is { } spec:
+                var (v1, stampedSpec) = await policies.CheckNewVmAsync(g, hostId, spec, jobId, ct);
+                return (v1, HvOperations.ToElement(stampedSpec));
+            case HvOperation.SetVmConfig when vm is not null && HvOperations.FromElement<VmConfigChange>(parameters.Args) is { } change:
+                var (v2, stampedChange) = await policies.CheckConfigAsync(vm, change, ct);
+                return (v2, HvOperations.ToElement(stampedChange));
+            case HvOperation.NewSwitch when parameters.GroupId is { } ng:
+                return (await policies.CheckNewSwitchAsync(ng, jobId, ct), parameters.Args);
+            default:
+                return (null, parameters.Args);
+        }
+    }
+
+    /// <summary>A private network created for a folder belongs to it (quota, deletion by its users); a removed switch belongs to nobody.</summary>
+    private async Task RecordSwitchOwnershipAsync(PortalDbContext db, Job job, Guid hostId, JobService.OperationParameters parameters, JsonElement? result)
+    {
+        try
+        {
+            if (job.Operation == "Create" && parameters.GroupId is { } groupId && HvOperations.FromElement<NewSwitchRequest>(parameters.Args) is { } created)
+            {
+                Guid? switchId = result is { ValueKind: JsonValueKind.Object } r && r.TryGetProperty("id", out var idp) && Guid.TryParse(idp.GetString(), out var parsed) ? parsed : null;
+                if (await db.LogicalGroups.AnyAsync(g => g.Id == groupId) && !await db.GroupNetworks.AnyAsync(n => n.HostId == hostId && n.SwitchName == created.Name))
+                {
+                    db.GroupNetworks.Add(new GroupNetwork
+                    {
+                        GroupId = groupId, HostId = hostId, SwitchName = created.Name, SwitchId = switchId, CreatedAt = _time.GetUtcNow(), CreatedByUserId = job.RequestedByUserId,
+                    });
+                    await db.SaveChangesAsync();
+                    await _notifier.GroupsChangedAsync();
+                }
+            }
+            else if (job.Operation == "Delete" && HvOperations.FromElement<SwitchRef>(parameters.Args) is { Name: { } name })
+            {
+                if (await db.GroupNetworks.Where(n => n.HostId == hostId && n.SwitchName == name).ExecuteDeleteAsync() > 0)
+                {
+                    await _notifier.GroupsChangedAsync();
+                }
+            }
+        }
+        catch (DbUpdateException ex)
+        {
+            _logger.LogWarning(ex, "Could not record the ownership of the switch of job {JobId}", job.Id);
         }
     }
 
@@ -493,6 +574,12 @@ public sealed class JobRunner : BackgroundService
         foreach (var job in jobs)
         {
             var now = _time.GetUtcNow();
+            if (job.Type == JobService.NetworkJobType)
+            {
+                // Creating an external switch on the adapter the agent uses drops its channel for a moment: verify from the host.
+                await ReconcileSwitchAsync(db, job, now, ct);
+                continue;
+            }
             if (JobService.HvOperationFor(job.Type, job.Operation) is not null)
             {
                 // Configuration changes cannot be verified generically from inventory state, and are never re-sent.
@@ -563,6 +650,64 @@ public sealed class JobRunner : BackgroundService
             }
             // otherwise transitional state: check again next round
         }
+    }
+
+    /// <summary>Outcome of a switch job whose result was lost: the switch exists (create) or is gone (delete) on the host.</summary>
+    private async Task ReconcileSwitchAsync(PortalDbContext db, Job job, DateTimeOffset now, CancellationToken ct)
+    {
+        var parameters = ReadParameters(job);
+        var giveUp = now - (job.ReconcileStartedAt ?? now) > TimeSpan.FromMinutes(_options.ReconciliationGiveUpMinutes);
+        if (parameters is null || job.HostId is not { } hostId)
+        {
+            await FinalizeAsync(db, job, JobStatus.Unknown, "Outcome cannot be determined. Check the virtual switches on the host.", "outcome_unknown", null);
+            await ReleaseLockAsync(db, job);
+            return;
+        }
+        List<SwitchInfo>? switches = null;
+        if (_dispatcher.IsConnected(hostId))
+        {
+            try
+            {
+                var probe = await _dispatcher.SendAsync(hostId, new AgentCommand
+                {
+                    CommandId = Guid.NewGuid(), Kind = AgentCommandKind.HyperVOperation, Operation = HvOperation.ListSwitches,
+                    OperationArgs = HvOperations.ToElement(new { }), TimeoutSeconds = 60,
+                }, null, TimeSpan.FromSeconds(75), ct);
+                if (probe.Operation is { Ok: true, Result: { } r })
+                {
+                    switches = r.Deserialize<List<SwitchInfo>>(AgentProtocol.Json);
+                }
+            }
+            catch (Exception ex) when (ex is HostNotConnectedException or AgentChannelLostException or TimeoutException or JsonException)
+            {
+                switches = null;
+            }
+        }
+        if (switches is null)
+        {
+            if (giveUp)
+            {
+                await FinalizeAsync(db, job, JobStatus.Unknown, "Host unreachable; the outcome could not be verified. Check the virtual switches on the host.", "outcome_unknown", null);
+                await ReleaseLockAsync(db, job);
+            }
+            return;
+        }
+        var creating = job.Operation == "Create";
+        var name = creating ? HvOperations.FromElement<NewSwitchRequest>(parameters.Args)?.Name : HvOperations.FromElement<SwitchRef>(parameters.Args)?.Name;
+        var found = switches.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.Ordinal));
+        if (creating == (found is not null))
+        {
+            await RecordSwitchOwnershipAsync(db, job, hostId, parameters, found is null ? null : HvOperations.ToElement(new { id = found.Id }));
+            await FinalizeAsync(db, job, JobStatus.Succeeded,
+                creating ? "Outcome verified by reconciliation: the switch exists on the host." : "Outcome verified by reconciliation: the switch no longer exists on the host.", null, null);
+        }
+        else
+        {
+            await FinalizeAsync(db, job, JobStatus.Unknown,
+                creating ? "The switch is not present on the host: the creation did not complete." : "The switch still exists on the host: the removal did not complete.",
+                "outcome_unknown", null);
+        }
+        await ReleaseLockAsync(db, job);
     }
 
     private async Task RetryOrFailUnreachableAsync(PortalDbContext db, Job job, CancellationToken ct)

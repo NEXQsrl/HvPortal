@@ -10,11 +10,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HvPortal.Gateway.Api;
 
-/// <summary>Descriptions, host removal, VM details on demand, VM deletion (job), forgetting missing VMs.</summary>
+/// <summary>Host descriptions, host removal, VM details on demand, VM deletion (job), forgetting missing VMs.</summary>
 public static class InventoryManagementEndpoints
 {
     public sealed record HostUpdateRequest(string? DisplayName, string? Description);
-    public sealed record VmUpdateRequest(string? Description);
     public sealed record ConfirmRequest(string? ConfirmName, string? IdempotencyKey);
 
     public const int MaxDescriptionLength = 1000;
@@ -23,7 +22,6 @@ public static class InventoryManagementEndpoints
     {
         app.MapMethods("/api/v1/hosts/{id:guid}", ["PATCH"], UpdateHostAsync).WithTags("Hosts");
         app.MapPost("/api/v1/hosts/{id:guid}/delete", DeleteHostAsync).WithTags("Hosts");
-        app.MapMethods("/api/v1/vms/{id:guid}", ["PATCH"], UpdateVmAsync).WithTags("Virtual machines");
         app.MapGet("/api/v1/vms/{id:guid}/details", VmDetailsAsync).WithTags("Virtual machines");
         app.MapPost("/api/v1/vms/{id:guid}/delete", DeleteVmAsync).WithTags("Virtual machines");
         app.MapPost("/api/v1/vms/{id:guid}/forget", ForgetVmAsync).WithTags("Virtual machines");
@@ -122,29 +120,6 @@ public static class InventoryManagementEndpoints
         && await access.HasAsync(http.User.UserId(), Permissions.InventoryRead, ResourceRef.Vm(id), http.RequestAborted)
             ? vm
             : null;
-
-    private static async Task<IResult> UpdateVmAsync(Guid id, VmUpdateRequest req, HttpContext http, PortalDbContext db, AccessEvaluator access)
-    {
-        var vm = await ReadableVmAsync(id, http, db, access);
-        if (vm is null)
-        {
-            return ApiSupport.NotFound();
-        }
-        if (await http.GuardAsync(Permissions.InventoryAnnotate, ResourceRef.Vm(id), "vms.update") is { } denied)
-        {
-            return denied;
-        }
-        var (description, ok) = CleanDescription(req.Description);
-        if (!ok)
-        {
-            return ApiSupport.BadRequest("description_too_long", $"Max {MaxDescriptionLength} characters.");
-        }
-        var before = vm.Description;
-        vm.Description = description;
-        await db.SaveChangesAsync(http.RequestAborted);
-        await http.WriteAuditAsync("vms.update", resourceType: "vm", resourceId: id.ToString("D"), details: new { before, after = description });
-        return Results.NoContent();
-    }
 
     /// <summary>Live details from the agent; when the host is unreachable the last collected copy is returned as stale.</summary>
     private static async Task<IResult> VmDetailsAsync(Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents, TimeProvider time)

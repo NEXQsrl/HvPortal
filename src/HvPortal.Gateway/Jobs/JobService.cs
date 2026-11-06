@@ -47,6 +47,8 @@ public sealed class JobService
     public const string ConfigJobType = "vm.config";
     public const string CreateJobType = "vm.create";
     public const string CheckpointJobType = "vm.checkpoint";
+    /// <summary>Virtual switches of a host (target = the host).</summary>
+    public const string NetworkJobType = "host.network";
 
     /// <summary>Typed Hyper-V operation executed by a job of the given type/operation (null for power/delete jobs).</summary>
     public static HvOperation? HvOperationFor(string type, string operation) => (type, operation) switch
@@ -56,6 +58,8 @@ public sealed class JobService
         (CheckpointJobType, "Create") => HvOperation.NewCheckpoint,
         (CheckpointJobType, "Apply") => HvOperation.RestoreCheckpoint,
         (CheckpointJobType, "Delete") => HvOperation.RemoveCheckpoint,
+        (NetworkJobType, "Create") => HvOperation.NewSwitch,
+        (NetworkJobType, "Delete") => HvOperation.RemoveSwitch,
         _ => null,
     };
 

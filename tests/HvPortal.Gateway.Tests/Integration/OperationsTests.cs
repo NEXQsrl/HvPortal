@@ -234,7 +234,9 @@ public sealed class OperationsTests : IAsyncLifetime
         var user = await _app.CreateUserAsync("compute-revoked");
         await AssignRoleAsync(user, role, ScopeType.Vm, vms["app"].ToString("D"));
         var c = await LoginAsync("compute-revoked");
-        var r = await PatchAsync(c, $"/api/v1/vms/{vms["app"]}/config", new { notes = "x" });
+        // Compute settings only: the notes belong to inventory.annotate, which this role does not include.
+        Assert.Equal(HttpStatusCode.Forbidden, (await PatchAsync(c, $"/api/v1/vms/{vms["app"]}/config", new { notes = "x" })).StatusCode);
+        var r = await PatchAsync(c, $"/api/v1/vms/{vms["app"]}/config", new { processorWeight = 200 });
         Assert.Equal(HttpStatusCode.Accepted, r.StatusCode);
         await _app.WithDbAsync(db => db.RoleAssignments.Where(a => a.PrincipalId == user.ToString("D")).ExecuteDeleteAsync());
         var id = (await r.JsonAsync()).GetProperty("jobId").GetGuid();
@@ -361,7 +363,9 @@ public sealed class OperationsTests : IAsyncLifetime
     [Fact]
     public async Task Checkpoint_apply_requires_off_state_confirmation_and_permission()
     {
-        var (_, vms) = await _app.CreateHostAsync("cp-host", ("live", VmPowerState.Running), ("cold", VmPowerState.Off));
+        var (cpHost, vms) = await _app.CreateHostAsync("cp-host", ("live", VmPowerState.Running), ("cold", VmPowerState.Off));
+        // Agents before protocol 7 do not turn a running VM off before applying (see FolderLimitsTests for protocol 7).
+        _app.Agent.ProtocolVersions[cpHost] = 6;
         await _app.CreateUserAsync("op-cp", BuiltInRoles.VmOperator);
         await _app.CreateUserAsync("infra-cp", BuiltInRoles.InfrastructureAdmin);
         var op = await LoginAsync("op-cp");

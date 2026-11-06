@@ -15,7 +15,7 @@ export function VmListView() {
   const [state, setState] = useState('');
   const [host, setHost] = useState('');
   const rows = useMemo(() => inv.vms.filter((v) =>
-    (!search || [v.name, v.hostName ?? '', v.description ?? '', v.guestOperatingSystem ?? ''].some((s) => s.toLowerCase().includes(search.toLowerCase())))
+    (!search || [v.name, v.hostName ?? '', v.notes ?? '', v.guestOperatingSystem ?? ''].some((s) => s.toLowerCase().includes(search.toLowerCase())))
     && (!state || v.powerState === state) && (!host || v.hostId === host)), [inv.vms, search, state, host]);
 
   return (

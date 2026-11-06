@@ -1,12 +1,12 @@
-import { Download, KeyRound, Plus, Save, ScrollText, Settings, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { Download, KeyRound, Plus, Save, ScrollText, Settings, ShieldCheck, Trash2, UserRound, Users } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { del, get, post, put } from '@/api/client';
 import type { Assignment, AuditEntry, Role, SecuritySettings, UserRow } from '@/api/types';
 import { CopyButton, ErrorAlert, KeyValue, Loading, Notice, PageHeader, Section, StatusBadge } from '@/components/common';
-import { BackupSection } from '@/components/admin/BackupSection';
+import { AutoBackupSection, BackupSection } from '@/components/admin/BackupSection';
 import { AddUserDialog, CreatedUserNotice, EntraSettingsSection, type CreatedUser } from '@/components/admin/UserAdmin';
-import { ActionDialog, Field, HelpTip } from '@/components/dialogs';
+import { ActionDialog, ConfirmTypedDialog, Field, HelpTip } from '@/components/dialogs';
 import { MicrosoftMark } from '@/components/MicrosoftMark';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { GroupPickerList } from '@/components/ops/GroupDialogs';
@@ -41,6 +41,7 @@ export function UsersPage() {
   const [created, setCreated] = useState<CreatedUser | null>(null);
   const [adding, setAdding] = useState(false);
   const [assigning, setAssigning] = useState(false);
+  const [deleting, setDeleting] = useState<UserRow | null>(null);
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
@@ -57,6 +58,11 @@ export function UsersPage() {
         </Notice>
       )}
       {created && <CreatedUserNotice user={created} onClose={() => setCreated(null)} />}
+      {deleting && (
+        <ConfirmTypedDialog title={t('users.deleteTitle', { name: deleting.userName })} name={deleting.userName} impact={t('users.deleteImpact')}
+          confirmLabel={t('common.delete')} onClose={() => setDeleting(null)}
+          onConfirm={async (typed) => { await post(`/api/v1/users/${deleting.id}/delete`, { confirmName: typed }); users.reload(); assignments.reload(); }} />
+      )}
       {can('users.manage') && (
         <Section title={<span className="flex items-center gap-1.5">{t('users.title')}<HelpTip>{t('users.noRole')}</HelpTip></span>} actions={<Button size="sm" onClick={() => setAdding(true)}><Plus />{t('users.add')}</Button>}>
           {users.loading && !users.data ? <Loading /> : (
@@ -84,6 +90,7 @@ export function UsersPage() {
                           setTemp({ name: u.userName, password: r.temporaryPassword });
                         })}>{t('users.resetPassword')}</Button>}
                         {u.mfaEnabled && <Button size="xs" variant="outline" onClick={() => void act(() => post(`/api/v1/users/${u.id}/reset-mfa`))}>{t('users.resetMfa')}</Button>}
+                        <Button size="xs" variant="ghost" className="text-destructive" onClick={() => setDeleting(u)}><Trash2 />{t('common.delete')}</Button>
                       </div>
                     )}</TableCell>
                   </TableRow>
@@ -169,7 +176,9 @@ function AssignDialog({ onClose, users, roles }: { onClose: () => void; users: U
 
 export function AuditPage() {
   const { t, fmtDate } = useI18n();
-  const [outcome, setOutcome] = useState('');
+  const [params, setParams] = useSearchParams();
+  const outcome = ['Success', 'Failure', 'Denied'].includes(params.get('outcome') ?? '') ? params.get('outcome')! : '';
+  const setOutcome = (o: string) => setParams(o ? { outcome: o } : {}, { replace: true });
   const [action, setAction] = useState('');
   const [query, setQuery] = useState('');
   const [skip, setSkip] = useState(0);
@@ -238,7 +247,7 @@ export function SettingsPage() {
       </PageHeader>
       <TabsContent value="security" className="min-h-0 overflow-auto p-4">{tab === 'security' && <div className="max-w-4xl"><SecuritySettingsSection /></div>}</TabsContent>
       <TabsContent value="entra" className="min-h-0 overflow-auto p-4">{tab === 'entra' && <div className="max-w-4xl"><EntraSettingsSection /></div>}</TabsContent>
-      <TabsContent value="backup" className="min-h-0 overflow-auto p-4">{tab === 'backup' && <div className="max-w-4xl"><BackupSection /></div>}</TabsContent>
+      <TabsContent value="backup" className="min-h-0 overflow-auto p-4">{tab === 'backup' && <div className="max-w-4xl space-y-4"><BackupSection /><AutoBackupSection /></div>}</TabsContent>
       <TabsContent value="system" className="min-h-0 overflow-auto p-4">{tab === 'system' && <div className="max-w-4xl"><SystemInfoSection /></div>}</TabsContent>
     </Tabs>
   );

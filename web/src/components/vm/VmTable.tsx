@@ -48,7 +48,7 @@ export function VmTable({ vms, showHost = true, groupId, className, emptyText }:
                 <TableCell><CheckpointIcon count={v.checkpointCount} /></TableCell>
                 <TableCell className="max-w-72">
                   <div className={cn('cell-name truncate font-medium', v.isMissing && 'text-muted-foreground line-through')}>{v.name}</div>
-                  {v.description && <div className="truncate text-xs text-muted-foreground">{v.description}</div>}
+                  {v.notes && <div className="truncate text-xs text-muted-foreground" title={v.notes}>{v.notes.split(/\r?\n/)[0]}</div>}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   <div className="flex items-center gap-1">

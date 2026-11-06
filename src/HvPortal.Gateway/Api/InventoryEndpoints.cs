@@ -43,7 +43,7 @@ public static class InventoryEndpoints
     // ------------------------------------------------------------------ hosts
 
     private static object HostDto(ManagedHost h, bool connected, int vmCount, DateTimeOffset now, bool canCreateVm = false,
-        bool showRemote = false, string? managementAgentName = null)
+        bool showRemote = false, string? managementAgentName = null, bool canManageNetworks = false)
     {
         var facts = h.HostFactsJson is null ? null : JsonSerializer.Deserialize<HostFacts>(h.HostFactsJson);
         var eval = HostCapabilities.Evaluate(facts, h.Access);
@@ -77,6 +77,9 @@ public static class InventoryEndpoints
             support = eval.Support,
             capabilities = eval.Capabilities,
             canCreateVm = canCreateVm && connected && h.Status == HostStatus.Active && h.Access == HyperVAccessStatus.Ok,
+            // Agent 0.5.0+ (protocol 7): create and remove virtual switches.
+            canManageNetworks = canManageNetworks && connected && h.Status == HostStatus.Active && h.Access == HyperVAccessStatus.Ok
+                                && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 5),
             isoLibrary = Jobs.OperationPolicy.IsoRoots(h),
             // Agent 0.3.1+ (protocol 3): folder browser for the VM location and ISO files.
             canBrowseFolders = connected && h.Access == HyperVAccessStatus.Ok && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 1),
@@ -115,7 +118,8 @@ public static class InventoryEndpoints
             {
                 result.Add(HostDto(h, agents.IsConnected(h.Id), counts.GetValueOrDefault(h.Id), now,
                     await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(h.Id), http.RequestAborted),
-                    manageAll, h.ManagementAgentId is { } ma ? agentNames.GetValueOrDefault(ma) : null));
+                    manageAll, h.ManagementAgentId is { } ma ? agentNames.GetValueOrDefault(ma) : null,
+                    await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Host(h.Id), http.RequestAborted)));
             }
         }
         return Results.Ok(result);
@@ -136,7 +140,8 @@ public static class InventoryEndpoints
         var count = await db.VirtualMachines.CountAsync(v => v.HostId == id && !v.IsMissing, http.RequestAborted);
         var events = await db.InventoryEvents.AsNoTracking().Where(e => e.HostId == id).OrderByDescending(e => e.Id).Take(50).ToListAsync(http.RequestAborted);
         return Results.Ok(new { host = HostDto(h, agents.IsConnected(id), count, time.GetUtcNow(),
-            await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted), manageAll, agentName), events });
+            await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted), manageAll, agentName,
+            await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Host(id), http.RequestAborted)), events });
     }
 
     /// <summary>Connection facts an agent needs: names valid in the gateway certificate, port, CA pin, reachability.</summary>
@@ -317,7 +322,6 @@ public static class InventoryEndpoints
             v.Id,
             v.HyperVId,
             v.Name,
-            v.Description,
             v.CheckpointCount,
             v.HostId,
             hostName = host?.DisplayName,
@@ -353,7 +357,8 @@ public static class InventoryEndpoints
             v.IsMissing,
             v.MissingSince,
             allowedOperations = connected && !v.IsMissing ? allowed.ToArray() : [],
-            canAnnotate,
+            // Hyper-V notes of the VM (written on the host through a configuration job).
+            canAnnotate = canAnnotate && !v.IsMissing,
             canDelete = canDelete && connected && !v.IsMissing && v.PowerState is VmPowerState.Off or VmPowerState.Saved,
             canForget = canDelete && v.IsMissing,
             canConsole = canConsole && !v.IsMissing,

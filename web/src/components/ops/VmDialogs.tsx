@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { newIdempotencyKey, post } from '@/api/client';
+import { api, newIdempotencyKey, post } from '@/api/client';
 import type { Accepted } from '@/api/ops-types';
 import type { PowerOperation, Vm } from '@/api/types';
 import { KeyValue, Notice, PowerBadge } from '@/components/common';
 import { ActionDialog, Field } from '@/components/dialogs';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { useI18n, type TKey } from '@/i18n';
 import { CHECKPOINT_NAME } from '@/lib/format';
 
@@ -47,6 +48,23 @@ export function CreateCheckpointDialog({ vm, onQueued, onClose }: { vm: Vm; onQu
         <Input id="cp-name" value={name} maxLength={100} placeholder={t('cp.namePlaceholder')} onChange={(e) => setName(e.target.value)} autoFocus />
       </Field>
       <Notice kind="warn">{t('cp.notBackup')}</Notice>
+    </ActionDialog>
+  );
+}
+
+/** The notes of a VM live in Hyper-V (Set-VM -Notes): saving queues a configuration job on the host. */
+export function EditNotesDialog({ vm, onQueued, onClose }: { vm: Vm; onQueued: (r: Accepted, label: string) => void; onClose: () => void }) {
+  const { t } = useI18n();
+  const [notes, setNotes] = useState(vm.notes ?? '');
+  return (
+    <ActionDialog title={t('vm.notesTitle', { name: vm.name })} confirmLabel={t('common.save')} disabled={notes === (vm.notes ?? '')} onClose={onClose}
+      onConfirm={async () => {
+        const r = await api<Accepted>('PATCH', `/api/v1/vms/${vm.id}/config`, { notes });
+        onQueued(r, `${t('menu.editNotes').replace('…', '')} — ${vm.name}`);
+      }}>
+      <Field label={t('vm.notes')} htmlFor="vm-notes" hint={t('vm.notesHint')} aside={`${notes.length}/4000`}>
+        <Textarea id="vm-notes" rows={6} maxLength={4000} value={notes} onChange={(e) => setNotes(e.target.value)} autoFocus />
+      </Field>
     </ActionDialog>
   );
 }

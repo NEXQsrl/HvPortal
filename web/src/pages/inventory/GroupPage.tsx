@@ -1,8 +1,9 @@
 import { ChevronDown, FolderPlus, Layers, Plus, Server } from 'lucide-react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ActionsButton, KebabMenu, rowLink, WithContextMenu } from '@/components/actions';
-import { Empty, GroupIcon, Loading, PageHeader, Section, StatCard } from '@/components/common';
+import { Empty, GroupIcon, Loading, PageHeader, Section, StatCard, StatusBadge } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
+import { GroupLimitsPanel } from '@/components/ops/GroupLimits';
 import { ManagementAgentsView } from '@/components/ops/ManagementAgents';
 import { useOps } from '@/components/ops/OperationsProvider';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
@@ -50,7 +51,11 @@ export function GroupPage() {
             </BreadcrumbList>
           </Breadcrumb>
         }
+        badges={group.limited ? <StatusBadge tone="info">{t('lim.badge')}</StatusBadge> : undefined}
         actions={<>
+          {(group.canCreateVm || (inv.canManageGroups && inv.hosts.some((h) => h.canCreateVm))) && (
+            <Button size="sm" onClick={() => ops.openCreateVm({ groupId: group.id })}><Plus />{t('wiz.title')}</Button>
+          )}
           {inv.canManageGroups && <Button size="sm" variant="outline" onClick={() => ops.openNewGroup(group.id)}><FolderPlus />{t('group.newSub').replace('…', '')}</Button>}
           <ActionsButton items={ops.groupActions(group).filter((a) => a.key !== 'open')} label={group.name}>{t('common.actions')}<ChevronDown /></ActionsButton>
         </>} />
@@ -61,6 +66,7 @@ export function GroupPage() {
           <StatCard label={t('group.subgroups')} value={children.length} />
           <StatCard label={`${t('dash.vms')} ${t('dash.running')}`} value={`${running} / ${subtree.size}`} sub={t('group.inheritHelp')} />
         </div>
+        <GroupLimitsPanel key={group.id} group={group} onQueued={ops.queued} />
         {children.length > 0 && (
           <Section title={t('group.subgroups')}>
             <Table>

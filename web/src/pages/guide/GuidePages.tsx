@@ -1,6 +1,6 @@
 import { ArrowRight, BookOpen, CircleCheck, KeyRound, LifeBuoy, PlugZap, RefreshCw, Server, Settings, Unplug, UserRound } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import { get } from '@/api/client';
 import type { GatewayConnection, Host } from '@/api/types';
 import { AgentSetupGuide } from '@/components/AgentSetupGuide';
@@ -12,7 +12,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useI18n, type TKey } from '@/i18n';
 import { compareVersions, semver, shortVersion } from '@/lib/format';
 import { useLoad } from '@/lib/hooks';
-import { cn } from '@/lib/utils';
 import { useSession } from '@/session';
 
 interface GuidePage { to: string; title: TKey; desc?: TKey; icon: typeof BookOpen; end?: boolean }
@@ -44,19 +43,6 @@ export function GuideLayout() {
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader icon={<current.icon className="size-5" />} title={t(current.title)} subtitle={t(current.desc ?? 'guide.home.intro')} />
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <nav aria-label={t('guide.pages')} className="shrink-0 border-b bg-panel lg:w-64 lg:border-r lg:border-b-0">
-          <ul className="flex gap-1 overflow-x-auto p-2 lg:flex-col">
-            {GUIDE_PAGES.map((p) => (
-              <li key={p.to} className="shrink-0">
-                <NavLink to={p.to} end={p.end}
-                  className={({ isActive }) => cn('flex h-8 items-center gap-2 rounded-md px-2.5 text-sm whitespace-nowrap hover:bg-accent',
-                    isActive ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground')}>
-                  <p.icon className="size-4 shrink-0" />{t(p.title)}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-        </nav>
         <div className="min-h-0 flex-1 overflow-auto p-4">
           <div className="max-w-5xl space-y-4">
             {can('hosts.manage') ? <Outlet /> : <Notice kind="info">{t('guide.restricted')}</Notice>}

@@ -96,6 +96,8 @@ export interface Host {
   support: string;
   capabilities: Capability[];
   canCreateVm: boolean;
+  /** Agent 0.5.0+ and network.manage on the host: create and remove virtual switches. */
+  canManageNetworks?: boolean;
   isoLibrary: string[];
   /** Agent 0.3.1+: folder browser for the VM location and ISO files. */
   canBrowseFolders?: boolean;
@@ -133,7 +135,6 @@ export interface Vm {
   id: string;
   hyperVId: string;
   name: string;
-  description: string | null;
   checkpointCount: number | null;
   hostId: string;
   hostName: string | null;
@@ -155,7 +156,7 @@ export interface Vm {
   shutdownServiceAvailable: boolean | null;
   /** Agent 0.3.4+ (null with older agents). */
   hyperVCreatedAt?: string | null;
-  /** Hyper-V notes of the VM, read from the host (edit them in Settings > General). */
+  /** Hyper-V notes of the VM, read from the host (the VM's only description; edited through a configuration job). */
   notes?: string | null;
   configurationPath?: string | null;
   memoryAvailablePercent?: number | null;

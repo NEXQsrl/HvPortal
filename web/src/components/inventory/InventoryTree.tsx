@@ -86,7 +86,7 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
     if (isOpen('hosts')) {
       for (const h of inv.hosts) {
         const vms = inv.vms.filter((v) => v.hostId === h.id).sort((a, b) => a.name.localeCompare(b.name));
-        const visibleVms = vms.filter((v) => matches(v.name) || matches(v.description));
+        const visibleVms = vms.filter((v) => matches(v.name) || matches(v.notes));
         if (q && !matches(h.displayName) && visibleVms.length === 0) continue;
         const key = `host:${h.id}`;
         out.push({

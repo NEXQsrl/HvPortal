@@ -1,7 +1,4 @@
-import {
-  Camera, FolderInput, FolderMinus, FolderPlus, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save,
-  Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2,
-} from 'lucide-react';
+import { Camera, FolderInput, FolderMinus, FolderPlus, Gauge, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save, Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { del, newIdempotencyKey, patch, post } from '@/api/client';
@@ -17,10 +14,11 @@ import { watchJob } from '@/lib/jobs';
 import { toast } from '@/lib/toast';
 import { useSession } from '@/session';
 import { CreateVmWizard } from './CreateVmWizard';
+import { GroupLimitsDialog } from '@/components/ops/GroupLimits';
 import { AddToGroupDialog, AddVmsDialog, MoveGroupDialog, NewGroupDialog } from './GroupDialogs';
 import { AddHostDialog, EnrollmentDialog, RemoteHostDialog, RevokeHostDialog } from './HostDialogs';
 import { LiveManagementEnrollment, NewManagementAgentDialog } from './ManagementAgents';
-import { CreateCheckpointDialog, PowerDialog } from './VmDialogs';
+import { CreateCheckpointDialog, EditNotesDialog, PowerDialog } from './VmDialogs';
 
 const POWER_ICONS: Record<PowerOperation, typeof Play> = {
   Start: Play, Shutdown: Power, Restart: RotateCcw, TurnOff: PowerOff, Reset: Undo2, Pause, Resume: Play, Save,
@@ -42,6 +40,7 @@ type DialogState =
   | { kind: 'newManagementAgent' }
   | { kind: 'enrollManagement'; info: EnrollmentInfo; agentId: string; name: string }
   | { kind: 'newGroup'; parentId: string | null }
+  | { kind: 'groupLimits'; group: Group }
   | { kind: 'editGroup'; group: Group }
   | { kind: 'moveGroup'; group: Group }
   | { kind: 'deleteGroup'; group: Group }
@@ -135,7 +134,7 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     powerActions(vm).forEach((a, i) => list.push({ ...a, separatorBefore: i === 0 }));
     if (vm.canConfigure) list.push({ key: 'settings', label: t('vm.editSettings'), icon: Settings2, separatorBefore: true, onSelect: () => navigate(`/vms/${vm.id}?tab=settings`) });
     if (vm.canCheckpoint) list.push({ key: 'checkpoint', label: t('vm.createCheckpoint'), icon: Camera, separatorBefore: !vm.canConfigure, onSelect: () => setDialog({ kind: 'checkpoint', vm }) });
-    if (vm.canAnnotate) list.push({ key: 'describe', label: t('menu.editDescription'), icon: Pencil, onSelect: () => setDialog({ kind: 'editVm', vm }) });
+    if (vm.canAnnotate) list.push({ key: 'notes', label: t('menu.editNotes'), icon: Pencil, onSelect: () => setDialog({ kind: 'editVm', vm }) });
     if (manageGroups) {
       list.push({ key: 'add-group', label: t('vm.addToGroup'), icon: FolderPlus, separatorBefore: true, onSelect: () => setDialog({ kind: 'addToGroup', vms: [vm] }) });
       const g = opts.groupId ? inv.groupById.get(opts.groupId) : undefined;
@@ -188,15 +187,22 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
   }, [t, navigate, manageHosts, inv, fail]);
 
   const groupActions = useCallback((g: Group | null): Action[] => {
-    if (!manageGroups) return g ? [{ key: 'open', label: t('menu.open'), icon: SquareArrowOutUpRight, onSelect: () => navigate(`/groups/${g.id}`) }] : [];
+    if (!manageGroups) {
+      // Users of a group (no group management): open it and, where its limits allow, create VMs inside it.
+      return g ? [
+        { key: 'open', label: t('menu.open'), icon: SquareArrowOutUpRight, onSelect: () => navigate(`/groups/${g.id}`) },
+        ...(g.canCreateVm ? [{ key: 'new-vm', label: t('group.newVmHere'), icon: Monitor, separatorBefore: true, onSelect: () => setDialog({ kind: 'createVm', groupId: g.id }) }] : []),
+      ] : [];
+    }
     if (!g) return [{ key: 'new', label: t('group.new'), icon: FolderPlus, onSelect: () => setDialog({ kind: 'newGroup', parentId: null }) }];
     return [
       { key: 'open', label: t('menu.open'), icon: SquareArrowOutUpRight, onSelect: () => navigate(`/groups/${g.id}`) },
       // The wizard opens with this group preselected: the VM is added to it as soon as it appears in the inventory.
-      ...(inv.hosts.some((h) => h.canCreateVm) ? [{ key: 'new-vm', label: t('group.newVmHere'), icon: Monitor, separatorBefore: true, onSelect: () => setDialog({ kind: 'createVm', groupId: g.id }) }] : []),
-      { key: 'new-sub', label: t('group.newSub'), icon: FolderPlus, separatorBefore: !inv.hosts.some((h) => h.canCreateVm), onSelect: () => setDialog({ kind: 'newGroup', parentId: g.id }) },
+      ...(inv.hosts.some((h) => h.canCreateVm) || g.canCreateVm ? [{ key: 'new-vm', label: t('group.newVmHere'), icon: Monitor, separatorBefore: true, onSelect: () => setDialog({ kind: 'createVm', groupId: g.id }) }] : []),
+      { key: 'new-sub', label: t('group.newSub'), icon: FolderPlus, separatorBefore: !(inv.hosts.some((h) => h.canCreateVm) || g.canCreateVm), onSelect: () => setDialog({ kind: 'newGroup', parentId: g.id }) },
       { key: 'add-vms', label: t('group.addVms'), icon: Plus, onSelect: () => setDialog({ kind: 'addVms', group: g }) },
       { key: 'edit', label: t('group.edit'), icon: Pencil, separatorBefore: true, onSelect: () => setDialog({ kind: 'editGroup', group: g }) },
+      ...(manageHosts ? [{ key: 'limits', label: t('lim.edit'), icon: Gauge, onSelect: () => setDialog({ kind: 'groupLimits', group: g }) }] : []),
       { key: 'move', label: t('group.move'), icon: FolderInput, onSelect: () => setDialog({ kind: 'moveGroup', group: g }) },
       { key: 'delete', label: t('group.delete'), icon: Trash2, danger: true, separatorBefore: true, onSelect: () => setDialog({ kind: 'deleteGroup', group: g }) },
     ];
@@ -219,10 +225,7 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
       {children}
       {d?.kind === 'power' && <PowerDialog vm={d.vm} op={d.op} onQueued={queued} onClose={close} />}
       {d?.kind === 'checkpoint' && <CreateCheckpointDialog vm={d.vm} onQueued={queued} onClose={close} />}
-      {d?.kind === 'editVm' && (
-        <EditDialog title={t('vm.editTitle', { name: d.vm.name })} initialDescription={d.vm.description} onClose={close}
-          onSave={async (_, description) => { await patch(`/api/v1/vms/${d.vm.id}`, { description }); inv.reload(); }} />
-      )}
+      {d?.kind === 'editVm' && <EditNotesDialog vm={d.vm} onQueued={queued} onClose={close} />}
       {d?.kind === 'deleteVm' && (
         <ConfirmTypedDialog title={t('vm.deleteTitle', { name: d.vm.name })} name={d.vm.name} confirmLabel={t('vm.delete')} onClose={close}
           impact={<>{t('vm.deleteImpact')}<br /><strong>{t('vm.deleteDisksKept')}</strong></>}
@@ -260,6 +263,7 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
           onConfirm={async (typed) => { await post(`/api/v1/hosts/${d.host.id}/delete`, { confirmName: typed }); inv.reload(); navigate('/hosts'); }} />
       )}
       {d?.kind === 'revokeHost' && <RevokeHostDialog host={d.host} onClose={() => { close(); inv.reload(); }} />}
+      {d?.kind === 'groupLimits' && <GroupLimitsDialog group={d.group} onSaved={() => inv.reload()} onClose={close} />}
       {d?.kind === 'newGroup' && <NewGroupDialog parentId={d.parentId} onClose={close} onCreated={(id) => { inv.reload(); navigate(`/groups/${id}`); }} />}
       {d?.kind === 'editGroup' && (
         <EditDialog title={`${t('group.edit').replace('…', '')} — ${d.group.name}`} withName nameLabel={t('group.name')} initialName={d.group.name} initialDescription={d.group.description}

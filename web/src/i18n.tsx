@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import { enGuide, itGuide } from './i18n-guide';
+import { enLimits, itLimits } from './i18n-limits';
 import { enOps, itOps } from './i18n-ops';
 
 const enBase = {
@@ -192,6 +193,8 @@ const enBase = {
   'users.enable': 'Enable',
   'users.resetPassword': 'Reset password',
   'users.resetMfa': 'Reset MFA',
+  'users.deleteTitle': 'Delete user {name}',
+  'users.deleteImpact': 'The user, their sessions, MFA data and every role assignment are removed permanently. The audit log keeps their past actions. To suspend access temporarily use Disable instead.',
   'users.noRole': 'New users have no permissions until a role is assigned.',
   'roles.assignments': 'Role assignments',
   'roles.assign': 'Assign role',
@@ -273,7 +276,9 @@ const enBase = {
   'vm.deleteImpact': 'The VM is deleted from Hyper-V: its configuration, checkpoints and saved state are removed and it cannot be started again. This cannot be undone.',
   'vm.deleteDisksKept': 'The virtual disk files (VHD/VHDX, including checkpoint differencing disks) are NOT deleted: remove them manually if no longer needed.',
   'vm.forget': 'Remove from portal',
-  'vm.editTitle': 'Edit VM {name}',
+  'vm.notesTitle': 'Notes of {name}',
+  'vm.notesHint': 'Saved in Hyper-V (the Notes field of the VM): visible in Hyper-V Manager too.',
+  'menu.editNotes': 'Edit notes…',
   'vm.load': 'Load {p}%',
   'vm.startup': 'Startup',
   'vm.configuration': 'Configuration',
@@ -365,7 +370,7 @@ const enBase = {
   'state.Unknown': 'Unknown',
 };
 
-const en = { ...enBase, ...enOps, ...enGuide };
+const en = { ...enBase, ...enOps, ...enGuide, ...enLimits };
 type Key = keyof typeof en;
 
 const itBase: Record<keyof typeof enBase, string> = {
@@ -558,6 +563,8 @@ const itBase: Record<keyof typeof enBase, string> = {
   'users.enable': 'Abilita',
   'users.resetPassword': 'Reimposta password',
   'users.resetMfa': 'Reimposta MFA',
+  'users.deleteTitle': "Elimina l'utente {name}",
+  'users.deleteImpact': "L'utente, le sue sessioni, i dati MFA e tutte le assegnazioni di ruolo vengono rimossi definitivamente. L'audit conserva le sue azioni passate. Per sospendere l'accesso solo temporaneamente usa Disabilita.",
   'users.noRole': 'I nuovi utenti non hanno permessi finché non viene assegnato un ruolo.',
   'roles.assignments': 'Assegnazioni dei ruoli',
   'roles.assign': 'Assegna ruolo',
@@ -639,7 +646,9 @@ const itBase: Record<keyof typeof enBase, string> = {
   'vm.deleteImpact': 'La VM viene eliminata da Hyper-V: configurazione, checkpoint e stato salvato vengono rimossi e non potrà più essere avviata. L’operazione non è reversibile.',
   'vm.deleteDisksKept': 'I file dei dischi virtuali (VHD/VHDX, compresi i dischi differenziali dei checkpoint) NON vengono eliminati: rimuovili manualmente se non servono più.',
   'vm.forget': 'Rimuovi dal portale',
-  'vm.editTitle': 'Modifica VM {name}',
+  'vm.notesTitle': 'Note di {name}',
+  'vm.notesHint': 'Salvate in Hyper-V (campo Note della VM): visibili anche in Hyper-V Manager.',
+  'menu.editNotes': 'Modifica note…',
   'vm.load': 'Carico {p}%',
   'vm.startup': 'All’avvio',
   'vm.configuration': 'Configurazione',
@@ -731,7 +740,7 @@ const itBase: Record<keyof typeof enBase, string> = {
   'state.Unknown': 'Sconosciuto',
 };
 
-const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide };
+const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide, ...itLimits };
 
 export type Lang = 'it' | 'en';
 const dictionaries: Record<Lang, Record<Key, string>> = { en, it };

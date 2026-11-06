@@ -29,7 +29,7 @@ npx vite build
 node web\e2e\ui-smoke.mjs --url https://localhost:28443 --data <gw-data> --agent-data <agent-data> --agent-exe <HvPortal.Agent.exe> --agent-port 28444 --out <screenshots>
 
 # Docker (gateway only; the agent stays a Windows service)
-docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.4.0 .      # compose + .env example in docker/
+docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.5.0 .      # compose + .env example in docker/
 
 # Packaging / release
 .\installer\New-AgentPackage.ps1 -OutputDirectory artifacts\packages   # zip served by the gateway (/api/v1/downloads)
@@ -45,6 +45,10 @@ dotnet ef migrations add <Name> --project src/HvPortal.Gateway --output-dir Data
 Practical notes:
 - A running dev gateway locks `src\HvPortal.Gateway\bin\Debug`; build/test into another folder with
   `--artifacts-path <dir>` (and `--configuration Release` for `dotnet ef`).
+- The antivirus of the dev machine refuses executables started from `%TEMP%` ("Access is denied"): for the browser e2e
+  start the gateway with `dotnet <artifacts>\bin\HvPortal.Gateway\debug\HvPortal.Gateway.dll` (working directory
+  `src\HvPortal.Gateway`, same `Gateway__*` variables as `Start-DevGateway.ps1`) and build the agent into the repository
+  (`dotnet build src\HvPortal.Agent -o artifacts\e2e\agent`); the e2e `--files-dir` must not be under `C:\Users`.
 - The dev machine has no Hyper-V rights: the agent truthfully reports `AccessDenied`. Anything that needs real
   Hyper-V (VM creation, config changes, console frames) is tested via the test double `FakeAgentDispatcher`
   (test project only) and listed in `docs/verification/real-host-test-plan.md`. Never present it as validated.
@@ -70,14 +74,16 @@ Three .NET projects plus the SPA:
   script `Ops/HvPortal.Ops.ps1` run in Windows PowerShell 5.1 with a JSON request on stdin
   (`PowerShellOperationRunner`, ADR-012). `BrowseFolders` runs in-process (`HostFolderBrowser`).
 - **`web/`** — SPA served by the gateway (`Hosting/SpaShell` injects a per-response CSP style nonce into index.html).
-  `main.tsx`: Gate → InventoryProvider → OperationsProvider → routes. `OperationsProvider` owns all action menus
+  `main.tsx`: Gate → InventoryProvider → OperationsProvider → routes. `shell/AppShell` has no sidebar: `shell/Navigator`
+  (left panel of every page) shows the main navigation as icons and a tree that follows the route (inventory tree, or a
+  page tree whose nodes are links with URL parameters such as `/networks?host=`, `/jobs?status=`). `OperationsProvider` owns all action menus
   (`vmActions`/`hostActions`/`groupActions`) and dialogs, reused by tree, tables and pages. Inventory is the single
-  entry point (tree: Hosts / Groups / All VMs). i18n: `i18n.tsx` + `i18n-ops.ts` + `i18n-guide.ts` (IT and EN, same keys).
+  entry point (tree: Hosts / Groups / All VMs). i18n: `i18n.tsx` + `i18n-ops.ts` + `i18n-guide.ts` + `i18n-limits.ts` (IT and EN, same keys).
 
 Key cross-cutting flows:
 - **Commands are typed and closed.** There is no "run script/WQL/path" command anywhere; adding a capability means a
   new `HvOperation` value + argument record + validation in Contracts + a branch in the script/agent + gateway endpoint.
-- **Protocol versioning.** `AgentProtocol.Version` (currently 6) is announced in `AgentHello`.
+- **Protocol versioning.** `AgentProtocol.Version` (currently 7) is announced in `AgentHello`.
   `AgentProtocol.RequiredVersion(command)` is checked in `AgentConnectionManager.SendAsync` (and mirrored in
   `FakeAgentDispatcher`): never send a command an older agent cannot parse or would silently misinterpret. Bump it
   when adding enum values or semantics-changing fields. Product version is in `Directory.Build.props` (+ `web/package.json`).
@@ -87,6 +93,11 @@ Key cross-cutting flows:
 - **RBAC**: scopes Global/Host/Group/VM, default deny, explicit deny wins; logical groups are nested folders whose
   assignments apply to sub-groups (ADR-015). Membership/tree moves go through `GroupTree.CheckAccessChangeAsync`
   (anti-escalation). Portal groups are mirrored to native Hyper-V VM groups by `VmGroups/VmGroupSyncService` (ADR-017); only native groups linked in `HostVmGroupLinks` are ever touched.
+- **Limits of VM groups** (ADR-024, `Quotas/GroupPolicyService`): a group may carry quotas and lists of hosts, networks
+  and storage paths (`LogicalGroups.PolicyJson`). `vm.create`, `network.manage` and `host.files.*` held on a group work
+  only where those limits allow (`HoldsViaGroupAsync`); every creation/resize is checked at request time **and** in
+  `JobRunner.ApplyFolderLimitsAsync`, which also re-stamps the VM location and the new-disk folder. Any new operation
+  that creates or grows something inside a group must go through this service.
 - **Security middleware order** (`Program.cs`): routing → WebSockets → cross-site protection (Origin + antiforgery;
   WebSocket handshakes incl. HTTP/2 CONNECT skip antiforgery) → authorization. Console: one-time ticket sent as the
   first WebSocket message (`VmConsole/`).

@@ -34,6 +34,12 @@ public enum HvOperation
     WriteFileChunk,
     WriteFileCommit,
     WriteFileAbort,
+    /// <summary>Protocol 7. Physical network adapters of the host and the virtual switch bound to each (for external switches).</summary>
+    ListNetAdapters,
+    /// <summary>Protocol 7. Create a virtual switch (NewSwitchRequest).</summary>
+    NewSwitch,
+    /// <summary>Protocol 7. Remove a virtual switch by id; refused while VM adapters are connected to it (SwitchRef).</summary>
+    RemoveSwitch,
 }
 
 public static class HvOperations
@@ -48,7 +54,11 @@ public sealed record VmRef(Guid VmId);
 
 public sealed record NetworkAdapterChange(string AdapterId, string? SwitchName, int? VlanId);
 
-public sealed record NewDiskSpec(int SizeGb, bool Fixed);
+/// <summary>
+/// Folder (protocol 7): where the new VHDX is created. Null = host default virtual disk folder. Set by the gateway only
+/// (storage limits of a VM folder, ADR-024); the agent validates it like a VM location (no system folders, no links).
+/// </summary>
+public sealed record NewDiskSpec(int SizeGb, bool Fixed, string? Folder = null);
 
 public sealed record ExpandDiskSpec(string Path, int NewSizeGb);
 
@@ -163,6 +173,29 @@ public sealed record FolderListing
 }
 
 public sealed record CheckpointRequest(Guid VmId, string? Name, string? CheckpointId, bool IncludeChildren);
+
+/// <summary>Hyper-V virtual switch types (New-VMSwitch).</summary>
+public static class SwitchTypes
+{
+    /// <summary>Bound to a physical network adapter: VMs reach the physical network.</summary>
+    public const string External = "External";
+    /// <summary>VMs and the host only.</summary>
+    public const string Internal = "Internal";
+    /// <summary>VMs only.</summary>
+    public const string Private = "Private";
+    public static readonly string[] All = [External, Internal, Private];
+}
+
+/// <summary>
+/// NetAdapterName (External only) = name of a physical adapter as returned by ListNetAdapters. AllowManagementOs
+/// (External only): the host keeps using the adapter through a virtual adapter on the switch.
+/// </summary>
+public sealed record NewSwitchRequest(string Name, string Type, string? NetAdapterName, bool AllowManagementOs, string? Notes);
+
+/// <summary>A switch identified by its id (names are not unique in Hyper-V); Name is used for messages only.</summary>
+public sealed record SwitchRef(string SwitchId, string? Name);
+
+public sealed record NetAdapterEntry(string Name, string? Description, string? Status, string? LinkSpeed, string? MacAddress, string? SwitchName);
 
 /// <summary>Hyper-V VM group types (New-VMGroup -GroupType).</summary>
 public static class VmGroupTypes

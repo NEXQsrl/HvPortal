@@ -727,7 +727,7 @@ public sealed class WmiHyperVHost : IHyperVHost
         }
 
         using (var s = new ManagementObjectSearcher(scope, new ObjectQuery(
-                   "SELECT InstanceID, VirtualQuantity, DynamicMemoryEnabled FROM Msvm_MemorySettingData"), Enumeration()))
+                   "SELECT InstanceID, VirtualQuantity, DynamicMemoryEnabled, Limit FROM Msvm_MemorySettingData"), Enumeration()))
         using (var r = s.Get())
         {
             foreach (ManagementBaseObject o in r)
@@ -740,6 +740,7 @@ public sealed class WmiHyperVHost : IHyperVHost
                         {
                             MemoryStartupMb = o["VirtualQuantity"] is ulong mb ? (long)mb : vm.MemoryStartupMb,
                             DynamicMemoryEnabled = o["DynamicMemoryEnabled"] as bool?,
+                            MemoryMaximumMb = o["Limit"] is ulong limit && limit <= long.MaxValue ? (long)limit : vm.MemoryMaximumMb,
                         };
                     }
                 }

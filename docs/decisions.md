@@ -98,6 +98,77 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-025 Virtual switches, checkpoint apply on a running VM, VM notes (agent protocol 7)
+- **Virtual switches**: three typed operations — `ListNetAdapters` (physical adapters and the switch bound to each),
+  `NewSwitch` (`NewSwitchRequest`: name, External/Internal/Private, physical adapter and "share with the host" for
+  external) and `RemoveSwitch` (by id, refused by the agent while VM adapters are connected). They are jobs on the host
+  (`host.network`, serialized with VM creations) and need the new permission `network.manage` (host scope: any type;
+  group scope: private networks only, ADR-024). Names of new switches are restricted (letters, digits, space . _ ( ) -)
+  and must be unique on the host, because VMs are connected by switch name. Creating or removing an external switch on
+  the adapter the agent uses drops its channel for a few seconds: such jobs are reconciled from the host (the switch
+  exists / is gone), never reported as success blindly.
+- **Apply checkpoint on a running VM**: the agent turns the VM off (`Stop-VM -TurnOff`) and then restores the
+  checkpoint; the job result reports the state after the restore. The current state is discarded by an apply anyway,
+  and the typed VM name is still required. Agents before protocol 7 keep the old rule (VM off or saved).
+- **VM notes instead of a portal description**: the portal-only description of a VM is removed; the Hyper-V notes
+  (already synchronized from the host) are the VM's description everywhere (tables, search, tree filter). Editing them
+  is a configuration job that needs `inventory.annotate` (not `vm.config.compute`), so VM operators keep annotating.
+  The migration keeps every existing description as an entry of the VM history (`vm.description.removed`).
+- **Other protocol 7 changes**: `NewDiskSpec.Folder` (set by the gateway only, ADR-024) and
+  `VmSummary.MemoryMaximumMb`. `RequiredVersion` returns 7 for the switch operations and for a new disk with a folder
+  (an older agent would create the disk in the host default folder).
+- **Not validated on real hosts**: real-host test plan V38–V42.
+
+## ADR-024 Limits of VM groups: quotas, hosts, networks and storage ("folders as projects")
+- **Context**: a group (folder) is given to a team or customer with role assignments; they must be able to create
+  VMs and networks by themselves, but only within limits, like a project of a cloud provider.
+- **Decision**: a group can carry a `GroupPolicy` (`LogicalGroups.PolicyJson`):
+  - quotas on the totals of the group **and its subgroups**: VMs, vCPU, memory, virtual disk space, private networks;
+  - `hosts`: where users whose permissions come from the group may create VMs and networks;
+  - `networks`: the switches the group's VMs may use (null = any; empty = only the group's own private networks);
+  - `storage`: folders of a host that may contain the group's VMs and that group users may browse.
+  Every group above a VM applies: quotas of each ancestor must have room, lists are intersected.
+- **Group-scoped creation**: `vm.create`, `network.manage`, `host.files.read` and `host.files.write` can now be held
+  on a group. There they work only on the hosts listed by the group's limits (intersection along the chain) and, for
+  files, only inside the group's storage paths. The built-in role *Folder administrator* (`folder-admin`) bundles the
+  VM permissions with these four. A user who may create VMs in a group places them there without `groups.manage`: the
+  group's role assignments then apply to the new VM, which is the purpose of the group (the anti-escalation check of
+  ADR-015 still applies to everyone else).
+- **Enforcement** (`Quotas/GroupPolicyService`, used by the API and again by the job runner at execution):
+  - new VM: allowed network, location inside the storage paths (set by the gateway when none is chosen), quotas;
+    with a memory quota a dynamic-memory VM must state its maximum (it is what counts);
+  - configuration change: new network connections must be allowed; growth of vCPU, memory and disks must fit; a new
+    disk goes to `<VM folder>\Virtual Hard Disks` when storage is restricted (`NewDiskSpec.Folder`, never taken from
+    the client);
+  - private network: quota; it then belongs to the group (`GroupNetworks`) and only that group's users (or host
+    network administrators) may delete it;
+  - usage = VMs of the subtree from inventory (memory = startup, or the dynamic maximum when the agent reports it;
+    disk = sum of the virtual disk capacities read from the hosts with `ListHostDisks`, remembered per VM) **plus the
+    creations already queued** for the subtree. At execution only earlier requests count, so of two competing requests
+    the first keeps its place. Unknown disk usage (host unreachable and never read) refuses the operation.
+  - Quotas bind everybody, administrators included (they can raise them). Adding existing VMs to a group is not
+    blocked by quotas (it is an administrator action); the group then shows as over its limits and cannot grow.
+- **Who sets limits**: `groups.manage` **and** `hosts.manage` (the limits decide which host resources group users can
+  reach). Audited (`groups.policy.update`, before/after).
+- **Alternatives**: quotas per user or per role assignment — harder to reason about with nested groups; a separate
+  "tenant" object — duplicates the group tree; soft quotas (warning only) — not what a provider-style limit means.
+- **Consequences**: existing behaviour is unchanged for groups without limits. Group users see only the names of
+  the VMs they can read on a host (the creation wizard no longer lists every VM name to them). Limits are enforced by
+  the portal only: changes made directly in Hyper-V are not prevented, they show up as usage.
+
+## ADR-023 Automatic local copies of the database
+- **Context**: SQLite is a single file; a damaged file (disk fault, interrupted write on a non-journaled volume)
+  would lose users, roles, groups, hosts and audit unless a sealed backup (ADR-020) had been downloaded recently.
+- **Decision**: `Backup/DatabaseBackupService` copies the database with the SQLite online backup API once a day
+  (`Gateway:Database:AutoBackupIntervalHours`, default 24) into `<data>\db\backups\hvportal-auto-<UTC>.db`, runs
+  `PRAGMA integrity_check` on the copy and keeps it only when the result is `ok`; copies older than 7 days
+  (`AutoBackupRetentionDays`) are removed, but only after a newer verified copy exists and never the newest one.
+  A failed copy is reported in Settings > Backup and in the log. Settings shows the copies and offers "Copy now"
+  (`settings.manage` + re-authentication, audited).
+- **Limits (stated in the UI)**: the copies are on the same disk and contain no keys (the key ring and CA are
+  elsewhere in the data directory): they protect against database corruption, not against the loss of the server.
+  Restoring one is a manual, offline step (stop the service, replace `hvportal.db`, remove `-wal`/`-shm`).
+
 ## ADR-022 Management agents: remote hosts reached with stored credentials (agent protocol 6)
 - **Context**: some Hyper-V hosts are in a workgroup and the administrators prefer not to install anything on them;
   a management server with the Windows administration tools is available. ADR-002 keeps host credentials off the

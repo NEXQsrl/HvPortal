@@ -49,7 +49,9 @@ export function VmCheckpoints({ vm }: { vm: Vm }) {
     return out;
   }, [data.data]);
   const hasChildren = (id: string) => (data.data?.checkpoints ?? []).some((c) => c.parentId === id);
-  const canApplyNow = vm.powerState === 'Off' || vm.powerState === 'Saved';
+  const vmOff = vm.powerState === 'Off' || vm.powerState === 'Saved';
+  // Agent 0.5.0+: a running VM is turned off by the agent, then the checkpoint is applied.
+  const canApplyNow = vmOff || !!data.data?.applyWhileRunning;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -61,6 +63,7 @@ export function VmCheckpoints({ vm }: { vm: Vm }) {
       </div>
       <div className="px-4 pt-3"><Notice kind="warn">{t('cp.notBackup')}</Notice></div>
       {!canApplyNow && data.data?.canApply && <div className="px-4 pt-2 text-xs text-muted-foreground">{t('cp.requiresOff')}</div>}
+      {canApplyNow && !vmOff && data.data?.canApply && rows.length > 0 && <div className="px-4 pt-2 text-xs text-muted-foreground">{t('cp.applyRunningHint')}</div>}
       <ErrorAlert error={data.error} className="mx-4" />
       {data.loading && !data.data ? <Loading /> : rows.length === 0 ? <Empty icon={<Camera className="size-6" />}>{t('cp.none')}</Empty> : (
         <Table containerClassName="mt-2 min-h-0 flex-1">
@@ -100,7 +103,7 @@ export function VmCheckpoints({ vm }: { vm: Vm }) {
       )}
       {creating && <CreateCheckpointDialog vm={vm} onQueued={queued} onClose={() => setCreating(false)} />}
       {applying && (
-        <ConfirmTypedDialog title={t('cp.applyTitle', { name: applying.name })} name={vm.name} impact={t('cp.applyImpact')} confirmLabel={t('cp.apply').replace('…', '')}
+        <ConfirmTypedDialog title={t('cp.applyTitle', { name: applying.name })} name={vm.name} impact={vmOff ? t('cp.applyImpact') : `${t('cp.applyImpact')} ${t('cp.applyRunningImpact')}`} confirmLabel={t('cp.apply').replace('…', '')}
           onClose={() => setApplying(null)}
           onConfirm={async (typed) => {
             const r = await post<Accepted>(`/api/v1/vms/${vm.id}/checkpoints/${applying.id}/apply`, { confirmName: typed, idempotencyKey: newIdempotencyKey() });

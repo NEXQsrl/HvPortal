@@ -1,7 +1,7 @@
-import { DatabaseBackup, Download, RotateCcw, Upload, X } from 'lucide-react';
+import { DatabaseBackup, Download, History, RotateCcw, Upload, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { del, get, post, rawRequest } from '@/api/client';
-import { ErrorAlert, KeyValue, Notice, Section } from '@/components/common';
+import { CopyButton, ErrorAlert, KeyValue, Notice, Section } from '@/components/common';
 import { Field, HelpTip } from '@/components/dialogs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -125,6 +125,61 @@ export function BackupSection() {
           </div>
         )}
       </div>
+    </Section>
+  );
+}
+
+interface AutoBackupStatus {
+  enabled: boolean; retentionDays: number; intervalHours: number; directory: string; lastAttemptAt: string | null; lastError: string | null;
+  files: { name: string; createdAt: string; sizeBytes: number }[];
+}
+
+/**
+ * Settings > Backup: automatic local copies of the database (verified, kept for a few days). They protect against a
+ * damaged database only; the sealed backup above remains the disaster-recovery copy.
+ */
+export function AutoBackupSection() {
+  const { t, fmtDate } = useI18n();
+  const status = useLoad(() => get<AutoBackupStatus>('/api/v1/settings/backup/auto'));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const s = status.data;
+  const runNow = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await post('/api/v1/settings/backup/auto/run');
+      toast.success(t('autobk.done'));
+      status.reload();
+    } catch (e) { setError(e); } finally { setBusy(false); }
+  };
+  return (
+    <Section title={<span className="flex items-center gap-2"><History className="size-4 text-muted-foreground" />{t('autobk.title')}<HelpTip>{t('autobk.help')}</HelpTip></span>}
+      actions={<Button size="sm" variant="outline" disabled={busy || !s} onClick={() => void runNow()}><DatabaseBackup />{t('autobk.runNow')}</Button>} bodyClassName="space-y-3 p-4">
+      <ErrorAlert error={error ?? status.error} />
+      {s && !s.enabled && <Notice kind="warn">{t('autobk.disabled')}</Notice>}
+      {s?.lastError && <Notice kind="danger" title={t('autobk.failed')}>{s.lastError}</Notice>}
+      {s && (
+        <>
+          <KeyValue items={[
+            [t('autobk.schedule'), t('autobk.scheduleValue', { hours: s.intervalHours, days: s.retentionDays })],
+            [t('autobk.folder'), <span key="d" className="flex items-center gap-1"><span className="font-mono text-xs [overflow-wrap:anywhere]">{s.directory}</span><CopyButton text={s.directory} /></span>],
+            [t('autobk.last'), s.files[0] ? fmtDate(s.files[0].createdAt) : t('common.never')],
+          ]} />
+          {s.files.length > 0 && (
+            <ul className="divide-y rounded-md border text-sm">
+              {s.files.map((f) => (
+                <li key={f.name} className="flex items-center gap-3 px-3 py-1.5">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{f.name}</span>
+                  <span className="text-xs whitespace-nowrap tabular text-muted-foreground">{fmtDate(f.createdAt)}</span>
+                  <span className="w-20 text-right text-xs tabular text-muted-foreground">{formatBytes(f.sizeBytes)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-muted-foreground">{t('autobk.restoreHint')}</p>
+        </>
+      )}
     </Section>
   );
 }

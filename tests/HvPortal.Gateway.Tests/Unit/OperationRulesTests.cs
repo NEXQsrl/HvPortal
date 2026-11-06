@@ -87,7 +87,10 @@ public sealed class OperationRulesTests
     public void Config_sections_map_to_permissions()
     {
         var vm = Guid.NewGuid();
-        Assert.Equal(new[] { Permissions.VmConfigCompute }, OperationPolicy.PermissionsFor(new VmConfigChange { VmId = vm, Notes = "x" }));
+        // The Hyper-V notes are the VM's annotation (the portal has no description of its own any more).
+        Assert.Equal(new[] { Permissions.InventoryAnnotate }, OperationPolicy.PermissionsFor(new VmConfigChange { VmId = vm, Notes = "x" }));
+        Assert.Equal(new[] { Permissions.InventoryAnnotate, Permissions.VmConfigCompute }, OperationPolicy.PermissionsFor(new VmConfigChange { VmId = vm, Notes = "x", ProcessorCount = 2 }));
+        Assert.Equal(new[] { Permissions.VmConfigCompute }, OperationPolicy.PermissionsFor(new VmConfigChange { VmId = vm, NewName = "renamed" }));
         Assert.Equal(new[] { Permissions.VmConfigStorage }, OperationPolicy.PermissionsFor(new VmConfigChange { VmId = vm, DvdIsoPath = "" }));
         Assert.Equal(new[] { Permissions.VmConfigNetwork }, OperationPolicy.PermissionsFor(new VmConfigChange { VmId = vm, AddNetworkAdapterSwitch = "" }));
         Assert.Equal(new[] { Permissions.VmConfigCompute, Permissions.VmConfigStorage, Permissions.VmConfigNetwork },

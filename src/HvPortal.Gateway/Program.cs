@@ -106,8 +106,11 @@ namespace HvPortal.Gateway
             builder.Services.AddSingleton<JobRunner>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<JobRunner>());
             builder.Services.AddHostedService<AgentSessionWatchdog>();
+            builder.Services.AddSingleton<HvPortal.Gateway.Backup.DatabaseBackupService>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<HvPortal.Gateway.Backup.DatabaseBackupService>());
 
             builder.Services.AddScoped<AccessEvaluator>();
+            builder.Services.AddScoped<HvPortal.Gateway.Quotas.GroupPolicyService>();
             builder.Services.AddScoped<LoginThrottleService>();
             builder.Services.AddScoped<SettingsStore>();
             builder.Services.AddScoped<SessionService>();
@@ -254,11 +257,13 @@ namespace HvPortal.Gateway
             InventoryManagementEndpoints.Map(app);
             ManagementAgentEndpoints.Map(app);
             GroupEndpoints.Map(app);
+            GroupPolicyEndpoints.Map(app);
             VmOperationsEndpoints.Map(app);
             ConsoleEndpoints.Map(app);
             HvPortal.Gateway.VmGroups.VmGroupEndpoints.Map(app);
             HostFileEndpoints.Map(app);
             HvPortal.Gateway.Backup.ConfigBackup.Map(app);
+            HvPortal.Gateway.Backup.DatabaseBackupService.Map(app);
             HvPortal.Gateway.Security.Entra.EntraEndpoints.Map(app);
 
             app.MapGet("/api/v1/system/info", async (HttpContext http, AccessEvaluator access, AgentConnectionManager agents, GatewayPaths paths) =>

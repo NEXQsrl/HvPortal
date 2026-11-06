@@ -17,8 +17,10 @@ public static class AgentProtocol
     /// 5 = v0.3.3: host file explorer (ListFolder, ReadFile, WriteFile*).
     /// 6 = v0.4.0: management agents (remote Hyper-V hosts reached with credentials): AgentCommand.TargetHostId,
     ///     TargetsConfiguration and TargetInventory messages, AgentRole in enrollment and Hello.
+    /// 7 = v0.5.0: virtual switches (ListNetAdapters, NewSwitch, RemoveSwitch), NewDiskSpec.Folder, RestoreCheckpoint
+    ///     turns off a running VM first, VmSummary.MemoryMaximumMb.
     /// </summary>
-    public const int Version = 6;
+    public const int Version = 7;
 
     /// <summary>
     /// Lowest agent protocol able to execute the command as intended. The gateway never sends a command to an older
@@ -33,6 +35,17 @@ public static class AgentProtocol
         if (command.Kind is not (AgentCommandKind.HyperVOperation or AgentCommandKind.ConsoleFrame or AgentCommandKind.ConsoleInput))
         {
             return 1;
+        }
+        if (command.Operation is HvOperation.ListNetAdapters or HvOperation.NewSwitch or HvOperation.RemoveSwitch)
+        {
+            return 7;
+        }
+        // An older agent would ignore the folder and create the disk in the host default folder (outside the allowed storage).
+        if (command.Operation is HvOperation.SetVmConfig && command.OperationArgs is { ValueKind: JsonValueKind.Object } cfg
+            && cfg.TryGetProperty("newDisk", out var nd) && nd.ValueKind == JsonValueKind.Object
+            && nd.TryGetProperty("folder", out var folder) && folder.ValueKind == JsonValueKind.String)
+        {
+            return 7;
         }
         if (command.Operation is HvOperation.ListFolder or HvOperation.ReadFile or HvOperation.WriteFileBegin or HvOperation.WriteFileChunk
             or HvOperation.WriteFileCommit or HvOperation.WriteFileAbort)

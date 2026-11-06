@@ -1,5 +1,22 @@
 # Testing
 
+## v0.5.0 — networks, group limits, user deletion, automatic database copies, navigator (2026-11-06, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 167 | pass — adds `FolderLimitsTests`: limits of a group need `groups.manage` + `hosts.manage` (group administrator, host-scoped admin and reader refused and audited, nothing changed) and are validated (ranges, unknown host, system folders, UNC); a *Folder administrator* creates VMs only in their group, only on the enabled host, network and storage (location set by the gateway), within VM / vCPU / memory / disk quotas, and is placed in the group without `groups.manage`; dynamic memory needs a maximum under a memory quota; configuration changes are limited too (vCPU, memory, new disk, network) and the new disk folder is decided by the gateway (a client-sent folder is ignored); queued creations reserve the quota, the limits are checked again when the job runs (`quota_exceeded`) and a host removed from the limits revokes a queued job; parent limits apply to subgroups and bind administrators; virtual switches need `network.manage` (reader refused, audited), group users get private networks only, within the quota, owned by the group and deletable only by them or by host administrators (typed name), external switch with adapter for host administrators, protocol 6 agents never receive the new operations; group users reach only the group's storage paths in the file explorer (list, download, upload refused and audited outside); user deletion (no `users.manage` refused, confirmation, not yourself, sessions and assignments removed, open session stops working); automatic database copy verified, pruned after 7 days, restricted to `settings.manage`; checkpoint apply on a running VM with a protocol 7 agent, refused with protocol 6. Existing tests updated: VM notes need `inventory.annotate` and are a configuration job; no portal description any more |
+| `tests/HvPortal.Agent.Tests` | 101 | pass — adds switch argument validation (names, types, adapter only for external), new-disk folder rules, protocol 7 requirements (switch operations, disk folder), script branches for the new operations, VM turned off before `Restore-VMSnapshot` |
+| `web`: `tsc -b`, `vitest` (IT/EN keys), `vite build` | — | pass |
+| `web/e2e/ui-smoke.mjs` (Edge headless, fresh gateway + real agent on this machine) | 65 | pass — adds: icon-only navigation above the tree on every page, new group dialog with advanced limits, limits and usage on the group page, user deleted from Users & roles, automatic database copy on demand listed in Settings, navigator trees of Networks and Tasks (status filter from the tree), guide pages reached from the tree; the earlier checks pass with the new layout (no CSP violations or page errors) |
+| PowerShell parser on `Ops\HvPortal.Ops.ps1` (5.1) | — | pass |
+| `installer/Build-Release.ps1 -SigningCertificateThumbprint <self-signed NEXQ S.r.l.>` (full, with tests) | 101 + 167 | pass — release 0.5.0, 12 files signed, agent package manifest `signed: true, selfSigned: true`; rebuilt once more with `-SkipTests` after two text-only changes of the web UI (`tsc` and `vitest` re-run on the final sources) |
+
+Not executed (need a host with Hyper-V access): creating and removing virtual switches, checkpoint apply on a running
+VM, the creation wizard inside a group, disk usage read from a real host, the new-disk folder: real-host test plan
+V38–V42. The e2e host has no Hyper-V rights, so "New network" is not offered there and the dialog is covered by type
+checks only. On this machine the antivirus blocks executables started from `%TEMP%` ("Access is denied"): the e2e
+gateway was started with `dotnet HvPortal.Gateway.dll` and the agent from `artifacts\e2e\agent`.
+
 ## v0.4.0 — management agents, icon-only copy buttons, disk expansion check (2026-11-06, development machine)
 
 | Suite | Count | Result |

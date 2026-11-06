@@ -40,6 +40,10 @@ public sealed class DatabaseOptions
     /// <summary>Sqlite (default). PostgreSql and SqlServer are Milestone 2.</summary>
     public string Provider { get; set; } = "Sqlite";
     public string? ConnectionString { get; set; }
+    /// <summary>Verified local copies of the SQLite database in dbackups (protection against corruption, ADR-023).</summary>
+    public bool AutoBackupEnabled { get; set; } = true;
+    public int AutoBackupRetentionDays { get; set; } = 7;
+    public int AutoBackupIntervalHours { get; set; } = 24;
 }
 
 public sealed class SecurityOptions

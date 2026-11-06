@@ -22,10 +22,10 @@ Ogni comando va eseguito in **PowerShell come amministratore**.
 
 ## Passo 1 — Installare il gateway (sul server del gateway)
 
-1. Copia la cartella della release (`artifacts\release\0.4.0`) sul server, ad esempio in `C:\HvPortal\0.4.0`.
+1. Copia la cartella della release (`artifacts\release\0.5.0`) sul server, ad esempio in `C:\HvPortal\0.5.0`.
 2. Sblocca i file e rendi attendibile il certificato di firma NEXQ:
    ```powershell
-   cd C:\HvPortal\0.4.0
+   cd C:\HvPortal\0.5.0
    Get-ChildItem -Recurse | Unblock-File
    Import-Certificate -FilePath .\installer\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
    Import-Certificate -FilePath .\installer\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
@@ -33,7 +33,7 @@ Ogni comando va eseguito in **PowerShell come amministratore**.
 3. Installa il gateway. In `-PublicNames` metti **tutti** i nomi e IP con cui l'host raggiungerà il gateway: un host
    fuori dominio di solito non risolve i nomi del dominio, quindi includi l'IP.
    ```powershell
-   cd C:\HvPortal\0.4.0\installer
+   cd C:\HvPortal\0.5.0\installer
    .\Install-Gateway.ps1 -Source ..\gateway -PublicNames <GATEWAY>,gw01.contoso.local -OpenFirewall -AgentRemoteAddress <HOST-IP>
    ```
    `-AgentRemoteAddress` serve se l'host è in un'altra rete: per default il firewall accetta gli agent solo dalla stessa
@@ -145,7 +145,7 @@ Entro pochi secondi l'host risulta **online** nel portale, con **Accesso Hyper-V
    ```
 3. Rilancia l'installazione con **gli stessi parametri** di prima, più porta e certificato:
    ```powershell
-   cd C:\HvPortal\0.4.0\installer
+   cd C:\HvPortal\0.5.0\installer
    .\Install-Gateway.ps1 -Source ..\gateway -PublicNames <GATEWAY>,gw01.contoso.local -OpenFirewall -AgentRemoteAddress <HOST-IP> `
        -UiPort 443 -UiCertificateThumbprint $cert.Thumbprint
    ```

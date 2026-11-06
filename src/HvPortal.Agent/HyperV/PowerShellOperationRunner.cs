@@ -201,13 +201,30 @@ public sealed class PowerShellOperationRunner
                 case HvOperation.ListSwitches:
                 case HvOperation.ListHostDisks:
                 case HvOperation.ListVmGroups:
+                case HvOperation.ListNetAdapters:
                     return null;
+                case HvOperation.NewSwitch:
+                    return HvOperations.FromElement<NewSwitchRequest>(args) is { } ns ? OperationValidation.Validate(ns) : "invalid_arguments";
+                case HvOperation.RemoveSwitch:
+                    return HvOperations.FromElement<SwitchRef>(args) is { } rs ? OperationValidation.Validate(rs) : "invalid_arguments";
                 case HvOperation.SyncVmGroups:
                     return HvOperations.FromElement<VmGroupSyncRequest>(args) is { } sync ? OperationValidation.Validate(sync) : "invalid_arguments";
                 case HvOperation.GetVmConfig:
                     return HvOperations.FromElement<VmRef>(args) is { VmId: var id } && id != Guid.Empty ? null : "invalid_vm";
                 case HvOperation.SetVmConfig:
-                    return HvOperations.FromElement<VmConfigChange>(args) is { } c ? OperationValidation.Validate(c) : "invalid_arguments";
+                    if (HvOperations.FromElement<VmConfigChange>(args) is not { } c)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(c) is { } invalidChange)
+                    {
+                        return invalidChange;
+                    }
+                    if (c.NewDisk?.Folder is { } diskFolder)
+                    {
+                        HostFolderBrowser.CheckFolder(diskFolder, mustExist: false, files);
+                    }
+                    return null;
                 case HvOperation.NewVm:
                     if (HvOperations.FromElement<NewVmRequest>(args) is not { } n)
                     {

@@ -35,6 +35,7 @@ public static class AdminEndpoints
         users.MapPost("/{id:guid}/enable", (Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access, SessionService s) => SetEnabledAsync(id, true, http, db, access, s));
         users.MapPost("/{id:guid}/reset-password", ResetPasswordAsync);
         users.MapPost("/{id:guid}/reset-mfa", ResetMfaAsync);
+        users.MapPost("/{id:guid}/delete", DeleteUserAsync);
 
         var roles = app.MapGroup("/api/v1").WithTags("Roles");
         roles.MapGet("/permissions", () => Results.Ok(Permissions.All.Select(p => new
@@ -284,6 +285,51 @@ public static class AdminEndpoints
         await db.SaveChangesAsync(http.RequestAborted);
         await sessions.RevokeAllAsync(id, "mfa reset by administrator", null, http.RequestAborted);
         await http.WriteAuditAsync("users.reset_mfa", resourceType: "user", resourceId: id.ToString("D"));
+        return Results.NoContent();
+    }
+
+    public sealed record DeleteUserRequest(string? ConfirmName);
+
+    /// <summary>
+    /// Permanently removes a user: sessions, MFA secrets, recovery codes, pending tokens and every role assignment.
+    /// The audit log keeps the actor id and name of past actions; queued jobs of the user fail at execution
+    /// (authorization_revoked). Not allowed on yourself, on a more privileged user or on the last platform administrator.
+    /// </summary>
+    private static async Task<IResult> DeleteUserAsync(Guid id, DeleteUserRequest req, HttpContext http, PortalDbContext db, AccessEvaluator access)
+    {
+        if (await GuardTargetAsync(http, access, id, "users.delete") is { } denied)
+        {
+            return denied;
+        }
+        var ct = http.RequestAborted;
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null)
+        {
+            return ApiSupport.NotFound();
+        }
+        if (!string.Equals(req.ConfirmName, user.UserName, StringComparison.Ordinal))
+        {
+            return ApiSupport.BadRequest("confirmation_required", "Type the user name exactly to confirm.");
+        }
+        if (user.IsEnabled && await IsLastPlatformAdminAsync(db, id, null, ct))
+        {
+            return ApiSupport.Conflict("last_platform_admin");
+        }
+        var principal = id.ToString("D");
+        var roles = await db.RoleAssignments.AsNoTracking().Where(a => a.PrincipalType == "user" && a.PrincipalId == principal)
+            .Select(a => new { role = a.Role!.Name, scopeType = a.ScopeType.ToString(), a.ScopeId, effect = a.Effect.ToString() }).ToListAsync(ct);
+        await using (var tx = await db.Database.BeginTransactionAsync(ct))
+        {
+            await db.Sessions.Where(s => s.UserId == id).ExecuteDeleteAsync(ct);
+            await db.RecoveryCodes.Where(r => r.UserId == id).ExecuteDeleteAsync(ct);
+            await db.MfaChallenges.Where(m => m.UserId == id).ExecuteDeleteAsync(ct);
+            await db.OneTimeTokens.Where(t => t.UserId == id).ExecuteDeleteAsync(ct);
+            await db.RoleAssignments.Where(a => a.PrincipalType == "user" && a.PrincipalId == principal).ExecuteDeleteAsync(ct);
+            await db.Users.Where(u => u.Id == id).ExecuteDeleteAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+        await http.WriteAuditAsync("users.delete", resourceType: "user", resourceId: principal,
+            details: new { user.UserName, user.AuthSource, user.IsBreakGlass, assignmentsRemoved = roles });
         return Results.NoContent();
     }
 

@@ -23,9 +23,14 @@ let uploadSeq = 0;
  * (button or drag and drop) with progress. System, hidden and linked folders are never listed nor accepted; files
  * open for writing (running VM disks) cannot be downloaded. Everything is audited by the gateway.
  */
-export function HostFileExplorer({ host }: { host: Host }) {
+/**
+ * With <paramref name="groupId"/> the explorer works in the scope of a VM group: it starts from the storage folders of
+ * the group on the host and cannot leave them (the server enforces it).
+ */
+export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host, 'id'>; groupId?: string; readOnly?: boolean }) {
   const { t, fmtDate } = useI18n();
-  const [path, setPath] = useLocalStorage<string | null>(`hvp.files.${host.id}`, null);
+  const scope = groupId ? `&groupId=${groupId}` : '';
+  const [path, setPath] = useLocalStorage<string | null>(`hvp.files.${host.id}${groupId ? '.' + groupId : ''}`, null);
   const [data, setData] = useState<FolderListing | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
@@ -39,25 +44,25 @@ export function HostFileExplorer({ host }: { host: Host }) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    get<FolderListing>(`/api/v1/hosts/${host.id}/files${path ? `?path=${encodeURIComponent(path)}` : ''}`)
+    get<FolderListing>(`/api/v1/hosts/${host.id}/files?${path ? `path=${encodeURIComponent(path)}` : ''}${scope}`)
       .then((r) => { if (!cancelled) setData(r); })
       .catch((e) => {
         if (cancelled) return;
-        if (path && e instanceof ApiError && (e.code === 'not_found' || e.code === 'location_not_allowed')) { setPath(null); return; }
+        if (path && e instanceof ApiError && (e.code === 'not_found' || e.code === 'location_not_allowed' || e.code === 'storage_not_allowed')) { setPath(null); return; }
         setError(e);
         setData(null);
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [host.id, path, tick]);
+  }, [host.id, path, tick, groupId]);
 
   const update = (id: number, p: Partial<UploadItem>) => setUploads((list) => list.map((u) => (u.id === id ? { ...u, ...p } : u)));
 
   const start = (file: File, folder: string, overwrite = false) => {
     const id = ++uploadSeq;
     const q = new URLSearchParams({ folder, name: file.name, overwrite: String(overwrite) });
-    const job = uploadFile<{ path: string; sha256: string }>(`/api/v1/hosts/${host.id}/files/upload?${q}`, file, (loaded) => update(id, { loaded }));
+    const job = uploadFile<{ path: string; sha256: string }>(`/api/v1/hosts/${host.id}/files/upload?${q}${scope}`, file, (loaded) => update(id, { loaded }));
     setUploads((list) => [...list, { id, file, folder, loaded: 0, status: 'running', abort: job.abort }]);
     job.promise.then((r) => {
       update(id, { status: 'done', loaded: file.size });
@@ -82,7 +87,7 @@ export function HostFileExplorer({ host }: { host: Host }) {
   };
 
   const crumbs = path ? path.replace(/\\$/, '').split('\\').map((seg, i, all) => ({ name: i === 0 ? seg + '\\' : seg, path: i === 0 ? seg + '\\' : all.slice(0, i + 1).join('\\') })) : [];
-  const canUpload = !!data?.path;
+  const canUpload = !!data?.path && !readOnly;
 
   return (
     <div className="flex min-h-0 flex-col rounded-lg border bg-card">
@@ -109,6 +114,13 @@ export function HostFileExplorer({ host }: { host: Host }) {
         <div className="p-2"><ErrorAlert error={error} /></div>
         {data && !path && (
           <div className="grid gap-2 p-2 sm:grid-cols-2 xl:grid-cols-3">
+            {/* Group scope: the starting points are the storage folders of the group. */}
+            {groupId && data.folders.map((f) => (
+              <button key={f.path} type="button" onClick={() => setPath(f.path)} className="flex items-center gap-3 rounded-lg border bg-background p-3 text-left hover:border-primary/50 hover:bg-accent">
+                <Folder className="size-5 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate font-mono text-xs">{f.path}</span>
+              </button>
+            ))}
             {data.drives.map((d) => (
               <button key={d.path} type="button" onClick={() => setPath(d.path)} className="flex items-start gap-3 rounded-lg border bg-background p-3 text-left hover:border-primary/50 hover:bg-accent">
                 <HardDrive className="mt-0.5 size-5 text-muted-foreground" />
@@ -147,7 +159,7 @@ export function HostFileExplorer({ host }: { host: Host }) {
                   <TableCell className="hidden text-xs whitespace-nowrap tabular md:table-cell">{fmtDate(f.modifiedUtc)}</TableCell>
                   <TableCell className="text-right">
                     <Button asChild size="icon-sm" variant="ghost" aria-label={t('files.downloadName', { name: f.name })} title={t('files.download')}>
-                      <a href={`/api/v1/hosts/${host.id}/files/download?path=${encodeURIComponent(f.path)}`} download={f.name}><Download /></a>
+                      <a href={`/api/v1/hosts/${host.id}/files/download?path=${encodeURIComponent(f.path)}${scope}`} download={f.name}><Download /></a>
                     </Button>
                   </TableCell>
                 </TableRow>

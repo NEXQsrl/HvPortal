@@ -120,7 +120,6 @@ export function VmPage() {
               [t('vm.groups'), groups.length === 0 ? <span className="text-muted-foreground">{t('vm.noGroups')}</span>
                 : <div className="flex flex-wrap gap-1">{groups.map((g) => <Link key={g.id} to={`/groups/${g.id}`}><StatusBadge tone="muted"><GroupIcon className="size-3" />{g.name}</StatusBadge></Link>)}</div>],
               ['Hyper-V ID', <span key="i" className="font-mono text-xs">{vm.hyperVId}</span>],
-              [t('common.description'), vm.description ?? <span className="text-muted-foreground">—</span>],
             ]} />
           </Section>
         </div>

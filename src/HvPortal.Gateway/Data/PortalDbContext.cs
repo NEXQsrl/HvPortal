@@ -17,6 +17,7 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
     public DbSet<RoleAssignment> RoleAssignments => Set<RoleAssignment>();
     public DbSet<LogicalGroup> LogicalGroups => Set<LogicalGroup>();
     public DbSet<LogicalGroupMember> LogicalGroupMembers => Set<LogicalGroupMember>();
+    public DbSet<GroupNetwork> GroupNetworks => Set<GroupNetwork>();
     public DbSet<HostVmGroupLink> HostVmGroupLinks => Set<HostVmGroupLink>();
     public DbSet<ManagedHost> Hosts => Set<ManagedHost>();
     public DbSet<ManagementAgent> ManagementAgents => Set<ManagementAgent>();
@@ -102,6 +103,13 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
         {
             e.HasIndex(x => new { x.ParentId, x.Name }).IsUnique();
             e.Property(x => x.Description).HasMaxLength(1000);
+            e.Property(x => x.PolicyJson).HasMaxLength(32000);
+        });
+        m.Entity<GroupNetwork>(e =>
+        {
+            e.HasIndex(x => new { x.HostId, x.SwitchName }).IsUnique();
+            e.HasIndex(x => x.GroupId);
+            e.Property(x => x.SwitchName).HasMaxLength(100);
         });
         m.Entity<LogicalGroupMember>(e =>
         {
@@ -148,7 +156,6 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.Property(x => x.ConfigurationPath).HasMaxLength(520);
             e.HasIndex(x => new { x.HostId, x.HyperVId }).IsUnique();
             e.Property(x => x.DetailsJson).HasMaxLength(64000);
-            e.Property(x => x.Description).HasMaxLength(1000);
             e.HasIndex(x => x.Name);
         });
         m.Entity<InventoryEvent>().HasIndex(x => new { x.HostId, x.At });

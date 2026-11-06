@@ -38,6 +38,29 @@ export exists.
 Passphrase ≥ 20 characters (or `HVP_EXPORT_PASSPHRASE`). Store the file and the passphrase separately, offline,
 following a two-person procedure. The export contains every key ever created plus `pki\ca.bin` and `pki\server.bin`.
 
+## Automatic database copies (ADR-023)
+
+The gateway copies its database by itself: once a day, verified with `PRAGMA integrity_check`, kept for 7 days in
+`<data>\db\backups\hvportal-auto-<UTC date>-<time>.db` (Settings > Backup and restore shows them and offers
+*Copy now*). Configuration: `Gateway:Database:AutoBackupEnabled` (default true), `AutoBackupIntervalHours` (24),
+`AutoBackupRetentionDays` (7). In the Windows service use the environment variables
+`Gateway__Database__AutoBackupRetentionDays`, etc.
+
+These copies protect against a **damaged database file** only: they are on the same disk and do not contain the key
+ring. For the loss of the server keep downloading the sealed backup (above) and store it elsewhere.
+
+Going back to a copy (database damaged, gateway not starting or reporting database errors):
+```powershell
+Stop-Service HvPortalGateway
+cd C:\ProgramData\HvPortal\Gateway\db
+Rename-Item hvportal.db hvportal.db.damaged
+Remove-Item hvportal.db-wal, hvportal.db-shm -ErrorAction SilentlyContinue
+Copy-Item .\backups\hvportal-auto-<date>-<time>.db .\hvportal.db
+Start-Service HvPortalGateway
+```
+Everything changed in the portal after that copy is lost (users, roles, groups, jobs, audit entries); the inventory is
+rebuilt by the agents at their next report. The copy must come from the same gateway (same key ring).
+
 ## Database backup
 
 Consistent copy (recommended): stop the service, copy `db\*`, start the service.

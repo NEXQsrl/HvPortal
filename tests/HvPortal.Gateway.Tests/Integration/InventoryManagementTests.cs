@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using HvPortal.Contracts.HyperV;
 using HvPortal.Gateway.Authorization;
 using HvPortal.Gateway.Data;
+using HvPortal.Gateway.Jobs;
 using HvPortal.Gateway.Security;
 using HvPortal.Gateway.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
@@ -53,19 +54,26 @@ public sealed class InventoryManagementTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Vm_description_requires_annotate_permission_on_that_vm()
+    public async Task Vm_notes_are_written_to_hyper_v_and_require_annotate_permission_on_that_vm()
     {
         var (_, vms) = await _app.CreateHostAsync("ann-host", ("a", VmPowerState.Off), ("b", VmPowerState.Off));
         await _app.CreateUserAsync("op-ann", BuiltInRoles.VmOperator, ScopeType.Vm, vms["a"].ToString("D"));
         await _app.CreateUserAsync("ro-ann", BuiltInRoles.ReadOnly);
         var op = _app.CreateBrowser();
         await op.LoginAsync("op-ann");
-        Assert.Equal(HttpStatusCode.NoContent, (await PatchAsync(op, $"/api/v1/vms/{vms["a"]}", new { description = "web front-end" })).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await PatchAsync(op, $"/api/v1/vms/{vms["b"]}", new { description = "x" })).StatusCode);
+        // The VM has no portal description any more: the notes are a configuration change of the VM (job on the host).
+        var accepted = await PatchAsync(op, $"/api/v1/vms/{vms["a"]}/config", new { notes = "web front-end" });
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await PatchAsync(op, $"/api/v1/vms/{vms["b"]}/config", new { notes = "x" })).StatusCode);
+        // A VM operator annotates but does not reconfigure: notes together with a CPU change are refused.
+        Assert.Equal(HttpStatusCode.Forbidden, (await PatchAsync(op, $"/api/v1/vms/{vms["a"]}/config", new { notes = "y", processorCount = 8 })).StatusCode);
         var ro = _app.CreateBrowser();
         await ro.LoginAsync("ro-ann");
-        Assert.Equal(HttpStatusCode.Forbidden, (await PatchAsync(ro, $"/api/v1/vms/{vms["a"]}", new { description = "x" })).StatusCode);
-        Assert.Equal("web front-end", await _app.WithDbAsync(db => db.VirtualMachines.Where(v => v.Id == vms["a"]).Select(v => v.Description).FirstAsync()));
+        Assert.Equal(HttpStatusCode.Forbidden, (await PatchAsync(ro, $"/api/v1/vms/{vms["a"]}/config", new { notes = "x" })).StatusCode);
+        var jobId = (await accepted.JsonAsync()).GetProperty("jobId").GetGuid();
+        var job = await _app.WithDbAsync(db => db.Jobs.AsNoTracking().FirstAsync(j => j.Id == jobId));
+        Assert.Equal(JobService.ConfigJobType, job.Type);
+        Assert.Contains("web front-end", job.ParametersJson);
     }
 
     [Fact]

@@ -1,4 +1,4 @@
-import { Cpu, Disc3, HardDrive, MemoryStick, Network, Plus, Save, Settings2, ShieldCheck, Undo2, X } from 'lucide-react';
+import { Cpu, Disc3, HardDrive, MemoryStick, Network, Plus, Save, Settings2, ShieldCheck, StickyNote, Undo2, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, get } from '@/api/client';
 import type { Accepted, ConfigChange, ConfigResponse, VmConfig } from '@/api/ops-types';
@@ -183,7 +183,7 @@ export function VmSettings({ vm }: { vm: Vm }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
-        {!can.compute && !can.storage && !can.network && <Notice kind="info">{t('cfg.readOnly')}</Notice>}
+        {!can.compute && !can.storage && !can.network && !can.annotate && <Notice kind="info">{t('cfg.readOnly')}</Notice>}
         {!off && <Notice kind="warn">{t('cfg.requiresOffHelp')}</Notice>}
         <Block icon={<Settings2 className="size-4" />} title={t('cfg.general')} disabled={!can.compute}>
           <Field label={t('cfg.name')} htmlFor="cfg-name" error={nameInvalid ? t('wiz.nameInvalid') : undefined}>
@@ -208,7 +208,10 @@ export function VmSettings({ vm }: { vm: Vm }) {
               {options.stopActions.map((o) => <option key={o} value={o}>{t(('opt.stop.' + o) as TKey)}</option>)}
             </NativeSelect>
           </Field>
-          <Field label={t('cfg.notes')} htmlFor="cfg-notes" className="sm:col-span-2 xl:col-span-3">
+        </Block>
+
+        <Block icon={<StickyNote className="size-4" />} title={t('cfg.notes')} disabled={!can.annotate}>
+          <Field label={t('vm.notesHint')} htmlFor="cfg-notes" className="sm:col-span-2 xl:col-span-3" aside={`${draft.notes.length}/4000`}>
             <Textarea id="cfg-notes" rows={3} maxLength={4000} value={draft.notes} onChange={(e) => set({ notes: e.target.value })} />
           </Field>
         </Block>

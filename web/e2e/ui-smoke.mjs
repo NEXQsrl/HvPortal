@@ -69,6 +69,10 @@ try {
   await page.getByRole('heading', { name: 'Dashboard' }).waitFor();
   check('dashboard reachable after MFA', true);
   check('header, sidebar and recent tasks panel present', (await page.locator('header.topbar').count()) === 1 && (await page.locator('.tasks-panel').count()) === 1);
+  // Navigator (v0.5.0): the main navigation is a row of icons (labels as tooltips) above the tree, on every page.
+  const navIcons = page.locator('aside.sidebar nav.nav a');
+  check('navigator: icon-only navigation above the tree on the dashboard', (await navIcons.count()) >= 6
+    && (await navIcons.allInnerTexts()).every((x) => x.trim() === '') && (await page.locator('aside.sidebar [role=tree]').count()) === 1);
   await shot(page, '02-dashboard-empty');
 
   // Add a host -> enrollment dialog
@@ -145,8 +149,18 @@ try {
   // Groups (folders) in the tree
   await page.getByRole('button', { name: 'Nuovo gruppo' }).first().click();
   await page.locator('#group-name').fill('Produzione');
+  // Advanced mode: limits of the group (quotas, hosts, networks, storage), with "?" help.
+  await page.getByRole('dialog').getByText('Avanzate: limiti del gruppo').click();
+  await page.locator('#lim-maxVms').waitFor();
+  check('new group dialog has the advanced limits (quotas, hosts, networks, storage)', (await page.locator('#lim-maxProcessors').count()) === 1
+    && (await page.getByRole('dialog').getByText('Limita le reti').count()) === 1 && (await page.getByRole('dialog').getByText('Limita lo storage').count()) === 1);
+  await page.locator('#lim-maxVms').fill('5');
+  await page.locator('#lim-maxMemoryGb').fill('16');
+  await shot(page, '06a-new-group-advanced');
   await page.getByRole('dialog').getByRole('button', { name: 'Crea' }).click();
   await page.getByRole('heading', { name: 'Produzione' }).waitFor();
+  check('group page shows limits and usage (0 / 5 VMs, 0 / 16 GB)', await page.getByText('0 / 5', { exact: true }).waitFor({ timeout: 10000 }).then(() => true, () => false)
+    && (await page.getByText('0 / 16', { exact: true }).count()) === 1);
   check('group created from the tree and opened', (await page.getByRole('treeitem', { name: /Produzione/ }).count()) === 1);
   await page.getByRole('treeitem', { name: /Produzione/ }).click({ button: 'right' });
   check('group context menu offers subgroup and move', (await page.getByRole('menuitem', { name: /Nuovo sottogruppo/ }).count()) === 1 && (await page.getByRole('menuitem', { name: /Sposta in/ }).count()) === 1);
@@ -191,6 +205,18 @@ try {
   await page.getByText(/Al primo accesso l'utente imposta una nuova password e poi configura/).waitFor({ timeout: 15000 });
   check('user created with role and temporary password', (await page.locator('tr', { hasText: 'mario.rossi' }).count()) >= 2);
   await shot(page, '08b-user-created');
+  // Delete the user (typed confirmation): the user and the role assignment disappear.
+  await page.locator('tr', { hasText: 'mario.rossi' }).first().getByRole('button', { name: 'Elimina' }).click();
+  const delDlg = page.getByRole('dialog');
+  await delDlg.locator('#confirm-delete').fill('mario.rossi');
+  await delDlg.getByRole('button', { name: 'Elimina' }).click();
+  const reauthDel = page.getByRole('dialog', { name: 'Conferma la tua identità' });
+  if (await reauthDel.waitFor({ timeout: 2500 }).then(() => true, () => false)) {
+    await reauthDel.locator('#reauth-pw').fill(password);
+    await reauthDel.locator('#reauth-otp-0').fill(totp(secret));
+    await reauthDel.getByRole('button', { name: 'Conferma' }).click();
+  }
+  check('user deleted from Users & roles (row and assignment gone)', await page.locator('tr', { hasText: 'mario.rossi' }).first().waitFor({ state: 'detached', timeout: 15000 }).then(() => true, () => false));
   await page.getByRole('link', { name: 'Audit' }).click();
   check('audit is paginated', (await page.locator('.pager').count()) === 1);
   check('page itself does not scroll (only panels)', await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1));
@@ -241,6 +267,21 @@ try {
   await maybeReauth();
   check('restore preview shows the backup contents', await page.getByText(/\d+ utenti, 1 host, \d+ VM, \d+ gruppi/).waitFor({ timeout: 15000 }).then(() => true, () => false));
   await shot(page, '10c-backup-preview');
+  // Automatic database copies: "Copy now" writes a verified copy, listed with its date.
+  await page.getByRole('button', { name: 'Copia adesso' }).click();
+  await maybeReauth();
+  check('automatic database copy created on demand and listed', await page.getByText(/^hvportal-auto-\d{8}-\d{6}\.db$/).first().waitFor({ timeout: 20000 }).then(() => true, () => false)
+    && (await page.getByText(/ogni 24 ore, conservate per 7 giorni/).count()) === 1);
+  await shot(page, '10d-auto-backup');
+  // Networks: the navigator shows the hosts and their switches (creation needs a host with Hyper-V access).
+  await page.getByRole('link', { name: 'Reti', exact: true }).click();
+  await page.getByRole('heading', { name: 'Rete' }).waitFor();
+  check('networks page: navigator tree with "Tutte le reti" and the host', (await page.getByRole('treeitem', { name: 'Tutte le reti' }).count()) === 1
+    && (await page.getByRole('treeitem', { name: /hv-lab-01/ }).count()) === 1);
+  await shot(page, '10e-networks');
+  await page.getByRole('link', { name: 'Attività', exact: true }).click();
+  await page.getByRole('treeitem', { name: 'Non riuscita' }).click();
+  check('tasks page: status filter chosen from the navigator tree', await page.waitForURL(/\/jobs\?status=Failed/, { timeout: 5000 }).then(() => true, () => false));
 
   if (filesDir) {
     // Host file explorer (real agent, real file system of this machine).
@@ -287,10 +328,11 @@ try {
   check('update page: gateway section with rollback steps', (await page.locator('pre.command').filter({ hasText: 'Install-Gateway.ps1' }).count()) >= 2);
   check('update page: detects a gateway not running as a service', await page.getByText(/non è in esecuzione come servizio Windows/).waitFor({ timeout: 10000 }).then(() => true, () => false));
   await shot(page, '11b-guide-update');
-  await page.getByRole('navigation', { name: 'Pagine della guida' }).getByRole('link', { name: 'Collegare un host Hyper-V' }).click();
+  // The pages of the guide are listed in the navigator tree.
+  await page.getByRole('treeitem', { name: 'Collegare un host Hyper-V' }).click();
   await page.getByRole('heading', { name: 'Collegare un host Hyper-V' }).waitFor();
   await page.locator('pre.command').filter({ hasText: 'Test-NetConnection' }).waitFor();
-  await page.getByRole('navigation', { name: 'Pagine della guida' }).getByRole('link', { name: 'Risoluzione dei problemi' }).click();
+  await page.getByRole('treeitem', { name: 'Risoluzione dei problemi' }).click();
   await page.getByRole('heading', { name: 'Risoluzione dei problemi' }).first().waitFor();
   check('troubleshooting page with its sections', (await page.getByRole('heading', { level: 2 }).count()) >= 4);
   check('guide pages available in Italian', true);

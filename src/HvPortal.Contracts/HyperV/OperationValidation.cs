@@ -45,6 +45,32 @@ public static partial class OperationValidation
     public static bool IsValidCheckpointName(string? name) => name is not null && CheckpointNameRegex().IsMatch(name);
     public static bool IsValidVmGroupName(string? name) => name is not null && VmGroupNameRegex().IsMatch(name);
 
+    /// <summary>New switches: letters, digits, space . _ ( ) - (1-64). Existing switches may have other names (IsValidSwitchName).</summary>
+    [GeneratedRegex(@"^[\p{L}\p{N}][\p{L}\p{N} ._()\-]{0,63}$", RegexOptions.CultureInvariant)]
+    private static partial Regex NewSwitchNameRegex();
+
+    public static bool IsValidNewSwitchName(string? name) => name is not null && NewSwitchNameRegex().IsMatch(name) && name.Trim() == name;
+
+    public static string? Validate(NewSwitchRequest r)
+    {
+        if (!IsValidNewSwitchName(r.Name)) return "invalid_switch_name";
+        if (!SwitchTypes.All.Contains(r.Type)) return "invalid_switch_type";
+        if (r.Type == SwitchTypes.External)
+        {
+            if (r.NetAdapterName is not { Length: > 0 and <= 256 } || r.NetAdapterName.Any(char.IsControl)) return "invalid_net_adapter";
+        }
+        else if (r.NetAdapterName is not null || r.AllowManagementOs)
+        {
+            return "net_adapter_only_for_external";
+        }
+        if (r.Notes is { Length: > 1024 }) return "notes_too_long";
+        return null;
+    }
+
+    public static string? Validate(SwitchRef r) =>
+        !Guid.TryParse(r.SwitchId, out var id) || id == Guid.Empty ? "invalid_switch"
+        : r.Name is not null && !IsValidSwitchName(r.Name) ? "invalid_switch_name" : null;
+
     public static string? Validate(VmConfigChange c)
     {
         if (c.VmId == Guid.Empty) return "invalid_vm";
@@ -73,6 +99,7 @@ public static partial class OperationValidation
         }
         if (c.AddNetworkAdapterSwitch is { Length: > 0 } add && !IsValidSwitchName(add)) return "invalid_switch_name";
         if (c.NewDisk is { } nd && (nd.SizeGb < 1 || nd.SizeGb > MaxDiskGb)) return "invalid_disk_size";
+        if (c.NewDisk?.Folder is { } folder && HostPaths.ValidateLocation(folder) is { } badFolder) return badFolder;
         if (c.ExpandDisk is { } ed && (string.IsNullOrWhiteSpace(ed.Path) || ed.Path.Length > 1024 || ed.NewSizeGb < 1 || ed.NewSizeGb > MaxDiskGb)) return "invalid_disk_size";
         if (c.IsoRoots.Count > 16 || c.IsoRoots.Any(r => r.Length > 260)) return "invalid_iso_roots";
         return null;

@@ -109,6 +109,8 @@ public sealed record VmSummary
     public long? MemoryStartupMb { get; init; }
     public long? MemoryAssignedMb { get; init; }
     public bool? DynamicMemoryEnabled { get; init; }
+    /// <summary>Agent 0.5.0+. Msvm_MemorySettingData.Limit: the most memory the VM can get (dynamic memory); equals startup when static.</summary>
+    public long? MemoryMaximumMb { get; init; }
     public long? UptimeMs { get; init; }
     public ushort? Heartbeat { get; init; }
     public ushort? ProcessorLoadPercent { get; init; }

@@ -100,6 +100,7 @@ public sealed class InventoryIngestor
             vm.MemoryStartupMb = v.MemoryStartupMb;
             vm.MemoryAssignedMb = v.MemoryAssignedMb;
             vm.DynamicMemoryEnabled = v.DynamicMemoryEnabled;
+            vm.MemoryMaximumMb = v.MemoryMaximumMb ?? vm.MemoryMaximumMb;
             vm.UptimeMs = v.UptimeMs;
             vm.Heartbeat = v.Heartbeat;
             vm.HealthState = v.HealthState;

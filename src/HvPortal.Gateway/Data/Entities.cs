@@ -157,6 +157,23 @@ public sealed class LogicalGroup
     public required string Name { get; set; }
     public string? Description { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+    /// <summary>Limits of the folder (Quotas.GroupPolicy as JSON, ADR-024): quotas, hosts, networks and storage paths. Null = none.</summary>
+    public string? PolicyJson { get; set; }
+}
+
+/// <summary>
+/// A private virtual switch created on a host on behalf of a folder (within its network quota). Only the owning
+/// folder's users may delete it; it counts against the quota of the folder and of its ancestors.
+/// </summary>
+public sealed class GroupNetwork
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid GroupId { get; set; }
+    public Guid HostId { get; set; }
+    public required string SwitchName { get; set; }
+    public Guid? SwitchId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public Guid CreatedByUserId { get; set; }
 }
 
 public sealed class LogicalGroupMember
@@ -285,9 +302,9 @@ public sealed class VirtualMachine
     public Guid HostId { get; set; }
     public Guid HyperVId { get; set; }
     public required string Name { get; set; }
-    /// <summary>Portal-only free text (not written to Hyper-V).</summary>
-    public string? Description { get; set; }
     public int? CheckpointCount { get; set; }
+    /// <summary>Sum of the virtual disk capacities, from the last disk listing of the host (folder disk quotas). Null = never read.</summary>
+    public long? DiskProvisionedBytes { get; set; }
     /// <summary>Last on-demand details (disks, adapters, guest IPs) as JSON, with collection time.</summary>
     public string? DetailsJson { get; set; }
     public DateTimeOffset? DetailsCollectedAt { get; set; }
@@ -300,6 +317,8 @@ public sealed class VirtualMachine
     public long? MemoryStartupMb { get; set; }
     public long? MemoryAssignedMb { get; set; }
     public bool? DynamicMemoryEnabled { get; set; }
+    /// <summary>Agent 0.5.0+: the most memory the VM can get (dynamic memory maximum). Null with older agents.</summary>
+    public long? MemoryMaximumMb { get; set; }
     public long? UptimeMs { get; set; }
     public int? Heartbeat { get; set; }
     public int? HealthState { get; set; }

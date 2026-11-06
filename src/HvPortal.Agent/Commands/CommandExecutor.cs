@@ -38,7 +38,8 @@ public sealed class CommandExecutor
     {
         AgentCommandKind.VmPower or AgentCommandKind.DeleteVm => true,
         AgentCommandKind.HyperVOperation => c.Operation is HvOperation.SetVmConfig or HvOperation.NewVm or HvOperation.NewCheckpoint
-            or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint or HvOperation.SyncVmGroups,
+            or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint or HvOperation.SyncVmGroups
+            or HvOperation.NewSwitch or HvOperation.RemoveSwitch,
         _ => false,
     };
 

@@ -223,6 +223,14 @@ try {
 
             if ($a.newDisk) {
                 $root = (Get-VMHost).VirtualHardDiskPath
+                if ($a.newDisk.folder) {
+                    # Folder chosen by the gateway (storage limits of the VM's folder) and validated by the agent.
+                    $root = [string]$a.newDisk.folder
+                    if (-not (Test-Path -LiteralPath $root)) {
+                        try { New-Item -ItemType Directory -Path $root -Force | Out-Null }
+                        catch { throw "Cannot create $root with the agent service account: $($_.Exception.Message)" }
+                    }
+                }
                 $file = Join-Path $root ('{0}_{1}.vhdx' -f (Get-SafeName $vm.Name), (Get-Date -Format 'yyyyMMddHHmmss'))
                 if (Test-Path -LiteralPath $file) { throw "File already exists: $file" }
                 $size = [uint64]$a.newDisk.sizeGb * 1GB
@@ -370,8 +378,17 @@ try {
             $vm = Get-VmById $a.vmId
             $s = Get-VMSnapshot -VM $vm | Where-Object { "$($_.Id)" -eq [string]$a.checkpointId } | Select-Object -First 1
             if (-not $s) { throw 'Checkpoint not found.' }
+            # Applying discards the current state anyway: a running or paused VM is turned off first, so the result does
+            # not depend on how Restore-VMSnapshot treats a VM that is not off.
+            if ("$($vm.State)" -notin @('Off', 'Saved')) {
+                Stop-VM -VM $vm -TurnOff -Force -Confirm:$false
+                [void]$applied.Add('turnedOff')
+            }
             Restore-VMSnapshot -VMSnapshot $s -Confirm:$false
-            Write-Response $true @{ id = "$($s.Id)" } $null @('restored')
+            [void]$applied.Add('restored')
+            $after = Get-VmById $a.vmId
+            [void]$applied.Add("state:$($after.State)")
+            Write-Response $true @{ id = "$($s.Id)"; state = "$($after.State)" } $null $applied
         }
 
         'RemoveCheckpoint' {
@@ -399,6 +416,56 @@ try {
                    allowManagementOs = [bool]$_.AllowManagementOS; embeddedTeaming = [bool]$_.EmbeddedTeamingEnabled; connectedVms = $vms }
             })
             Write-Response $true $list $null @()
+        }
+
+        'ListNetAdapters' {
+            # Physical adapters and the virtual switch each one is bound to (a SET switch lists several adapters).
+            $bound = @{}
+            foreach ($sw in @(Get-VMSwitch)) {
+                $descriptions = @($sw.NetAdapterInterfaceDescriptions | Where-Object { $_ })
+                if ($descriptions.Count -eq 0 -and $sw.NetAdapterInterfaceDescription) { $descriptions = @($sw.NetAdapterInterfaceDescription) }
+                foreach ($d in $descriptions) { $bound[[string]$d] = $sw.Name }
+            }
+            $list = @(Get-NetAdapter -Physical | Sort-Object Name | ForEach-Object {
+                $sw = $null
+                if ($bound.ContainsKey([string]$_.InterfaceDescription)) { $sw = $bound[[string]$_.InterfaceDescription] }
+                @{ name = $_.Name; description = $_.InterfaceDescription; status = "$($_.Status)"; linkSpeed = "$($_.LinkSpeed)"
+                   macAddress = $_.MacAddress; switchName = $sw }
+            })
+            Write-Response $true $list $null @()
+        }
+
+        'NewSwitch' {
+            $name = [string]$a.name
+            $type = [string]$a.type
+            # Switch names are not unique in Hyper-V, but VMs are connected by name: refuse duplicates.
+            if (Get-VMSwitch | Where-Object { $_.Name -eq $name }) { throw "A virtual switch named '$name' already exists on this host." }
+            $params = @{ Name = $name }
+            if ($a.notes) { $params.Notes = [string]$a.notes }
+            if ($type -eq 'External') {
+                $adapter = Get-NetAdapter -Physical | Where-Object { $_.Name -ceq [string]$a.netAdapterName } | Select-Object -First 1
+                if (-not $adapter) { throw "Physical network adapter not found: $($a.netAdapterName)" }
+                $params.NetAdapterName = $adapter.Name
+                $params.AllowManagementOS = [bool]$a.allowManagementOs
+            } elseif ($type -eq 'Internal') {
+                $params.SwitchType = 'Internal'
+            } elseif ($type -eq 'Private') {
+                $params.SwitchType = 'Private'
+            } else {
+                throw 'Unsupported switch type.'
+            }
+            $sw = New-VMSwitch @params
+            Write-Response $true @{ id = "$($sw.Id)"; name = $sw.Name; type = "$($sw.SwitchType)" } $null @('created')
+        }
+
+        'RemoveSwitch' {
+            $id = [guid][string]$a.switchId
+            $sw = Get-VMSwitch | Where-Object { $_.Id -eq $id } | Select-Object -First 1
+            if (-not $sw) { throw 'Virtual switch not found.' }
+            $used = @(Get-VM | ForEach-Object { $v = $_; Get-VMNetworkAdapter -VM $v | Where-Object { $_.SwitchId -eq $id } | ForEach-Object { $v.Name } } | Sort-Object -Unique)
+            if ($used.Count -gt 0) { throw "The switch is used by: $(($used | Select-Object -First 10) -join ', '). Disconnect the VMs first." }
+            Remove-VMSwitch -VMSwitch $sw -Force -Confirm:$false
+            Write-Response $true @{ id = "$id"; name = $sw.Name } $null @('removed')
         }
 
         'ListHostDisks' {

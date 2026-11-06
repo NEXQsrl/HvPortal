@@ -9,6 +9,10 @@ export interface Group {
   description: string | null;
   createdAt: string;
   vmIds: string[];
+  /** The folder has limits of its own (quotas, hosts, networks, storage). */
+  limited?: boolean;
+  /** The user may create VMs inside the folder on the hosts opened by its limits. */
+  canCreateVm?: boolean;
 }
 
 export interface GroupsResponse { canManage: boolean; groups: Group[] }
@@ -50,7 +54,7 @@ export interface ConfigOptions { startActions: string[]; stopActions: string[]; 
 export interface ConfigResponse {
   config: VmConfig;
   powerState: PowerState;
-  can: { compute: boolean; storage: boolean; network: boolean };
+  can: { compute: boolean; storage: boolean; network: boolean; annotate?: boolean };
   requiresOff: string[];
   switches: string[];
   isoLibrary: string[];
@@ -85,9 +89,33 @@ export interface ConfigChange {
 }
 
 export interface CheckpointInfo { id: string; name: string; parentId: string | null; createdUtc: string; type: string | null; isCurrent: boolean }
-export interface CheckpointsResponse { checkpoints: CheckpointInfo[]; powerState: PowerState; canCreate: boolean; canApply: boolean; note: string }
+export interface CheckpointsResponse { checkpoints: CheckpointInfo[]; powerState: PowerState; canCreate: boolean; canApply: boolean; applyWhileRunning?: boolean; note: string }
 
-export interface SwitchInfo { id: string; name: string; type: string; netAdapter: string | null; allowManagementOs: boolean; embeddedTeaming: boolean; connectedVms: string[] }
+export interface SwitchInfo {
+  id: string; name: string; type: string; netAdapter: string | null; allowManagementOs: boolean; embeddedTeaming: boolean; connectedVms: string[];
+  /** Private network created for a folder (counts against the folder's network quota). */
+  ownerGroupId?: string | null; ownerGroupName?: string | null; canDelete?: boolean;
+}
+export interface NetAdapterEntry { name: string; description: string | null; status: string | null; linkSpeed: string | null; macAddress: string | null; switchName: string | null }
+
+/** Limits of a VM folder (null/absent = no limit or no restriction). */
+export interface GroupPolicy {
+  maxVms?: number | null; maxProcessors?: number | null; maxMemoryMb?: number | null; maxDiskGb?: number | null; maxNetworks?: number | null;
+  hosts?: string[] | null;
+  networks?: { hostId: string; name: string }[] | null;
+  storage?: { hostId: string; path: string }[] | null;
+}
+export interface GroupUsage { vms: number; processors: number; memoryMb: number; diskGb: number; diskUnknownVms: number; networks: number }
+export interface GroupPolicyLevel { groupId: string; name: string; policy: GroupPolicy; usage: GroupUsage }
+export interface GroupPolicyHost {
+  id: string; displayName: string; connected: boolean; ready: boolean; switches: string[]; networksRestricted: boolean; storageRoots: string[];
+  canCreateVm: boolean; canCreateNetwork: boolean; canBrowseFiles: boolean; canUploadFiles: boolean;
+}
+export interface GroupNetwork { id: string; hostId: string; hostName: string | null; name: string; switchId: string | null; groupId: string; groupName: string | null; createdAt: string; canDelete: boolean }
+export interface GroupPolicyView {
+  policy: GroupPolicy | null; canEdit: boolean; canCreateVm: boolean; canCreateNetwork: boolean;
+  levels: GroupPolicyLevel[]; hosts: GroupPolicyHost[]; networks: GroupNetwork[];
+}
 
 export interface HostDiskInfo { path: string; vmId: string | null; vmName: string | null; controller: string | null; format: string | null; diskType: string | null; sizeBytes: number | null; fileSizeBytes: number | null; parentPath: string | null }
 export interface HostDiskRow { disk: HostDiskInfo; portalVmId: string }
@@ -104,6 +132,9 @@ export interface FolderListing { path: string | null; parent: string | null; dri
 export interface HostDefaultsResponse {
   defaults: { virtualHardDiskPath: string | null; virtualMachinePath: string | null; logicalProcessorCount: number; memoryCapacityBytes: number; supportedVersions: string[]; defaultVersion: string | null };
   switches: string[];
+  /** In a group: the networks are limited to those of the group; storageRoots (non-empty) are the only allowed locations. */
+  networksRestricted?: boolean;
+  storageRoots?: string[];
   isoLibrary: string[];
   existingNames: string[];
   options: { startActions: string[]; checkpointTypes: string[]; secureBootTemplates: string[] };

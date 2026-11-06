@@ -8,6 +8,7 @@ import { ActionsButton } from '@/components/actions';
 import { AgentUpdateNotice } from '@/components/AgentUpdateNotice';
 import { ErrorAlert, HostIcon, KeyValue, Loading, Meter, Notice, PageHeader, Section, StatCard, StatusBadge } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
+import { DeleteSwitchDialog, NewSwitchDialog } from '@/components/ops/NetworkDialogs';
 import { useOps } from '@/components/ops/OperationsProvider';
 import { EventsTable } from '@/components/tables';
 import { Button } from '@/components/ui/button';
@@ -162,28 +163,54 @@ function HostSummary({ host: h, running }: { host: Host; running: number }) {
   );
 }
 
-export function HostSwitches({ hostId }: { hostId: string }) {
+/** Virtual switches of a host, read live; with network.manage: new switch and delete (jobs on the host). */
+export function HostSwitches({ hostId, highlight }: { hostId: string; highlight?: string }) {
   const { t } = useI18n();
+  const ops = useOps();
+  const host = useInventory().hostById.get(hostId);
   const data = useLoad(() => get<SwitchInfo[]>(`/api/v1/hosts/${hostId}/switches`), [hostId]);
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<SwitchInfo | null>(null);
+  const reload = useCallback(() => data.reload(), [data.reload]);
+  // A finished switch job (or a new inventory) changes the list.
+  useLive(reload, ['jobChanged', 'inventoryChanged'], 1500);
+  const rows = data.data ?? [];
+  const anyDelete = rows.some((s) => s.canDelete);
   return (
-    <Section title={t('host.switches')} actions={<Button size="xs" variant="ghost" onClick={data.reload} disabled={data.loading}><RefreshCw className={cn(data.loading && 'animate-spin')} /></Button>}>
+    <Section title={t('host.switches')} actions={<>
+      {host?.canManageNetworks && <Button size="xs" onClick={() => setCreating(true)}><Plus />{t('net.new')}</Button>}
+      <Button size="xs" variant="ghost" onClick={data.reload} disabled={data.loading} aria-label={t('common.refresh')}><RefreshCw className={cn(data.loading && 'animate-spin')} /></Button>
+    </>}>
       <ErrorAlert error={data.error} className="mx-3" />
       {data.loading && !data.data ? <Loading /> : (
         <Table>
-          <TableHeader><TableRow><TableHead>{t('common.name')}</TableHead><TableHead>{t('host.switchType')}</TableHead><TableHead>{t('host.adapter')}</TableHead><TableHead>{t('host.mgmtOs')}</TableHead><TableHead>{t('host.set')}</TableHead><TableHead>{t('host.connectedVms')}</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>{t('common.name')}</TableHead><TableHead>{t('host.switchType')}</TableHead><TableHead>{t('host.adapter')}</TableHead><TableHead>{t('host.mgmtOs')}</TableHead><TableHead>{t('host.set')}</TableHead><TableHead>{t('host.connectedVms')}</TableHead>{anyDelete && <TableHead className="w-10"><span className="sr-only">{t('vm.actions')}</span></TableHead>}</TableRow></TableHeader>
           <TableBody>
-            {(data.data ?? []).map((s) => (
-              <TableRow key={s.id}>
-                <TableCell className="font-medium">{s.name}</TableCell>
+            {rows.map((s) => (
+              <TableRow key={s.id} className={cn(highlight === s.name && 'bg-primary/10')} data-switch={s.name}>
+                <TableCell className="font-medium">
+                  {s.name}
+                  {s.ownerGroupId && <Link to={`/groups/${s.ownerGroupId}`} className="ml-2 align-middle"><StatusBadge tone="muted"><FolderOpen />{s.ownerGroupName ?? t('group.title')}</StatusBadge></Link>}
+                </TableCell>
                 <TableCell><StatusBadge tone={s.type === 'External' ? 'info' : 'muted'}>{s.type}</StatusBadge></TableCell>
                 <TableCell className="text-xs">{s.netAdapter ?? '—'}</TableCell>
                 <TableCell>{s.allowManagementOs ? t('common.yes') : t('common.no')}</TableCell>
                 <TableCell>{s.embeddedTeaming ? t('common.yes') : t('common.no')}</TableCell>
                 <TableCell className="text-xs">{s.connectedVms.length === 0 ? '—' : s.connectedVms.join(', ')}</TableCell>
+                {anyDelete && (
+                  <TableCell className="text-right">
+                    {s.canDelete && <Button size="icon-sm" variant="ghost" className="text-destructive" aria-label={`${t('net.delete')} ${s.name}`} title={t('net.delete')} onClick={() => setDeleting(s)}><Trash2 /></Button>}
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
         </Table>
+      )}
+      {creating && host && <NewSwitchDialog hosts={[host]} initialHostId={host.id} onQueued={ops.queued} onClose={() => setCreating(false)} />}
+      {deleting && host && (
+        <DeleteSwitchDialog hostId={host.id} hostName={host.displayName} switchId={deleting.id} name={deleting.name} connectedVms={deleting.connectedVms.length}
+          onQueued={ops.queued} onClose={() => setDeleting(null)} />
       )}
     </Section>
   );

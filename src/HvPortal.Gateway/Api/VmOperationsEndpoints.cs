@@ -6,6 +6,7 @@ using HvPortal.Gateway.Audit;
 using HvPortal.Gateway.Authorization;
 using HvPortal.Gateway.Data;
 using HvPortal.Gateway.Jobs;
+using HvPortal.Gateway.Quotas;
 using HvPortal.Gateway.Security;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,6 +24,8 @@ public static class VmOperationsEndpoints
     public sealed record CheckpointDeleteRequest(bool IncludeChildren, string? IdempotencyKey);
     public sealed record IsoLibraryRequest(string[] Paths);
     public sealed record CreateVmRequest(NewVmRequest Vm, Guid? GroupId, string? IdempotencyKey);
+    public sealed record CreateSwitchRequest(string? Name, string? Type, string? NetAdapterName, bool AllowManagementOs, string? Notes, Guid? GroupId, string? IdempotencyKey);
+    public sealed record DeleteSwitchRequest(string? SwitchId, string? Name, string? ConfirmName, string? IdempotencyKey);
 
     private static readonly string[] RequiresOffFields = ["processorCount", "dynamicMemoryEnabled", "secureBoot", "automaticStopAction"];
 
@@ -39,6 +42,9 @@ public static class VmOperationsEndpoints
         var hosts = app.MapGroup("/api/v1/hosts").WithTags("Hosts");
         hosts.MapGet("/{id:guid}/defaults", HostDefaultsAsync);
         hosts.MapGet("/{id:guid}/switches", SwitchesAsync);
+        hosts.MapPost("/{id:guid}/switches", CreateSwitchAsync);
+        hosts.MapPost("/{id:guid}/switches/delete", DeleteSwitchAsync);
+        hosts.MapGet("/{id:guid}/net-adapters", NetAdaptersAsync);
         hosts.MapGet("/{id:guid}/disks", DisksAsync);
         hosts.MapGet("/{id:guid}/isos", IsosAsync);
         hosts.MapGet("/{id:guid}/folders", FoldersAsync);
@@ -157,6 +163,7 @@ public static class VmOperationsEndpoints
                 compute = await access.HasAsync(uid, Permissions.VmConfigCompute, r, http.RequestAborted),
                 storage = await access.HasAsync(uid, Permissions.VmConfigStorage, r, http.RequestAborted),
                 network = await access.HasAsync(uid, Permissions.VmConfigNetwork, r, http.RequestAborted),
+                annotate = await access.HasAsync(uid, Permissions.InventoryAnnotate, r, http.RequestAborted),
             },
             requiresOff = RequiresOffFields,
             switches = SwitchNames(host),
@@ -172,7 +179,7 @@ public static class VmOperationsEndpoints
     }
 
     private static async Task<IResult> UpdateConfigAsync(Guid id, VmConfigChange req, HttpContext http, PortalDbContext db, AccessEvaluator access,
-        JobService jobs, IAgentDispatcher agents, TimeProvider time)
+        JobService jobs, IAgentDispatcher agents, TimeProvider time, GroupPolicyService policies)
     {
         var vm = await ReadableVmAsync(id, http, db, access);
         if (vm is null)
@@ -182,7 +189,14 @@ public static class VmOperationsEndpoints
         var host = await db.Hosts.AsNoTracking().FirstAsync(h => h.Id == vm.HostId, http.RequestAborted);
         var roots = OperationPolicy.IsoRoots(host);
         // Server-controlled fields: the client cannot choose the target VM id or the ISO library.
-        var change = req with { VmId = vm.HyperVId, IsoRoots = roots, NewName = string.IsNullOrWhiteSpace(req.NewName) || req.NewName == vm.Name ? null : req.NewName.Trim() };
+        // Server-controlled fields: the client cannot choose the target VM id, the ISO library or the folder of a new disk.
+        var change = req with
+        {
+            VmId = vm.HyperVId,
+            IsoRoots = roots,
+            NewName = string.IsNullOrWhiteSpace(req.NewName) || req.NewName == vm.Name ? null : req.NewName.Trim(),
+            NewDisk = req.NewDisk is null ? null : req.NewDisk with { Folder = null },
+        };
         var permissions = OperationPolicy.PermissionsFor(change);
         if (permissions.Count == 0)
         {
@@ -218,6 +232,14 @@ public static class VmOperationsEndpoints
         {
             return ApiSupport.Conflict("vm_missing", "The VM is not present in the latest inventory.");
         }
+        // Limits of the folders the VM lives in (networks, storage, quotas); the new disk folder is decided here.
+        var (violation, limitedChange) = await policies.CheckConfigAsync(vm, change, http.RequestAborted);
+        if (violation is not null)
+        {
+            await http.WriteAuditAsync("vm.config.update.request", AuditOutcome.Denied, "vm", id.ToString("D"), new { reason = violation.Code, violation.Message });
+            return ApiSupport.Conflict(violation.Code, violation.Message);
+        }
+        change = limitedChange;
         var offOnly = OperationValidation.FieldsRequiringOff(change, vm.Generation);
         if (offOnly.Count > 0 && IsFresh(host, agents, time) && vm.PowerState != VmPowerState.Off)
         {
@@ -265,6 +287,8 @@ public static class VmOperationsEndpoints
             powerState = vm.PowerState.ToString(),
             canCreate = await access.HasAsync(uid, Permissions.VmCheckpointCreate, ResourceRef.Vm(id), http.RequestAborted),
             canApply = await access.HasAsync(uid, Permissions.VmCheckpointApply, ResourceRef.Vm(id), http.RequestAborted),
+            // Agent protocol 7+: a running VM is turned off by the agent before the checkpoint is applied.
+            applyWhileRunning = agents.ProtocolVersionOf(vm.HostId) >= 7,
             note = "Checkpoints are not backups: they depend on the VM's disks and live on the same storage.",
         });
     }
@@ -322,9 +346,15 @@ public static class VmOperationsEndpoints
             return ApiSupport.BadRequest("confirmation_required", "Applying a checkpoint discards the current state of the VM. Type the VM name to confirm.");
         }
         var host = await db.Hosts.AsNoTracking().FirstAsync(h => h.Id == vm.HostId, http.RequestAborted);
-        if (vm.IsMissing || (IsFresh(host, agents, time) && vm.PowerState is not (VmPowerState.Off or VmPowerState.Saved)))
+        if (vm.IsMissing)
         {
-            return ApiSupport.Conflict("invalid_state", "Turn off (or save) the VM before applying a checkpoint.");
+            return ApiSupport.Conflict("vm_missing", "The VM is not present in the latest inventory.");
+        }
+        // A running or paused VM is turned off by the agent before the checkpoint is applied (its current state is
+        // discarded anyway). Agents before protocol 7 do not do that: there the VM must already be off or saved.
+        if (IsFresh(host, agents, time) && vm.PowerState is not (VmPowerState.Off or VmPowerState.Saved) && agents.ProtocolVersionOf(vm.HostId) < 7)
+        {
+            return ApiSupport.Conflict("invalid_state", "Turn off (or save) the VM before applying a checkpoint, or update the agent on this host (0.5.0 or later).");
         }
         var key = IdempotencyKey(http, req.IdempotencyKey);
         if (key == "!")
@@ -370,28 +400,42 @@ public static class VmOperationsEndpoints
     private static async Task<ManagedHost?> HostAsync(Guid id, HttpContext http, PortalDbContext db) =>
         await db.Hosts.AsNoTracking().FirstOrDefaultAsync(h => h.Id == id && h.Status == HostStatus.Active, http.RequestAborted);
 
-    private static async Task<IResult> HostDefaultsAsync(Guid id, HttpContext http, PortalDbContext db, IAgentDispatcher agents)
+    private static async Task<IResult> HostDefaultsAsync(Guid id, Guid? groupId, HttpContext http, PortalDbContext db, AccessEvaluator access,
+        IAgentDispatcher agents, GroupPolicyService policies)
     {
         var host = await HostAsync(id, http, db);
         if (host is null)
         {
             return ApiSupport.NotFound();
         }
-        if (await http.GuardAsync(Permissions.VmCreate, ResourceRef.Host(id), "hosts.defaults") is { } denied)
+        // On the host itself, or inside a folder whose limits open this host to its users (ADR-024).
+        var viaGroup = groupId is { } g && await policies.HoldsViaGroupAsync(http.User.UserId(), Permissions.VmCreate, g, id, http.RequestAborted);
+        if (!viaGroup && await http.GuardAsync(Permissions.VmCreate, ResourceRef.Host(id), "hosts.defaults") is { } denied)
         {
             return denied;
         }
+        var folder = groupId is { } fg && await db.LogicalGroups.AnyAsync(x => x.Id == fg, http.RequestAborted)
+            ? await policies.HostViewAsync(fg, id, SwitchNames(host), http.RequestAborted)
+            : null;
         var (defaults, error) = await QueryAsync(agents, id, HvOperation.GetHostDefaults, new { }, null, http.RequestAborted);
         if (error is not null)
         {
             return error;
         }
+        // Names already used on the host (the wizard warns early). A folder user learns only the names of VMs they can see.
+        var hostVms = await db.VirtualMachines.AsNoTracking().Where(v => v.HostId == id && !v.IsMissing).Select(v => new { v.Id, v.Name }).ToListAsync(http.RequestAborted);
+        var onHost = await access.HasAsync(http.User.UserId(), Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted);
+        var seen = onHost ? null : await access.FilterVmsAsync(http.User.UserId(), Permissions.InventoryRead, hostVms.Select(v => v.Id), http.RequestAborted);
+        var existingNames = hostVms.Where(v => seen is null || seen.Contains(v.Id)).Select(v => v.Name).ToList();
         return Results.Ok(new
         {
             defaults,
-            switches = SwitchNames(host),
+            // In a folder: only the networks and the storage paths its limits allow (storageRoots empty = no restriction).
+            switches = folder?.Switches ?? SwitchNames(host),
+            networksRestricted = folder?.NetworksRestricted ?? false,
+            storageRoots = folder?.StorageRoots ?? [],
             isoLibrary = OperationPolicy.IsoRoots(host),
-            existingNames = await db.VirtualMachines.AsNoTracking().Where(v => v.HostId == id && !v.IsMissing).Select(v => v.Name).ToListAsync(http.RequestAborted),
+            existingNames,
             options = new
             {
                 startActions = OperationValidation.StartActions,
@@ -418,7 +462,8 @@ public static class VmOperationsEndpoints
             null);
     }
 
-    private static async Task<IResult> SwitchesAsync(Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents)
+    private static async Task<IResult> SwitchesAsync(Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents,
+        GroupPolicyService policies)
     {
         if (await HostAsync(id, http, db) is null)
         {
@@ -435,11 +480,157 @@ public static class VmOperationsEndpoints
             return error;
         }
         var switches = JsonSerializer.Deserialize<List<SwitchInfo>>(result!.Value.GetRawText(), AgentProtocol.Json) ?? [];
-        // VM names on a switch are filtered to the VMs the user can see.
-        return Results.Ok(switches.Select(s => s with { ConnectedVms = full ? s.ConnectedVms : s.ConnectedVms.Where(names.Contains).ToList() }));
+        var uid = http.User.UserId();
+        var manage = await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Host(id), http.RequestAborted);
+        var owned = await db.GroupNetworks.AsNoTracking().Where(n => n.HostId == id).ToListAsync(http.RequestAborted);
+        var groupNames = await db.LogicalGroups.AsNoTracking().ToDictionaryAsync(x => x.Id, x => x.Name, http.RequestAborted);
+        var list = new List<object>();
+        foreach (var s in switches)
+        {
+            var owner = owned.FirstOrDefault(n => string.Equals(n.SwitchName, s.Name, StringComparison.Ordinal));
+            list.Add(new
+            {
+                s.Id,
+                s.Name,
+                s.Type,
+                s.NetAdapter,
+                s.AllowManagementOs,
+                s.EmbeddedTeaming,
+                // VM names on a switch are filtered to the VMs the user can see.
+                connectedVms = full ? s.ConnectedVms : s.ConnectedVms.Where(names.Contains).ToList(),
+                // Private network created for a folder (it counts against the folder's network quota).
+                ownerGroupId = owner?.GroupId,
+                ownerGroupName = owner is null ? null : groupNames.GetValueOrDefault(owner.GroupId),
+                canDelete = manage || (owner is not null && await policies.HoldsViaGroupAsync(uid, Permissions.NetworkManage, owner.GroupId, id, http.RequestAborted)),
+            });
+        }
+        return Results.Ok(list);
     }
 
-    private static async Task<IResult> DisksAsync(Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents)
+    private static async Task<IResult> NetAdaptersAsync(Guid id, HttpContext http, PortalDbContext db, IAgentDispatcher agents)
+    {
+        if (await HostAsync(id, http, db) is null)
+        {
+            return ApiSupport.NotFound();
+        }
+        // Physical adapters matter only for external switches, which only host-level network administrators create.
+        if (await http.GuardAsync(Permissions.NetworkManage, ResourceRef.Host(id), "hosts.net_adapters") is { } denied)
+        {
+            return denied;
+        }
+        var (result, error) = await QueryAsync(agents, id, HvOperation.ListNetAdapters, new { }, null, http.RequestAborted);
+        return error ?? Results.Ok(result);
+    }
+
+    /// <summary>
+    /// New virtual switch (job). On the host (network.manage on the host): any type. For a folder (network.manage on the
+    /// folder, host opened by the folder's limits): private networks only, within the folder's network quota; the
+    /// network then belongs to the folder.
+    /// </summary>
+    private static async Task<IResult> CreateSwitchAsync(Guid id, CreateSwitchRequest req, HttpContext http, PortalDbContext db, JobService jobs,
+        IAgentDispatcher agents, GroupPolicyService policies)
+    {
+        var host = await HostAsync(id, http, db);
+        if (host is null)
+        {
+            return ApiSupport.NotFound();
+        }
+        var uid = http.User.UserId();
+        var viaGroup = req.GroupId is { } g && await policies.HoldsViaGroupAsync(uid, Permissions.NetworkManage, g, id, http.RequestAborted);
+        if (!viaGroup && await http.GuardAsync(Permissions.NetworkManage, ResourceRef.Host(id), "host.network.create.request") is { } denied)
+        {
+            return denied;
+        }
+        var spec = new NewSwitchRequest(req.Name?.Trim() ?? "", req.Type ?? "", string.IsNullOrWhiteSpace(req.NetAdapterName) ? null : req.NetAdapterName.Trim(),
+            req.AllowManagementOs, string.IsNullOrWhiteSpace(req.Notes) ? null : req.Notes.Trim());
+        if (OperationValidation.Validate(spec) is { } invalid)
+        {
+            return ApiSupport.BadRequest(invalid);
+        }
+        if (req.GroupId is { } groupId)
+        {
+            if (!await db.LogicalGroups.AnyAsync(x => x.Id == groupId, http.RequestAborted))
+            {
+                return ApiSupport.BadRequest("unknown_group");
+            }
+            if (spec.Type != SwitchTypes.Private)
+            {
+                return ApiSupport.BadRequest("folder_networks_are_private", "Networks of a folder are private (VM to VM). External and internal switches are created on the host by its administrators.");
+            }
+            if (await policies.CheckNewSwitchAsync(groupId, null, http.RequestAborted) is { } violation)
+            {
+                await http.WriteAuditAsync("host.network.create.request", AuditOutcome.Denied, "host", id.ToString("D"), new { reason = violation.Code, violation.Message, groupId });
+                return ApiSupport.Conflict(violation.Code, violation.Message);
+            }
+        }
+        if (SwitchNames(host).Contains(spec.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            return ApiSupport.Conflict("switch_exists", "A virtual switch with this name already exists on the host.");
+        }
+        if (!agents.IsConnected(id))
+        {
+            return ApiSupport.Error(StatusCodes.Status503ServiceUnavailable, "host_unreachable", "The host agent is not connected.");
+        }
+        if (agents.ProtocolVersionOf(id) < 7)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Creating networks needs agent 0.5.0 or later on this host. Update the agent.");
+        }
+        var key = IdempotencyKey(http, req.IdempotencyKey);
+        if (key == "!")
+        {
+            return ApiSupport.BadRequest("invalid_idempotency_key");
+        }
+        return await QueueAsync(http, jobs, new JobService.OperationJobSpec(JobService.NetworkJobType, "Create", ScopeType.Host, id, spec.Name, id,
+            Permissions.NetworkManage, new JobService.OperationParameters(HvOperations.ToElement(spec), req.GroupId), 300,
+            $"Create {spec.Type.ToLowerInvariant()} switch {spec.Name} on {host.DisplayName}"), key, "host.network.create.request",
+            new { spec.Name, spec.Type, spec.NetAdapterName, spec.AllowManagementOs, req.GroupId });
+    }
+
+    private static async Task<IResult> DeleteSwitchAsync(Guid id, DeleteSwitchRequest req, HttpContext http, PortalDbContext db, JobService jobs,
+        IAgentDispatcher agents, GroupPolicyService policies)
+    {
+        var host = await HostAsync(id, http, db);
+        if (host is null)
+        {
+            return ApiSupport.NotFound();
+        }
+        var target = new SwitchRef(req.SwitchId ?? "", req.Name);
+        if ((string.IsNullOrEmpty(req.Name) ? "invalid_switch_name" : OperationValidation.Validate(target)) is { } invalid)
+        {
+            return ApiSupport.BadRequest(invalid);
+        }
+        var uid = http.User.UserId();
+        // A folder user removes only the networks created for the folder; everything else needs the permission on the host.
+        var owner = await db.GroupNetworks.AsNoTracking().FirstOrDefaultAsync(n => n.HostId == id && n.SwitchName == req.Name, http.RequestAborted);
+        var viaGroup = owner is not null && await policies.HoldsViaGroupAsync(uid, Permissions.NetworkManage, owner.GroupId, id, http.RequestAborted);
+        if (!viaGroup && await http.GuardAsync(Permissions.NetworkManage, ResourceRef.Host(id), "host.network.delete.request") is { } denied)
+        {
+            return denied;
+        }
+        if (!string.Equals(req.ConfirmName, req.Name, StringComparison.Ordinal))
+        {
+            return ApiSupport.BadRequest("confirmation_required", "Type the name of the switch to confirm.");
+        }
+        if (!agents.IsConnected(id))
+        {
+            return ApiSupport.Error(StatusCodes.Status503ServiceUnavailable, "host_unreachable", "The host agent is not connected.");
+        }
+        if (agents.ProtocolVersionOf(id) < 7)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Removing networks needs agent 0.5.0 or later on this host. Update the agent.");
+        }
+        var key = IdempotencyKey(http, req.IdempotencyKey);
+        if (key == "!")
+        {
+            return ApiSupport.BadRequest("invalid_idempotency_key");
+        }
+        return await QueueAsync(http, jobs, new JobService.OperationJobSpec(JobService.NetworkJobType, "Delete", ScopeType.Host, id, req.Name, id,
+            Permissions.NetworkManage, new JobService.OperationParameters(HvOperations.ToElement(target), viaGroup ? owner!.GroupId : null), 300,
+            $"Delete switch {req.Name} on {host.DisplayName}"), key, "host.network.delete.request", new { req.Name, req.SwitchId, ownerGroupId = owner?.GroupId });
+    }
+
+    private static async Task<IResult> DisksAsync(Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents,
+        GroupPolicyService policies)
     {
         if (await HostAsync(id, http, db) is null)
         {
@@ -456,11 +647,13 @@ public static class VmOperationsEndpoints
             return error;
         }
         var disks = JsonSerializer.Deserialize<List<HostDiskInfo>>(result!.Value.GetRawText(), AgentProtocol.Json) ?? [];
+        await policies.SaveDiskTotalsAsync(id, disks, http.RequestAborted);
         return Results.Ok(disks.Where(d => d.VmId is { } hv && portalIds.ContainsKey(hv))
             .Select(d => new { disk = d, portalVmId = portalIds[d.VmId!.Value] }));
     }
 
-    private static async Task<IResult> IsosAsync(Guid id, HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents)
+    private static async Task<IResult> IsosAsync(Guid id, Guid? groupId, HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents,
+        GroupPolicyService policies)
     {
         var host = await HostAsync(id, http, db);
         if (host is null)
@@ -470,6 +663,10 @@ public static class VmOperationsEndpoints
         var uid = http.User.UserId();
         var allowed = await access.HasAsync(uid, Permissions.InventoryRead, ResourceRef.Host(id), http.RequestAborted)
                       || await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted);
+        if (!allowed && groupId is { } g)
+        {
+            allowed = await policies.HoldsViaGroupAsync(uid, Permissions.VmCreate, g, id, http.RequestAborted);
+        }
         if (!allowed)
         {
             var vmIds = await db.VirtualMachines.AsNoTracking().Where(v => v.HostId == id).Select(v => v.Id).ToListAsync(http.RequestAborted);
@@ -552,14 +749,17 @@ public static class VmOperationsEndpoints
     // ------------------------------------------------------------------ VM creation
 
     private static async Task<IResult> CreateVmAsync(Guid id, CreateVmRequest req, HttpContext http, PortalDbContext db, AccessEvaluator access,
-        JobService jobs, IAgentDispatcher agents)
+        JobService jobs, IAgentDispatcher agents, GroupPolicyService policies)
     {
         var host = await HostAsync(id, http, db);
         if (host is null)
         {
             return ApiSupport.NotFound();
         }
-        if (await http.GuardAsync(Permissions.VmCreate, ResourceRef.Host(id), "vm.create.request") is { } denied)
+        var uid = http.User.UserId();
+        // vm.create on the host, or on the target folder when the folder's limits open this host to its users (ADR-024).
+        var viaGroup = req.GroupId is { } tg && await policies.HoldsViaGroupAsync(uid, Permissions.VmCreate, tg, id, http.RequestAborted);
+        if (!viaGroup && await http.GuardAsync(Permissions.VmCreate, ResourceRef.Host(id), "vm.create.request") is { } denied)
         {
             return denied;
         }
@@ -574,6 +774,27 @@ public static class VmOperationsEndpoints
             IsoRoots = roots,
             Location = string.IsNullOrWhiteSpace(req.Vm.Location) ? null : HostPaths.Normalize(req.Vm.Location),
         };
+        var extra = new List<string>();
+        if (req.GroupId is { } groupId)
+        {
+            if (await GroupEndpoints.CheckNewVmPlacementAsync(db, access, uid, groupId, id, http.RequestAborted) is { } placement)
+            {
+                await http.WriteAuditAsync("vm.create.request", AuditOutcome.Denied, "host", id.ToString("D"), new { reason = placement, groupId });
+                return placement == "unknown_group" ? ApiSupport.BadRequest(placement) : ApiSupport.Forbidden(placement);
+            }
+            if (!await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Group(groupId), http.RequestAborted))
+            {
+                extra.Add(Permissions.GroupsManage);
+            }
+            // Limits of the folder: allowed network and storage (the location is set when the folder restricts it), quotas.
+            var (violation, limited) = await policies.CheckNewVmAsync(groupId, id, spec, null, http.RequestAborted);
+            if (violation is not null)
+            {
+                await http.WriteAuditAsync("vm.create.request", AuditOutcome.Denied, "host", id.ToString("D"), new { reason = violation.Code, violation.Message, groupId });
+                return ApiSupport.Conflict(violation.Code, violation.Message);
+            }
+            spec = limited;
+        }
         if (OperationValidation.Validate(spec) is { } invalid)
         {
             return ApiSupport.BadRequest(invalid);
@@ -598,16 +819,6 @@ public static class VmOperationsEndpoints
         if (!agents.IsConnected(id))
         {
             return ApiSupport.Error(StatusCodes.Status503ServiceUnavailable, "host_unreachable", "The host agent is not connected.");
-        }
-        var extra = new List<string>();
-        if (req.GroupId is { } groupId)
-        {
-            if (await GroupEndpoints.CheckNewVmPlacementAsync(db, access, http.User.UserId(), groupId, id, http.RequestAborted) is { } placement)
-            {
-                await http.WriteAuditAsync("vm.create.request", AuditOutcome.Denied, "host", id.ToString("D"), new { reason = placement, groupId });
-                return placement == "unknown_group" ? ApiSupport.BadRequest(placement) : ApiSupport.Forbidden(placement);
-            }
-            extra.Add(Permissions.GroupsManage);
         }
         var key = IdempotencyKey(http, req.IdempotencyKey);
         if (key == "!")

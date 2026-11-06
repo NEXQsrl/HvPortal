@@ -16,6 +16,19 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
 
     public ConcurrentQueue<AgentCommand> Received { get; } = new();
 
+    /// <summary>Size of the VMs created through NewVm (vCPU, memory, dynamic maximum, disk), reported by inventory and disk listings.</summary>
+    private readonly ConcurrentDictionary<Guid, (int Processors, long MemoryMb, long? MaximumMb, bool Dynamic, long DiskGb)> _specs = new();
+
+    /// <summary>Configuration folder of the VMs created through NewVm with a location (reported by inventory).</summary>
+    private readonly ConcurrentDictionary<Guid, string> _paths = new();
+
+    /// <summary>Virtual switches created through NewSwitch, per host (every host also has the external switch "vSwitch").</summary>
+    public ConcurrentDictionary<Guid, List<SwitchInfo>> Switches { get; } = new();
+
+    /// <summary>Disk size reported for a VM by ListHostDisks (default 64 GB).</summary>
+    public void SetDiskGb(Guid hyperVId, long gb) =>
+        _specs[hyperVId] = _specs.TryGetValue(hyperVId, out var s) ? s with { DiskGb = gb } : (2, 4096, null, false, gb);
+
     /// <summary>When set, a VmPower command is "sent" and then the channel drops (outcome unknown to the gateway).</summary>
     public bool DropChannelAfterPowerCommand { get; set; }
 
@@ -250,7 +263,12 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 var req = HvOperations.FromElement<NewVmRequest>(command.OperationArgs)!;
                 var newId = Guid.NewGuid();
                 _vms[newId] = (hostId, req.Name, req.StartAfterCreate ? VmPowerState.Running : VmPowerState.Off, 0);
-                return Ok(new NewVmResult(newId, req.Name, @"D:\VMs", @"D:\VHDs\" + req.Name + ".vhdx", null), "created");
+                _specs[newId] = (req.ProcessorCount, req.MemoryStartupMb, req.MemoryMaximumMb, req.DynamicMemory, req.DiskSizeGb);
+                if (req.Location is not null)
+                {
+                    _paths[newId] = req.Location + @"\" + req.Name;
+                }
+                return Ok(new NewVmResult(newId, req.Name, req.Location is null ? @"D:\VMs" : req.Location + @"\" + req.Name, @"D:\VHDs\" + req.Name + ".vhdx", null), "created");
             case HvOperation.ListCheckpoints:
                 return Ok(new[] { new CheckpointInfo(Guid.NewGuid().ToString("D"), "Before update", null, DateTimeOffset.UtcNow, "Production", true) });
             case HvOperation.NewCheckpoint or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint:
@@ -259,10 +277,35 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 return Ok(new HostDefaults(@"D:\VHDs", @"D:\VMs", 12, 128L << 30, ["12.0"], "12.0"));
             case HvOperation.ListSwitches:
                 return Ok(new[] { new SwitchInfo(Guid.NewGuid().ToString("D"), "vSwitch", "External", "NIC", true, false,
-                    _vms.Values.Where(x => x.HostId == hostId).Select(x => x.Name).ToList()) });
+                    _vms.Values.Where(x => x.HostId == hostId).Select(x => x.Name).ToList()) }.Concat(Switches.GetValueOrDefault(hostId) ?? []).ToList());
+            case HvOperation.ListNetAdapters:
+                return Ok(new[]
+                {
+                    new NetAdapterEntry("Ethernet", "Intel(R) I350 #1", "Up", "1 Gbps", "00-15-5D-00-00-01", "vSwitch"),
+                    new NetAdapterEntry("Ethernet 2", "Intel(R) I350 #2", "Up", "1 Gbps", "00-15-5D-00-00-02", null),
+                });
+            case HvOperation.NewSwitch:
+                var ns = HvOperations.FromElement<NewSwitchRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(ns) is { } badSwitch)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = badSwitch };
+                }
+                var hostSwitches = Switches.GetOrAdd(hostId, _ => []);
+                if (ns.Name == "vSwitch" || hostSwitches.Any(x => x.Name == ns.Name))
+                {
+                    return new HvOperationOutcome { Ok = false, Error = $"A virtual switch named '{ns.Name}' already exists on this host." };
+                }
+                var createdSwitch = new SwitchInfo(Guid.NewGuid().ToString("D"), ns.Name, ns.Type, ns.NetAdapterName, ns.AllowManagementOs, false, []);
+                hostSwitches.Add(createdSwitch);
+                return Ok(new { id = createdSwitch.Id, name = createdSwitch.Name, type = createdSwitch.Type }, "created");
+            case HvOperation.RemoveSwitch:
+                var rs = HvOperations.FromElement<SwitchRef>(command.OperationArgs)!;
+                var removed = Switches.GetValueOrDefault(hostId)?.RemoveAll(x => x.Id == rs.SwitchId) ?? 0;
+                return removed == 0 ? new HvOperationOutcome { Ok = false, Error = "Virtual switch not found." } : Ok(new { id = rs.SwitchId }, "removed");
             case HvOperation.ListHostDisks:
                 return Ok(_vms.Where(kv => kv.Value.HostId == hostId)
-                    .Select(kv => new HostDiskInfo(@"D:\VHDs\" + kv.Value.Name + ".vhdx", kv.Key, kv.Value.Name, "SCSI 0:0", "VHDX", "Dynamic", 64L << 30, 10L << 30, null)).ToList());
+                    .Select(kv => new HostDiskInfo(@"D:\VHDs\" + kv.Value.Name + ".vhdx", kv.Key, kv.Value.Name, "SCSI 0:0", "VHDX", "Dynamic",
+                        (_specs.TryGetValue(kv.Key, out var sized) ? sized.DiskGb : 64L) << 30, 10L << 30, null)).ToList());
             case HvOperation.ListIsos:
                 return Ok(new[] { new IsoFile(@"D:\ISO\win.iso", 5L << 30, DateTimeOffset.UtcNow) });
             case HvOperation.ListFolder or HvOperation.ReadFile or HvOperation.WriteFileBegin or HvOperation.WriteFileChunk
@@ -425,6 +468,13 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
 
     public int AbortedUploads { get; private set; }
 
-    private static VmSummary Summary(Guid id, (Guid HostId, string Name, VmPowerState State, long UptimeMs) v) =>
-        new() { VmId = id, Name = v.Name, PowerState = v.State, UptimeMs = v.UptimeMs };
+    private VmSummary Summary(Guid id, (Guid HostId, string Name, VmPowerState State, long UptimeMs) v) =>
+        _specs.TryGetValue(id, out var s)
+            ? new()
+            {
+                VmId = id, Name = v.Name, PowerState = v.State, UptimeMs = v.UptimeMs, ProcessorCount = s.Processors, MemoryStartupMb = s.MemoryMb,
+                DynamicMemoryEnabled = s.Dynamic, MemoryMaximumMb = s.Dynamic ? s.MaximumMb : s.MemoryMb,
+                ConfigurationPath = _paths.GetValueOrDefault(id),
+            }
+            : new() { VmId = id, Name = v.Name, PowerState = v.State, UptimeMs = v.UptimeMs };
 }

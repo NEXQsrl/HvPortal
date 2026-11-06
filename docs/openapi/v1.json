@@ -407,6 +407,39 @@
         }
       }
     },
+    "/api/v1/users/{id}/delete": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/v1/permissions": {
       "get": {
         "tags": [
@@ -897,37 +930,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Virtual machines"
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VmUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "description": "OK"
@@ -1571,6 +1573,73 @@
         }
       }
     },
+    "/api/v1/groups/{id}/policy": {
+      "get": {
+        "tags": [
+          "Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Groups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GroupPolicy"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/v1/vms/{id}/config": {
       "get": {
         "tags": [
@@ -1777,6 +1846,14 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "groupId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -1787,6 +1864,93 @@
       }
     },
     "/api/v1/hosts/{id}/switches": {
+      "get": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/hosts/{id}/switches/delete": {
+      "post": {
+        "tags": [
+          "Hosts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteSwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/hosts/{id}/net-adapters": {
       "get": {
         "tags": [
           "Hosts"
@@ -1842,6 +2006,14 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "groupId",
+            "in": "query",
             "schema": {
               "type": "string",
               "format": "uuid"
@@ -2048,6 +2220,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "groupId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -2077,6 +2257,14 @@
             "in": "query",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "groupId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -2121,6 +2309,14 @@
             "in": "query",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "groupId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -2195,6 +2391,30 @@
       }
     },
     "/api/v1/settings/backup/restart": {
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/settings/backup/auto": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/settings/backup/auto/run": {
       "post": {
         "tags": [
           "Settings"
@@ -2495,6 +2715,60 @@
           }
         }
       },
+      "CreateSwitchRequest": {
+        "required": [
+          "name",
+          "type",
+          "netAdapterName",
+          "allowManagementOs",
+          "notes",
+          "groupId",
+          "idempotencyKey"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "netAdapterName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "allowManagementOs": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "groupId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "idempotencyKey": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "CreateUserRequest": {
         "required": [
           "userName",
@@ -2574,6 +2848,55 @@
           }
         }
       },
+      "DeleteSwitchRequest": {
+        "required": [
+          "switchId",
+          "name",
+          "confirmName",
+          "idempotencyKey"
+        ],
+        "type": "object",
+        "properties": {
+          "switchId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "confirmName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "idempotencyKey": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "DeleteUserRequest": {
+        "required": [
+          "confirmName"
+        ],
+        "type": "object",
+        "properties": {
+          "confirmName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "EntraSettingsRequest": {
         "required": [
           "enabled",
@@ -2640,6 +2963,116 @@
         "type": "object",
         "properties": {
           "passphrase": {
+            "type": "string"
+          }
+        }
+      },
+      "GroupPolicy": {
+        "type": "object",
+        "properties": {
+          "maxVms": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "maxProcessors": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "maxMemoryMb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "maxDiskGb": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "maxNetworks": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "hosts": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "networks": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/HostNetwork"
+            }
+          },
+          "storage": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/HostStoragePath"
+            }
+          }
+        }
+      },
+      "HostNetwork": {
+        "required": [
+          "hostId",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "hostId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "HostStoragePath": {
+        "required": [
+          "hostId",
+          "path"
+        ],
+        "type": "object",
+        "properties": {
+          "hostId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "path": {
             "type": "string"
           }
         }
@@ -2786,6 +3219,12 @@
           },
           "fixed": {
             "type": "boolean"
+          },
+          "folder": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -3356,20 +3795,6 @@
           "Resume",
           "Save"
         ]
-      },
-      "VmUpdateRequest": {
-        "required": [
-          "description"
-        ],
-        "type": "object",
-        "properties": {
-          "description": {
-            "type": [
-              "null",
-              "string"
-            ]
-          }
-        }
       }
     }
   },

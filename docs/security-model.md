@@ -68,10 +68,11 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
 ## RBAC
 
 - Permissions (see `Permissions.cs`): `inventory.read`, `vm.power`, `vm.power.force`, `vm.config.*`,
-  `vm.checkpoint.*`, `vm.delete`, `vm.console`, `vm.migrate`, `backup.run`, `backup.restore`, `jobs.read.all`,
-  `jobs.cancel.all`, `hosts.manage`, `users.manage`, `roles.manage`, `settings.manage`, `audit.read`.
-- Built-in roles: platform administrator, infrastructure administrator, VM operator, backup operator, auditor,
-  read only. Custom roles supported.
+  `vm.checkpoint.*`, `vm.delete`, `vm.console`, `vm.migrate`, `vm.create`, `network.manage`, `host.files.*`,
+  `backup.run`, `backup.restore`, `jobs.read.all`, `jobs.cancel.all`, `hosts.manage`, `users.manage`, `roles.manage`,
+  `settings.manage`, `audit.read`.
+- Built-in roles: platform administrator, infrastructure administrator, folder administrator, VM operator, backup
+  operator, auditor, read only. Custom roles supported.
 - Scopes: Global, Host, Logical group, VM (Cluster, Network, Backup repository, Template are modeled for later).
 - **Evaluation**: default deny; effective scopes of a VM = VM + its host + each logical group containing it **and
   that group's ancestors** + Global;
@@ -90,6 +91,15 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
   message; Origin required; permission and session re-checked every 60 s; idle 15 min, max 8 h; audited
   ([console.md](console.md)).
 - Native Hyper-V VM groups are inventory objects and never grant portal permissions.
+- **Limits of groups** (ADR-024): `vm.create`, `network.manage` and `host.files.*` held on a group work only on the
+  hosts, networks and storage paths that the group's limits open, and within its quotas (VMs, vCPU, memory, disk,
+  private networks; totals include subgroups and queued creations). Checked when the operation is requested and
+  again when the job runs; refusals are audited. Limits are set with `groups.manage` + `hosts.manage`. Quotas bind
+  administrators too. File paths of a group user are checked by prefix against the group's storage paths after the
+  usual normalization (no `..`, no links: the agent refuses reparse points).
+- **Deleting a user** (`users.manage` + re-auth, typed name): sessions, MFA secrets, recovery codes, pending tokens and
+  role assignments are removed; the audit log keeps the past actions; queued jobs of the user fail with
+  `authorization_revoked`. Not allowed on yourself, on a more privileged user, on the last platform administrator.
 
 ## Web protections
 

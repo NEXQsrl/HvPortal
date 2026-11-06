@@ -174,6 +174,42 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.ToTable("EnrollmentTokens");
                 });
 
+            modelBuilder.Entity("HvPortal.Gateway.Data.GroupNetwork", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("GroupId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("HostId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("SwitchId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SwitchName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GroupId");
+
+                    b.HasIndex("HostId", "SwitchName")
+                        .IsUnique();
+
+                    b.ToTable("GroupNetworks");
+                });
+
             modelBuilder.Entity("HvPortal.Gateway.Data.HostVmGroupLink", b =>
                 {
                     b.Property<Guid>("Id")
@@ -419,6 +455,10 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasColumnType("TEXT");
 
                     b.Property<Guid?>("ParentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PolicyJson")
+                        .HasMaxLength(32000)
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
@@ -1029,16 +1069,15 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(1024)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Description")
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
                     b.Property<long?>("DetailsCollectedAt")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("DetailsJson")
                         .HasMaxLength(64000)
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("DiskProvisionedBytes")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool?>("DynamicMemoryEnabled")
                         .HasColumnType("INTEGER");
@@ -1091,6 +1130,9 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasColumnType("INTEGER");
 
                     b.Property<int?>("MemoryBufferPercent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("MemoryMaximumMb")
                         .HasColumnType("INTEGER");
 
                     b.Property<long?>("MemoryStartupMb")

@@ -1,8 +1,8 @@
 import { Check, Cpu, Disc3, FolderOpen, FolderSearch, Info, ListChecks, Network, RotateCcw, Server, Settings2, ShieldCheck, HardDrive } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { get, newIdempotencyKey, post } from '@/api/client';
-import type { Accepted, HostDefaultsResponse, NewVmSpec } from '@/api/ops-types';
-import { ErrorAlert, KeyValue, Notice } from '@/components/common';
+import type { Accepted, GroupPolicyView, HostDefaultsResponse, NewVmSpec } from '@/api/ops-types';
+import { ErrorAlert, GroupIcon, KeyValue, Notice } from '@/components/common';
 import { Field } from '@/components/dialogs';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useI18n, type TKey } from '@/i18n';
 import { formatBytes, VM_NAME } from '@/lib/format';
+import { useLoad } from '@/lib/hooks';
 import { joinPath, normalizeFolder, safeName, validateLocation } from '@/lib/hostPaths';
 import { cn } from '@/lib/utils';
 import { GroupPickerList } from './GroupDialogs';
@@ -41,10 +42,19 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
 }) {
   const { t } = useI18n();
   const inv = useInventory();
-  const hosts = inv.hosts.filter((h) => h.canCreateVm);
+  const [groupId, setGroupId] = useState<string | null>(initialGroup ?? null);
+  // Inside a group: its limits (quotas in use, enabled hosts). Users of the group create only on those hosts.
+  const folder = useLoad(() => (groupId ? get<GroupPolicyView>(`/api/v1/groups/${groupId}/policy`).catch(() => null) : Promise.resolve(null)), [groupId]);
+  const hosts = useMemo(() => {
+    const own = inv.hosts.filter((h) => h.canCreateVm).map((h) => ({ id: h.id, displayName: h.displayName }));
+    const viaGroup = (folder.data?.hosts ?? []).filter((h) => h.canCreateVm && !own.some((o) => o.id === h.id)).map((h) => ({ id: h.id, displayName: h.displayName }));
+    return [...own, ...viaGroup];
+  }, [inv.hosts, folder.data]);
   const [step, setStep] = useState(0);
   const [hostId, setHostId] = useState(initialHost && hosts.some((h) => h.id === initialHost) ? initialHost : hosts[0]?.id ?? '');
-  const [groupId, setGroupId] = useState<string | null>(initialGroup ?? null);
+  useEffect(() => {
+    if (hosts.length > 0 && !hosts.some((h) => h.id === hostId)) setHostId(hosts[0]!.id);
+  }, [hosts, hostId]);
   const [spec, setSpec] = useState<NewVmSpec>({
     name: '', generation: 2, processorCount: 2, memoryStartupMb: 4096, dynamicMemory: false, memoryMinimumMb: 512, memoryMaximumMb: 8192,
     diskSizeGb: 60, diskFixed: false, switchName: '', isoPath: '', secureBootTemplate: 'MicrosoftWindows', enableTpm: false,
@@ -64,15 +74,16 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
     let cancelled = false;
     setDefaults(null);
     setLoadError(null);
-    get<HostDefaultsResponse>(`/api/v1/hosts/${hostId}/defaults`).then((d) => {
+    get<HostDefaultsResponse>(`/api/v1/hosts/${hostId}/defaults${groupId ? `?groupId=${groupId}` : ''}`).then((d) => {
       if (cancelled) return;
       setDefaults(d);
-      setSpec((s) => ({ ...s, switchName: d.switches.includes(s.switchName ?? '') ? s.switchName : d.switches[0] ?? '' }));
+      // A group that restricts storage: the VM goes into one of its folders (the first one by default).
+      setSpec((s) => ({ ...s, switchName: d.switches.includes(s.switchName ?? '') ? s.switchName : d.switches[0] ?? '', location: d.storageRoots?.[0] ?? '' }));
     }).catch((e) => { if (!cancelled) setLoadError(e); });
     setSpec((s) => ({ ...s, location: '', isoPath: '' }));
     setLocationFree(null);
     return () => { cancelled = true; };
-  }, [hostId]);
+  }, [hostId, groupId]);
 
   const name = spec.name.trim();
   const nameError = !name ? null
@@ -94,6 +105,15 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
   const canFinish = stepValid.every(Boolean);
   const host = inv.hostById.get(hostId);
   const canBrowse = !!host?.canBrowseFolders;
+  const storageRoots = defaults?.storageRoots ?? [];
+  const group = groupId ? inv.groupById.get(groupId) : undefined;
+  const level = folder.data?.levels[0];
+  const usageText = level ? [
+    level.policy.maxVms != null && `VM ${level.usage.vms}/${level.policy.maxVms}`,
+    level.policy.maxProcessors != null && `vCPU ${level.usage.processors}/${level.policy.maxProcessors}`,
+    level.policy.maxMemoryMb != null && `RAM ${Math.round(level.usage.memoryMb / 102.4) / 10}/${Math.round(level.policy.maxMemoryMb / 102.4) / 10} GB`,
+    level.policy.maxDiskGb != null && `${t('wiz.disk')} ${level.usage.diskGb}/${level.policy.maxDiskGb} GB`,
+  ].filter(Boolean).join(' · ') : '';
   // Where Hyper-V puts the files: New-VM -Path <location> creates <location>\<name>\Virtual Machines.
   const vmName = name || t('wiz.vmNamePlaceholder');
   const configWhere = location ? joinPath(joinPath(location, vmName), 'Virtual Machines') : defaults?.defaults.virtualMachinePath ?? '—';
@@ -138,9 +158,17 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
             {hosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)}
           </NativeSelect>
         </Field>
+        {hosts.length === 0 && !folder.loading && <Notice kind="warn">{t('wiz.noHostForGroup')}</Notice>}
         {loadError ? <ErrorAlert error={loadError} /> : defaults && (
           <p className="text-xs text-muted-foreground">{t('wiz.hostCapacity', { lp: defaults.defaults.logicalProcessorCount, mem: formatBytes(defaults.defaults.memoryCapacityBytes) })}</p>
         )}
+        {!inv.canManageGroups && group && (
+          <Field label={t('wiz.group')}>
+            <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"><GroupIcon />{group.name}</div>
+            <p className="text-xs text-muted-foreground">{t('wiz.groupFixed')}</p>
+          </Field>
+        )}
+        {usageText && <Notice kind="info">{t('wiz.groupUsage', { text: usageText })}</Notice>}
         {inv.canManageGroups && (
           <Field label={t('wiz.group')}>
             <div className="flex items-center gap-2 text-xs">
@@ -186,7 +214,14 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
     ),
     storage: (
       <div className="space-y-5">
-        <Field label={t('wiz.location')} htmlFor="wiz-loc" error={locationError}
+        {storageRoots.length > 0 && (
+          <Field label={t('wiz.locationFolder')} htmlFor="wiz-loc-folder" hint={t('wiz.locationFolderHint')}>
+            <NativeSelect id="wiz-loc-folder" value={spec.location ?? ''} onChange={(e) => { set({ location: e.target.value }); setLocationFree(null); }} className="font-mono text-xs">
+              {storageRoots.map((r) => <option key={r} value={r}>{r}</option>)}
+            </NativeSelect>
+          </Field>
+        )}
+        {storageRoots.length === 0 && <Field label={t('wiz.location')} htmlFor="wiz-loc" error={locationError}
           hint={canBrowse ? t('wiz.locationHint') : t('wiz.locationAgent')}>
           <div className="flex gap-2">
             <InputGroup className="min-w-0 flex-1">
@@ -203,7 +238,7 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
             </InputGroup>
             <Button type="button" variant="outline" onClick={() => setBrowsing(true)} disabled={!canBrowse}><FolderSearch />{t('picker.browse')}</Button>
           </div>
-        </Field>
+        </Field>}
 
         <div className="space-y-3 rounded-lg border p-3">
           <label className="flex items-center gap-2 text-sm">
@@ -253,7 +288,10 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, onQ
     media: (
       <div className="space-y-4">
         <Field label={t('wiz.iso')} htmlFor="wiz-iso">
-          {host && <IsoPicker key={host.id} id="wiz-iso" host={host} value={spec.isoPath ?? ''} onChange={(p) => set({ isoPath: p })} emptyLabel={t('wiz.noIso')} />}
+          {hostId && (
+            <IsoPicker key={hostId} id="wiz-iso" groupId={groupId ?? undefined} value={spec.isoPath ?? ''} onChange={(p) => set({ isoPath: p })} emptyLabel={t('wiz.noIso')}
+              host={host ?? { id: hostId, isoLibrary: defaults?.isoLibrary ?? [], canBrowseFolders: false, connected: true }} />
+          )}
         </Field>
         {spec.generation === 2 ? (
           <>

@@ -1,6 +1,6 @@
 import { ListChecks, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { get, post } from '@/api/client';
 import type { Job } from '@/api/types';
 import { ErrorAlert, JobBadge, KeyValue, Loading, PageHeader, Section, StatusBadge } from '@/components/common';
@@ -17,7 +17,9 @@ const STATUSES = ['Queued', 'Running', 'Reconciling', 'Succeeded', 'Unverified',
 
 export function JobsPage() {
   const { t } = useI18n();
-  const [status, setStatus] = useState('');
+  const [params, setParams] = useSearchParams();
+  const status = STATUSES.includes(params.get('status') ?? '') ? params.get('status')! : '';
+  const setStatus = (s: string) => setParams(s ? { status: s } : {}, { replace: true });
   const jobs = useLoad(() => get<{ job: Job; requestedBy: string | null }[]>(`/api/v1/jobs?take=500${status ? '&status=' + status : ''}`), [status]);
   const reload = useCallback(() => jobs.reload(), [jobs.reload]);
   useLive(reload, ['jobChanged'], 500);

@@ -15,12 +15,12 @@ Hyper-V hosts (agent) ──mTLS:HVP_AGENT_PORT──► (Linux) │  (DB, key r
 From the repository root (it builds the UI, the gateway and the Windows agent package served by the portal):
 
 ```bash
-docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.4.0 .
+docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.5.0 .
 ```
 
 Get the image onto the Docker host used by Portainer:
 - push it to your private registry (`docker tag` + `docker push`) and set `HVP_IMAGE` to its name, **or**
-- `docker save --platform linux/amd64 hvportal-gateway:0.4.0 -o hvportal-gateway-0.4.0.tar`, then Portainer > **Images > Import**.
+- `docker save --platform linux/amd64 hvportal-gateway:0.5.0 -o hvportal-gateway-0.5.0.tar`, then Portainer > **Images > Import**.
 
 The repository is private: do not push the image to a public registry.
 
@@ -30,18 +30,18 @@ registry set `HVP_IMAGE` to the full name and `HVP_PULL_POLICY=missing` (or `alw
 The image is built for `linux/amd64`; for an ARM Docker host build it with `--platform linux/arm64`.
 `--provenance=false --sbom=false` and `docker save --platform` produce a single-manifest archive that every Docker
 engine (and Portainer's import) loads with its name; without them Docker Desktop writes a nested OCI index with
-attestations that some engines import untagged ("No such image: hvportal-gateway:0.4.0" at deploy).
+attestations that some engines import untagged ("No such image: hvportal-gateway:0.5.0" at deploy).
 
 ### "No such image" at deploy: checklist
-1. Portainer > **Images** of the **same environment** as the stack: `hvportal-gateway:0.4.0` must be listed.
-2. Listed as `<none>:<none>`? Open it and add the tag `hvportal-gateway:0.4.0` (or re-import the archive built as above).
-3. From the Docker host shell: `docker load -i hvportal-gateway-0.4.0.tar` must print `Loaded image: hvportal-gateway:0.4.0`.
+1. Portainer > **Images** of the **same environment** as the stack: `hvportal-gateway:0.5.0` must be listed.
+2. Listed as `<none>:<none>`? Open it and add the tag `hvportal-gateway:0.5.0` (or re-import the archive built as above).
+3. From the Docker host shell: `docker load -i hvportal-gateway-0.5.0.tar` must print `Loaded image: hvportal-gateway:0.5.0`.
 
 ## 1b. Or let Docker build it (no image to import)
 
 - **Portainer > Images > Build a new image > Upload**: upload `hvportal-source-<version>.tar` (made with
-  `git archive --format=tar -o hvportal-source-0.4.0.tar HEAD`), Dockerfile path `docker/Dockerfile`, image name
-  `hvportal-gateway:0.4.0`, **Build**. Then deploy `docker-compose.yml` as below.
+  `git archive --format=tar -o hvportal-source-0.5.0.tar HEAD`), Dockerfile path `docker/Dockerfile`, image name
+  `hvportal-gateway:0.5.0`, **Build**. Then deploy `docker-compose.yml` as below.
 - **Portainer > Stacks > Repository** (Git repository reachable by Portainer, read-only token for a private
   repository): compose path `docker/docker-compose.build.yml` - the image is built at deploy.
 - **Docker host shell**, in the source folder: `docker compose -f docker/docker-compose.build.yml up -d --build`.

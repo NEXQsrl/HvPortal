@@ -1,16 +1,21 @@
 import { Search } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { post } from '@/api/client';
+import { post, put } from '@/api/client';
 import type { Group } from '@/api/ops-types';
 import { GroupIcon, Notice, VmIcon } from '@/components/common';
-import { ActionDialog, Field } from '@/components/dialogs';
+import { ActionDialog, Field, HelpTip } from '@/components/dialogs';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useI18n } from '@/i18n';
 import { GROUP_NAME } from '@/lib/format';
+import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { useSession } from '@/session';
+import { draftFromPolicy, LimitsEditor, limitsEmpty, limitsValid, policyFromDraft, type LimitsDraft } from './GroupLimits';
 
 /** Indented, selectable list of the group tree (single choice). */
 export function GroupPickerList({ value, onChange, exclude, allowRoot }: {
@@ -52,11 +57,24 @@ export function NewGroupDialog({ parentId, onCreated, onClose }: { parentId: str
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [parent, setParent] = useState<string | null>(parentId);
-  const valid = GROUP_NAME.test(name.trim());
+  // Advanced mode: limits of the group (quotas, hosts, networks, storage), set right after the group is created.
+  const { can } = useSession();
+  const canLimit = can('hosts.manage');
+  const [advanced, setAdvanced] = useState(false);
+  const [limits, setLimits] = useState<LimitsDraft>(() => draftFromPolicy(null));
+  const valid = GROUP_NAME.test(name.trim()) && (!advanced || limitsValid(limits));
   return (
-    <ActionDialog title={t('group.new')} confirmLabel={t('common.create')} disabled={!valid} onClose={onClose}
+    <ActionDialog title={t('group.new')} confirmLabel={t('common.create')} disabled={!valid} onClose={onClose} wide={advanced}
       onConfirm={async () => {
         const r = await post<{ id: string }>('/api/v1/groups', { name: name.trim(), description: description || undefined, parentId: parent });
+        if (advanced && !limitsEmpty(limits)) {
+          // The group exists even if its limits are refused: say so and open it (the limits can be set from its page).
+          try {
+            await put(`/api/v1/groups/${r.id}/policy`, policyFromDraft(limits));
+          } catch (e) {
+            toast.error(t('lim.notSaved'), e instanceof Error ? e.message : String(e));
+          }
+        }
         onCreated(r.id);
       }}>
       <Field label={t('group.name')} htmlFor="group-name" error={name && !valid ? t('wiz.nameInvalid') : undefined}>
@@ -69,6 +87,16 @@ export function NewGroupDialog({ parentId, onCreated, onClose }: { parentId: str
         <Textarea id="group-desc" rows={2} maxLength={1000} value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
       <p className="text-xs text-muted-foreground">{t('group.inheritHelp')}</p>
+      {canLimit && (
+        <div className="rounded-lg border">
+          <div className="flex items-center gap-2 px-3 py-2">
+            <Switch id="group-advanced" checked={advanced} onCheckedChange={setAdvanced} />
+            <Label htmlFor="group-advanced" className="cursor-pointer text-sm font-medium">{t('lim.advanced')}</Label>
+            <HelpTip>{t('lim.advancedHelp')}</HelpTip>
+          </div>
+          {advanced && <div className="border-t p-3"><LimitsEditor value={limits} onChange={setLimits} /></div>}
+        </div>
+      )}
     </ActionDialog>
   );
 }

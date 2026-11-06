@@ -31,6 +31,7 @@ public static class InventoryCleanup
                                             || (a.ScopeType == ScopeType.Vm && vmScopes.Contains(a.ScopeId))).ExecuteDeleteAsync(ct);
         await db.LogicalGroupMembers.Where(m => vmIds.Contains(m.VmId)).ExecuteDeleteAsync(ct);
         await db.InventoryEvents.Where(e => e.HostId == hostId).ExecuteDeleteAsync(ct);
+        await db.GroupNetworks.Where(n => n.HostId == hostId).ExecuteDeleteAsync(ct);
         await db.VirtualMachines.Where(v => v.HostId == hostId).ExecuteDeleteAsync(ct);
         await db.EnrollmentTokens.Where(t => t.HostId == hostId).ExecuteDeleteAsync(ct);
         await db.AgentCertificates.Where(c => c.HostId == hostId).ExecuteDeleteAsync(ct);
