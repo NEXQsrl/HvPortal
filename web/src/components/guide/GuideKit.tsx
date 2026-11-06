@@ -1,7 +1,7 @@
 import { Download } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { get } from '@/api/client';
-import type { PackageInfo } from '@/api/types';
+import type { AgentSetupInfo, PackageInfo } from '@/api/types';
 import { CopyButton, Notice, StatusBadge } from '@/components/common';
 import { Button } from '@/components/ui/button';
 import { useI18n, type TKey } from '@/i18n';
@@ -9,6 +9,7 @@ import { formatBytes } from '@/lib/format';
 import { useLoad } from '@/lib/hooks';
 
 export const AGENT_ZIP = 'HvPortal.Agent-win-x64.zip';
+export const AGENT_SETUP = 'HvPortal.Agent.Setup.exe';
 
 /** Vertical numbered procedure. */
 export function Steps({ children }: { children: ReactNode }) {
@@ -41,11 +42,11 @@ export function Bullets({ items }: { items: ReactNode[] }) {
 }
 
 // One request shared by every component of a page (the gateway hashes the 40+ MB zip on the first call).
-let packageRequest: { at: number; promise: Promise<{ agent: PackageInfo | null }> } | null = null;
+let packageRequest: { at: number; promise: Promise<{ agent: PackageInfo | null; agentSetup?: AgentSetupInfo | null }> } | null = null;
 
 function loadAgentPackage() {
   if (!packageRequest || Date.now() - packageRequest.at > 30_000) {
-    const promise = get<{ agent: PackageInfo | null }>('/api/v1/downloads');
+    const promise = get<{ agent: PackageInfo | null; agentSetup?: AgentSetupInfo | null }>('/api/v1/downloads');
     packageRequest = { at: Date.now(), promise };
     promise.catch(() => { packageRequest = null; });
   }
@@ -79,6 +80,32 @@ export function PackageDownload({ help }: { help?: ReactNode }) {
       <div className="flex items-center gap-2">
         <code className="secret pkg-hash flex-1 rounded-md border bg-muted px-2 py-1 font-mono text-xs break-all">{a.sha256}</code>
         <CopyButton text={a.sha256} />
+      </div>
+    </>
+  );
+}
+
+/** Download of the graphical setup of the agent (one file, to run on the server) with its SHA-256. */
+export function SetupDownload() {
+  const { t } = useI18n();
+  const pkg = useAgentPackage();
+  if (pkg.loading && !pkg.data) return <p className="text-muted-foreground">{t('common.loading')}</p>;
+  const s = pkg.data?.agentSetup;
+  if (!s) return <Notice kind="warn">{t('guide.x2.missing')}</Notice>;
+  // Only what the gateway knows about this file is shown (size and hash): the version and the signature state of the
+  // zip package are facts about another file.
+  return (
+    <>
+      <p className="text-muted-foreground">{t('guide.x2.help')}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button asChild size="sm"><a href="/api/v1/downloads/agent-setup" download={AGENT_SETUP}><Download />{t('guide.x2.download')}</a></Button>
+        <span className="text-xs text-muted-foreground">{AGENT_SETUP} · {formatBytes(s.sizeBytes)}</span>
+      </div>
+      <p className="text-xs text-muted-foreground">{t('guide.x2.smartscreen')}</p>
+      <div className="text-xs text-muted-foreground">SHA-256</div>
+      <div className="flex items-center gap-2">
+        <code className="secret setup-hash flex-1 rounded-md border bg-muted px-2 py-1 font-mono text-xs break-all">{s.sha256}</code>
+        <CopyButton text={s.sha256} />
       </div>
     </>
   );

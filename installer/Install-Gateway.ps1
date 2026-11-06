@@ -34,21 +34,8 @@ $exe = Join-Path $InstallPath 'HvPortal.Gateway.exe'
 if (-not (Test-Path (Join-Path $Source 'HvPortal.Gateway.exe'))) { throw "HvPortal.Gateway.exe not found in $Source." }
 if ($DataPath -match '^\\\\') { throw 'The data directory must be on local storage (SQLite must not be placed on SMB shares).' }
 
-$upgrade = [bool](Get-Service $service -ErrorAction SilentlyContinue)
-if ($upgrade) {
-    Stop-Service $service -Force
-    # Consistent copy of the SQLite database (main file + WAL + shared memory) while the service is stopped.
-    $dbDir = Join-Path $DataPath 'db'
-    if (Test-Path (Join-Path $dbDir 'hvportal.db')) {
-        $copy = Join-Path $dbDir "pre-upgrade-$(Get-Date -Format yyyyMMddHHmmss)"
-        New-Item -ItemType Directory -Force -Path $copy | Out-Null
-        foreach ($f in 'hvportal.db', 'hvportal.db-wal', 'hvportal.db-shm') {
-            if (Test-Path (Join-Path $dbDir $f)) { Copy-Item (Join-Path $dbDir $f) $copy }
-        }
-        Write-Host "Database copied to $copy before upgrade (rollback: restore these files with the previous version)."
-    }
-}
-
+# Everything that can refuse the installation is checked before the running service is stopped: a wrong port or
+# certificate must not leave a working gateway down.
 if ($UiPort -eq $AgentPort) { throw 'UiPort and AgentPort must be different.' }
 # The ports must be free (e.g. 443 is often taken by IIS or another HTTP.sys listener, shown as process "System").
 foreach ($p in $UiPort, $AgentPort) {
@@ -66,6 +53,21 @@ if ($UiCertificateThumbprint) {
     $uiCert = Get-Item "Cert:\LocalMachine\My\$UiCertificateThumbprint" -ErrorAction SilentlyContinue
     if (-not $uiCert) { throw "Certificate $UiCertificateThumbprint not found in LocalMachine\My (import the PFX first: Import-PfxCertificate -CertStoreLocation Cert:\LocalMachine\My)." }
     if (-not $uiCert.HasPrivateKey) { throw "Certificate $UiCertificateThumbprint has no private key (import the .pfx, not the .cer)." }
+}
+
+$upgrade = [bool](Get-Service $service -ErrorAction SilentlyContinue)
+if ($upgrade) {
+    Stop-Service $service -Force
+    # Consistent copy of the SQLite database (main file + WAL + shared memory) while the service is stopped.
+    $dbDir = Join-Path $DataPath 'db'
+    if (Test-Path (Join-Path $dbDir 'hvportal.db')) {
+        $copy = Join-Path $dbDir "pre-upgrade-$(Get-Date -Format yyyyMMddHHmmss)"
+        New-Item -ItemType Directory -Force -Path $copy | Out-Null
+        foreach ($f in 'hvportal.db', 'hvportal.db-wal', 'hvportal.db-shm') {
+            if (Test-Path (Join-Path $dbDir $f)) { Copy-Item (Join-Path $dbDir $f) $copy }
+        }
+        Write-Host "Database copied to $copy before upgrade (rollback: restore these files with the previous version)."
+    }
 }
 
 $backup = Install-ServiceBinaries -Source $Source -InstallPath $InstallPath -ServiceName $service

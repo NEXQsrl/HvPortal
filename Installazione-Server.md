@@ -1,181 +1,90 @@
 # Installazione HvPortal: gateway + host Hyper-V fuori dominio
 
-Il **gateway** (il portale web) va su un server Windows, anche a dominio.
-Per l'**host Hyper-V** ci sono due varianti:
+Si installa tutto con due file di setup, senza comandi PowerShell:
 
-- **A — Agent sull'host** (consigliata): l'agent si installa sull'host e si collega lui al gateway. Non servono password
-  né porte aperte sull'host.
-- **B — Agent di management**: sull'host non si installa niente. Un agent su un server Windows raggiunge l'host con
-  utente e password salvati nel portale.
+| File (in `artifacts\release\0.5.0\setup`) | Dove si esegue |
+|---|---|
+| `HvPortal.Gateway.Setup.exe` | sul server del gateway (il portale web), anche a dominio |
+| `HvPortal.Agent.Setup.exe` | sull'host Hyper-V (si può scaricare anche dal portale) |
 
-Prima di iniziare, sostituisci questi segnaposto ovunque compaiono:
+Entrambi sono procedure guidate in italiano: doppio clic, conferma dei diritti di amministratore, *Avanti*.
 
-| Segnaposto | Cosa è | Esempio |
-|---|---|---|
-| `<GATEWAY>` | nome o IP del server del gateway, raggiungibile dall'host | `10.0.10.5` |
-| `<HOST>` | nome dell'host Hyper-V | `HV01` |
-| `<HOST-IP>` | IP dell'host Hyper-V | `172.40.1.169` |
-
-Ogni comando va eseguito in **PowerShell come amministratore**.
+> **Avviso di Windows.** I file sono firmati con il certificato NEXQ self-signed, quindi al primo avvio Windows mostra
+> "PC protetto da Windows". Scegli *Ulteriori informazioni → Esegui comunque*, oppure importa prima il certificato
+> `installer\HvPortal-CodeSigning.cer` (vedi in fondo).
 
 ---
 
-## Passo 1 — Installare il gateway (sul server del gateway)
+## Passo 1 — Installare il gateway
 
-1. Copia la cartella della release (`artifacts\release\0.5.0`) sul server, ad esempio in `C:\HvPortal\0.5.0`.
-2. Sblocca i file e rendi attendibile il certificato di firma NEXQ:
-   ```powershell
-   cd C:\HvPortal\0.5.0
-   Get-ChildItem -Recurse | Unblock-File
-   Import-Certificate -FilePath .\installer\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
-   Import-Certificate -FilePath .\installer\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
-   ```
-3. Installa il gateway. In `-PublicNames` metti **tutti** i nomi e IP con cui l'host raggiungerà il gateway: un host
-   fuori dominio di solito non risolve i nomi del dominio, quindi includi l'IP.
-   ```powershell
-   cd C:\HvPortal\0.5.0\installer
-   .\Install-Gateway.ps1 -Source ..\gateway -PublicNames <GATEWAY>,gw01.contoso.local -OpenFirewall -AgentRemoteAddress <HOST-IP>
-   ```
-   `-AgentRemoteAddress` serve se l'host è in un'altra rete: per default il firewall accetta gli agent solo dalla stessa
-   subnet.
+1. Copia `HvPortal.Gateway.Setup.exe` sul server del gateway e aprilo.
+2. **Indirizzi e porte**: controlla che tra i nomi ci sia l'indirizzo con cui l'host raggiungerà il gateway. Un host
+   fuori dominio di solito non risolve i nomi del dominio: lascia nell'elenco l'**IP** del server.
+   Porta del portale: `8443`, oppure `443` per non scrivere la porta nel browser.
+3. **Certificato del portale**: lascia *Certificato interno*, oppure scegli *Importa un file di certificato della tua
+   CA (.pfx)* e indica file e password.
+4. **Windows Firewall**: lascia attiva la creazione delle regole. In *Quali host possono collegarsi come agent* aggiungi
+   l'IP dell'host se è in un'altra rete, ad esempio `LocalSubnet, 172.40.1.169`.
+5. Premi **Installa**. Alla fine il setup mostra l'indirizzo del portale e il **token di setup**: copialo.
 
 ## Passo 2 — Primo accesso al portale
 
-1. Leggi il token di setup:
-   ```powershell
-   Get-Content C:\ProgramData\HvPortal\Gateway\bootstrap\setup-token.txt
-   ```
-2. Apri `https://<GATEWAY>:8443`. L'avviso sul certificato è normale: per toglierlo vedi "Porta 443 e certificato della
-   tua CA" più sotto.
-3. Inserisci il token, un nome utente amministratore e una passphrase di almeno 15 caratteri.
-4. Configura l'app di autenticazione (TOTP) e salva i codici di recupero in un posto sicuro.
+1. Apri l'indirizzo mostrato dal setup (pulsante *Apri il portale*).
+2. Inserisci il token, un nome utente amministratore e una passphrase di almeno 15 caratteri.
+3. Configura l'app di autenticazione (TOTP) e salva i codici di recupero in un posto sicuro.
 
----
+## Passo 3 — Installare l'agent sull'host Hyper-V
 
-## Variante A — Agent sull'host, con utente di servizio dedicato
+1. Nel portale: **Aggiungi host → Agent sull'host (consigliato)**. Resta aperta una finestra con il metodo
+   **Setup guidato**.
+2. Dalla finestra scarica `HvPortal.Agent.Setup.exe` e copialo sull'host.
+3. Nella finestra scegli il nome o l'IP del gateway che l'host riesce a raggiungere, poi copia la riga
+   **Dati per il setup** (icona di copia). Vale 15 minuti.
+4. Sull'host apri il setup:
+   - **Dove viene installato l'agent**: *Su un host Hyper-V*.
+   - **Collegamento al gateway**: premi **Incolla dal portale**. Se copi da un altro PC, incolla la riga in un file di
+     testo sull'host e copiala da lì, oppure scrivi a mano i tre valori.
+   - **Account di servizio**: lascia *Account automatico*. Scegli *Utente locale dedicato* solo se le tue regole
+     richiedono un utente con nome (il setup lo crea con i permessi minimi).
+5. Premi **Installa**. Entro pochi secondi l'host risulta **online** nel portale, con **Accesso Hyper-V = Ok**.
 
-### A1. Scaricare il pacchetto
-
-Nel portale: **Aggiungi host → Agent sull'host (consigliato)**. Scarica il pacchetto dalla finestra e copialo sull'host.
-La finestra resta aperta: mostra il token (valido 15 minuti), l'impronta della CA e il comando già compilato.
-
-### A2. Preparare l'host
-
-```powershell
-Unblock-File .\HvPortal.Agent-win-x64.zip
-Expand-Archive .\HvPortal.Agent-win-x64.zip C:\HvPortal\agent-package
-cd C:\HvPortal\agent-package\installer
-Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
-Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
-Test-NetConnection <GATEWAY> -Port 8444
-```
-
-`Test-NetConnection` deve rispondere `TcpTestSucceeded : True`.
-
-### A3. Installare l'agent con l'utente di servizio
-
-Prendi il comando dalla finestra del portale e aggiungi in fondo `-ServiceAccount svc-hvportal`:
-
-```powershell
-$env:HVP_ENROLLMENT_TOKEN = '<token>'
-.\Install-Agent.ps1 -Source ..\agent -Gateway https://<GATEWAY>:8444 -CaSha256 <impronta> -ServiceAccount svc-hvportal
-```
-
-Lo script crea l'utente locale `svc-hvportal` con i minimi permessi necessari:
-
-| Cosa | Impostazione |
-|---|---|
-| Password | casuale di 40 caratteri, non la conosce nessuno e non scade |
-| Gruppi | solo *Hyper-V Administrators*, **non** *Administrators* |
-| Diritti | solo "Accesso come servizio" |
-| Accessi negati | locale, Desktop remoto, dalla rete, batch |
-| Cartelle | programma in sola lettura; dati dell'agent (la sua identità) accessibili solo a lui e agli amministratori |
-
-Se non metti `-ServiceAccount`, l'agent usa l'account virtuale `NT SERVICE\HvPortalAgent`. Ha gli stessi permessi minimi
-ma non ha un nome utente.
-
-Se vuoi creare VM o caricare file in una cartella dell'host, dai all'utente il permesso di modifica su quella cartella:
+Se vuoi creare VM o caricare file in una cartella dell'host con l'utente dedicato, dagli il permesso di modifica:
 ```powershell
 icacls D:\Hyper-V /grant "svc-hvportal:(OI)(CI)M"
 ```
 
-### A4. Verificare
+### Variante: niente sull'host (agent di management)
 
-Entro pochi secondi l'host risulta **online** nel portale, con **Accesso Hyper-V = Ok**.
-
----
-
-## Variante B — Agent di management (niente sull'host)
-
-1. Nel portale: **Inventario → Agent di management → Nuovo agent di management**. Installalo su un server Windows
-   (anche quello del gateway) con il comando della finestra, che termina con `-Management`.
-2. Sull'host:
-   ```powershell
-   Enable-PSRemoting -Force -SkipNetworkProfileCheck
-   Enable-NetFirewallRule -Group '@FirewallAPI.dll,-34251'   # Strumentazione gestione Windows (WMI)
-   Enable-NetFirewallRule -Group '@FirewallAPI.dll,-28502'   # Condivisione file e stampanti
-   ```
-   Solo se non usi l'utente `Administrator` predefinito:
-   ```powershell
-   New-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force
-   ```
-3. Sul server dell'agent di management:
-   ```powershell
-   Set-Item WSMan:\localhost\Client\TrustedHosts -Value '<HOST-IP>' -Concatenate -Force
-   Test-WSMan <HOST-IP> -Credential (Get-Credential '<HOST>\Administrator') -Authentication Negotiate
-   ```
-4. Nel portale: **Aggiungi host → Tramite un agent di management**. Compila così:
-   - host: `<HOST-IP>`;
-   - utente: `<HOST>\Administrator`;
-   - password.
+Nel portale: **Inventario → Agent di management → Nuovo agent di management**, poi esegui `HvPortal.Agent.Setup.exe` su
+un server Windows (anche quello del gateway) scegliendo *Su un server di management*. La preparazione dell'host
+(WinRM, firewall, TrustedHosts) è descritta in [docs/install.md](docs/install.md), sezione 4b.
 
 ---
 
-## Porta 443 e certificato della tua CA (sul server del gateway)
+## Aggiornare
 
-1. Importa il PFX nell'archivio del computer:
-   ```powershell
-   $cert = Import-PfxCertificate -FilePath C:\temp\hvportal.pfx -CertStoreLocation Cert:\LocalMachine\My -Password (Read-Host -AsSecureString 'Password PFX')
-   $cert | Format-List Subject, DnsNameList, NotAfter, Thumbprint
-   ```
-   Il certificato deve contenere il nome che si scrive nel browser, ad esempio `hvportal.contoso.com`.
-2. Recupera i parametri attuali del gateway:
-   ```powershell
-   (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\HvPortalGateway).Environment
-   ```
-3. Rilancia l'installazione con **gli stessi parametri** di prima, più porta e certificato:
-   ```powershell
-   cd C:\HvPortal\0.5.0\installer
-   .\Install-Gateway.ps1 -Source ..\gateway -PublicNames <GATEWAY>,gw01.contoso.local -OpenFirewall -AgentRemoteAddress <HOST-IP> `
-       -UiPort 443 -UiCertificateThumbprint $cert.Thumbprint
-   ```
-   Lo script:
-   - si ferma se la porta 443 è già occupata, ad esempio da IIS;
-   - dà al servizio il permesso di leggere la chiave privata del certificato;
-   - sposta la regola del firewall sulla 443.
-4. Apri `https://hvportal.contoso.com`, senza porta. Gli agent continuano a usare la porta 8444: sugli host non cambia
-   niente.
+Riesegui il setup della nuova versione sullo stesso server: riconosce l'installazione, ripropone le impostazioni
+attuali e mantiene il collegamento dell'agent. Prima il gateway, poi gli agent.
 
-## Accesso con Microsoft Entra ID
+Per cambiare porta o certificato del gateway in un secondo momento, riesegui `HvPortal.Gateway.Setup.exe` e modifica
+la pagina corrispondente. Se usi l'accesso con Microsoft Entra ID, aggiorna l'URI di reindirizzamento.
 
-Nel portale: **Guida → Accesso con Microsoft Entra ID**. La pagina spiega passo passo:
-- la registrazione dell'app in Entra, con l'URI di reindirizzamento già pronto da copiare;
-- il segreto client;
-- le impostazioni del portale;
-- la creazione degli utenti Microsoft.
+## Rendere attendibile il certificato di firma (facoltativo)
 
-Se hai cambiato porta o nome del portale, l'URI di reindirizzamento in Entra va aggiornato.
-
----
+Su ogni server, da PowerShell come amministratore, con il file `HvPortal-CodeSigning.cer` della release:
+```powershell
+Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
+Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+```
 
 ## Se qualcosa non va
 
 | Sintomo | Cosa controllare |
 |---|---|
-| L'agent sull'host non si collega | `Test-NetConnection <GATEWAY> -Port 8444`; il nome usato in `-Gateway` deve essere tra i `-PublicNames`; `-AgentRemoteAddress` sul gateway |
-| `Install-Agent` dice che un diritto utente non è stato concesso | una Group Policy impone i diritti utente: togli `-ServiceAccount` oppure aggiungi l'utente nella GPO |
-| Creazione VM o upload "accesso negato" | permesso di modifica dell'utente di servizio sulla cartella (`icacls`, variante A) |
-| `AccessDenied` sull'host (variante B) | password, utente nella forma `HOST\utente`, `LocalAccountTokenFilterPolicy` |
-| Il gateway non parte sulla 443 | porta occupata (IIS?), certificato senza chiave privata, nome nel certificato |
+| Il setup si ferma con un errore | Le ultime righe nel riquadro del setup; il log completo è in `C:\ProgramData\HvPortal\SetupLogs` |
+| "La porta 443 è già usata" | Sul server c'è IIS o un altro programma sulla 443: usa un'altra porta o fermalo |
+| L'agent non si collega | Dall'host: `Test-NetConnection <IP gateway> -Port 8444`. Il nome usato deve essere tra quelli indicati nel setup del gateway; l'IP dell'host deve essere ammesso dal firewall del gateway |
+| "Incolla dal portale" non trova i dati | Copia di nuovo la riga *Dati per il setup*; il token scade dopo 15 minuti (nel portale: *Nuovo token*) |
+| Creazione VM o upload "accesso negato" | Permesso di modifica dell'account di servizio sulla cartella (`icacls`) |
 
-Guida completa (in inglese): [docs/install.md](docs/install.md).
+Installazione con script PowerShell (per automazioni o Server Core): [docs/install.md](docs/install.md).

@@ -177,3 +177,20 @@
     image-rendering: pixelated;
   }
 }
+
+/*
+ * Tab bar of a page header: scrolls sideways on narrow screens without showing a scrollbar, and the underline of the
+ * active tab sits inside the bar (with the default offset it overflowed and produced a vertical scrollbar).
+ * Unlayered on purpose: it must win over the utility classes of the tab component.
+ */
+.page-tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.page-tabs::-webkit-scrollbar {
+  display: none;
+}
+.page-tabs [data-slot="tabs-trigger"]::after {
+  bottom: 0;
+}

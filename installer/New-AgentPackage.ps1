@@ -5,7 +5,7 @@
 .DESCRIPTION
   Layout inside the zip:
     agent\        self-contained agent (no .NET installation needed on the host)
-    installer\    Install-Agent.ps1, Common.ps1, Uninstall-HvPortal.ps1 (+ HvPortal-CodeSigning.cer for signed builds)
+    installer\    Install-Agent.ps1, Common.ps1, Uninstall-HvPortal.ps1, Invoke-Setup.ps1 (+ HvPortal-CodeSigning.cer for signed builds)
     LEGGIMI.txt / README.txt
   The manifest records version, build time and whether HvPortal.Agent.exe carries a valid Authenticode signature
   (checked with Get-AuthenticodeSignature, never assumed). A self-signed signature whose root is not trusted on the
@@ -40,7 +40,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Agent publish failed.' }
     }
     $inst = if ($InstallerDirectory) { $InstallerDirectory } else { Join-Path $repo 'installer' }
-    Copy-Item (Join-Path $inst 'Common.ps1'), (Join-Path $inst 'Install-Agent.ps1'), (Join-Path $inst 'Uninstall-HvPortal.ps1') $installerStage
+    # Invoke-Setup.ps1: used by the graphical setup (HvPortal.Agent.Setup.exe), whose payload is this same package.
+    Copy-Item (Join-Path $inst 'Common.ps1'), (Join-Path $inst 'Install-Agent.ps1'), (Join-Path $inst 'Uninstall-HvPortal.ps1'), (Join-Path $inst 'Invoke-Setup.ps1') $installerStage
     $publisherCer = Join-Path $inst 'HvPortal-CodeSigning.cer'
     if (Test-Path $publisherCer) { Copy-Item $publisherCer $installerStage }
 

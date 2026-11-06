@@ -5,7 +5,8 @@ import type { GatewayConnection, Host } from '@/api/types';
 import { useI18n } from '@/i18n';
 import { useNow } from '@/lib/hooks';
 import { Notice } from './common';
-import { AGENT_ZIP, Bullets, Command, PackageDownload, Step, Steps, TROUBLE_CONNECT, TroubleshootingTable } from './guide/GuideKit';
+import { AGENT_ZIP, Bullets, Command, PackageDownload, SetupDownload, Step, Steps, TROUBLE_CONNECT, TroubleshootingTable, useAgentPackage } from './guide/GuideKit';
+import { cn } from '@/lib/utils';
 import { NativeSelect } from './ui/native-select';
 
 /**
@@ -30,19 +31,86 @@ export function AgentSetupGuide({ connection, token, expiresAt, host, troublesho
   const url = `https://${name}:${connection.agentPort}`;
   const folder = 'C:\\HvPortal\\agent-package';
   const tokenValue = token ?? '<token>';
+  // Two ways to install: the graphical setup (when this gateway provides the file) or the PowerShell scripts.
+  const pkg = useAgentPackage();
+  const hasSetup = !!pkg.data?.agentSetup;
+  const [chosen, setChosen] = useState<'setup' | 'powershell' | null>(null);
+  const method = chosen ?? (hasSetup ? 'setup' : 'powershell');
+  // Until the gateway has said whether it provides the setup file, no method is shown as chosen (no flip afterwards).
+  const deciding = chosen === null && pkg.loading && !pkg.data;
+  // One line read by the setup ("Paste from the portal"): gateway address, CA fingerprint, one-time token, role.
+  const setupData = `HVPORTAL-SETUP gateway=${url} ca=${connection.caFingerprintSha256} token=${tokenValue} role=${management ? 'management' : 'host'}`;
+  const gatewayName = (
+    <div className="grid max-w-md gap-1.5">
+      <label htmlFor="gw-name" className="text-xs font-medium text-muted-foreground">{t('guide.s4.name')}</label>
+      <NativeSelect id="gw-name" value={name} onChange={(e) => setName(e.target.value)}>
+        {connection.gatewayNames.map((n) => <option key={n} value={n}>{n}</option>)}
+      </NativeSelect>
+      <div className="text-xs text-muted-foreground">{t('guide.s4.nameHelp')}</div>
+    </div>
+  );
+  const tokenNotice = token ? (
+    expired
+      ? <Notice kind="danger">{t('guide.s5.expired')}</Notice>
+      : <Notice kind={remaining < 180 ? 'warn' : 'info'}>{t('guide.s5.countdown', { time: formatMmSs(remaining), at: fmtDate(expiresAt) })}</Notice>
+  ) : <Notice kind="info">{t('guide.s5.noToken')}</Notice>;
+  const verifyStep = (n: number) => (management ? (
+    <Step n={n} title={t('guide.m.s6.title')}>
+      {managementConnected !== undefined && (managementConnected
+        ? <div className="flex items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2" role="status"><CircleCheck className="size-4 text-success" />{t('guide.m.s6.connected')}</div>
+        : <div className="flex items-center gap-2 rounded-lg border border-info/30 bg-info/5 px-3 py-2" role="status"><LoaderCircle className="size-4 animate-spin text-info" />{t('guide.s6.waiting')}</div>)}
+      <Command text={`& 'C:\\Program Files\\HvPortal\\Agent\\HvPortal.Agent.exe' status`} />
+      <p className="text-muted-foreground">{t('guide.m.s6.next')}</p>
+    </Step>
+  ) : (
+    <Step n={n} title={t('guide.s6.title')}>
+      {host !== undefined && <HostStatus host={host} />}
+      <p className="text-muted-foreground">{t('guide.s6.help')}</p>
+      <Command text={`& 'C:\\Program Files\\HvPortal\\Agent\\HvPortal.Agent.exe' inventory`} />
+      <p className="text-muted-foreground">{t('guide.s6.expect')}</p>
+    </Step>
+  ));
+  const prerequisites = (
+    <Step n={1} title={t('guide.s1.title')}>
+      <Bullets items={[
+        t(method === 'setup' ? 'guide.x1.admin' : 'guide.s1.admin'),
+        t('guide.s1.network', { port: connection.agentPort }),
+        ...(management ? [t('guide.m.s1.server'), t('guide.m.s1.ports')] : [t('guide.s1.hyperv'), t('guide.s1.module')]),
+        ...(token ? [t(method === 'setup' ? 'guide.x1.token' : 'guide.s1.token')] : []),
+      ]} />
+    </Step>
+  );
 
   return (
     <div>
       {!connection.listensOnNetwork && <Notice kind="danger" className="mb-4">{t('guide.loopbackOnly', { bind: connection.bindAddress })}</Notice>}
+      <div role="radiogroup" aria-label={t('guide.method.label')} className="mb-4 inline-flex rounded-lg border bg-muted p-0.5 text-sm">
+        {(['setup', 'powershell'] as const).map((m) => (
+          <button key={m} type="button" role="radio" aria-checked={!deciding && method === m} onClick={() => setChosen(m)}
+            className={cn('rounded-md px-3 py-1', !deciding && method === m ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+            {t(m === 'setup' ? 'guide.method.setup' : 'guide.method.powershell')}
+          </button>
+        ))}
+      </div>
+      {deciding ? <p className="text-muted-foreground">{t('common.loading')}</p> : method === 'setup' ? (
+        <Steps>
+          {prerequisites}
+          <Step n={2} title={t('guide.x2.title')}>
+            <SetupDownload />
+          </Step>
+          <Step n={3} title={t('guide.x3.title')}>
+            <p className="text-muted-foreground">{t('guide.x3.help')}</p>
+            {gatewayName}
+            {tokenNotice}
+            <div className="text-xs text-muted-foreground">{t('guide.x3.data')}</div>
+            <Command text={setupData} />
+            <p className="text-xs text-muted-foreground">{t('guide.x3.manual')}</p>
+          </Step>
+          {verifyStep(4)}
+        </Steps>
+      ) : (
       <Steps>
-        <Step n={1} title={t('guide.s1.title')}>
-          <Bullets items={[
-            t('guide.s1.admin'),
-            t('guide.s1.network', { port: connection.agentPort }),
-            ...(management ? [t('guide.m.s1.server'), t('guide.m.s1.ports')] : [t('guide.s1.hyperv'), t('guide.s1.module')]),
-            ...(token ? [t('guide.s1.token')] : []),
-          ]} />
-        </Step>
+        {prerequisites}
         <Step n={2} title={t('guide.s2.title')}>
           <PackageDownload help={t('guide.s2.help')} />
         </Step>
@@ -55,45 +123,21 @@ export function AgentSetupGuide({ connection, token, expiresAt, host, troublesho
         </Step>
         <Step n={4} title={t('guide.s4.title')}>
           <p className="text-muted-foreground">{t('guide.s4.help')}</p>
-          <div className="grid max-w-md gap-1.5">
-            <label htmlFor="gw-name" className="text-xs font-medium text-muted-foreground">{t('guide.s4.name')}</label>
-            <NativeSelect id="gw-name" value={name} onChange={(e) => setName(e.target.value)}>
-              {connection.gatewayNames.map((n) => <option key={n} value={n}>{n}</option>)}
-            </NativeSelect>
-            <div className="text-xs text-muted-foreground">{t('guide.s4.nameHelp')}</div>
-          </div>
+          {gatewayName}
           <Command text={`Test-NetConnection ${name} -Port ${connection.agentPort}`} />
           <p className="text-muted-foreground">{t('guide.s4.expect')}</p>
         </Step>
         <Step n={5} title={t('guide.s5.title')}>
-          {token ? (
-            expired
-              ? <Notice kind="danger">{t('guide.s5.expired')}</Notice>
-              : <Notice kind={remaining < 180 ? 'warn' : 'info'}>{t('guide.s5.countdown', { time: formatMmSs(remaining), at: fmtDate(expiresAt) })}</Notice>
-          ) : <Notice kind="info">{t('guide.s5.noToken')}</Notice>}
+          {tokenNotice}
           <Command text={`cd ${folder}\\installer\n$env:HVP_ENROLLMENT_TOKEN = '${tokenValue}'\n.\\Install-Agent.ps1 -Source ..\\agent -Gateway ${url} -CaSha256 ${connection.caFingerprintSha256}${management ? ' -Management' : ''}`} />
           <p className="text-muted-foreground">{t('guide.s5.what')}</p>
           <div className="text-xs text-muted-foreground">{t('host.fingerprint')}</div>
           <code className="secret block rounded-md border bg-muted px-2 py-1 font-mono text-xs break-all">{connection.caFingerprintSha256}</code>
           <p className="text-xs text-muted-foreground">{t('guide.s5.fingerprint')}</p>
         </Step>
-        {management ? (
-          <Step n={6} title={t('guide.m.s6.title')}>
-            {managementConnected !== undefined && (managementConnected
-              ? <div className="flex items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2" role="status"><CircleCheck className="size-4 text-success" />{t('guide.m.s6.connected')}</div>
-              : <div className="flex items-center gap-2 rounded-lg border border-info/30 bg-info/5 px-3 py-2" role="status"><LoaderCircle className="size-4 animate-spin text-info" />{t('guide.s6.waiting')}</div>)}
-            <Command text={`& 'C:\\Program Files\\HvPortal\\Agent\\HvPortal.Agent.exe' status`} />
-            <p className="text-muted-foreground">{t('guide.m.s6.next')}</p>
-          </Step>
-        ) : (
-          <Step n={6} title={t('guide.s6.title')}>
-            {host !== undefined && <HostStatus host={host} />}
-            <p className="text-muted-foreground">{t('guide.s6.help')}</p>
-            <Command text={`& 'C:\\Program Files\\HvPortal\\Agent\\HvPortal.Agent.exe' inventory`} />
-            <p className="text-muted-foreground">{t('guide.s6.expect')}</p>
-          </Step>
-        )}
+        {verifyStep(6)}
       </Steps>
+      )}
 
       {troubleshooting === 'inline' ? (
         <details className="guide-trouble mt-4 rounded-lg border bg-card">

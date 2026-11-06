@@ -43,6 +43,28 @@ scripts, and AppLocker/WDAC or antivirus allow rules can be written *by publishe
 `-TimestampServer` the signatures stop validating when the certificate expires (re-sign with a new certificate).
 Keep the private key on the build machine only; whoever holds it can sign code that those machines will trust.
 
+## 1b. Graphical setup (one file per component)
+
+`Build-Release.ps1` also produces two setup programs in `artifacts\release\<version>\setup\` (ADR-026):
+
+| File | Use |
+|---|---|
+| `HvPortal.Gateway.Setup.exe` | installs or updates the gateway. Pages: names and ports, portal certificate (internal, one from the computer store, or **import a .pfx**), Windows Firewall. On an update the current settings are read from the service and pre-filled. At the end it shows the portal address and, on a new installation, the setup token. |
+| `HvPortal.Agent.Setup.exe` | installs or updates the agent. Pages: Hyper-V host or management server, connection data (**Paste from the portal**: Add host > Guided setup), service account (automatic or dedicated local user). On an update the connection to the gateway is kept. Also downloadable from the portal (Add host / New management agent). |
+
+Double-click the file and accept the administrator prompt. Each setup is a single file that needs nothing else
+(.NET Framework 4.7.2, part of Windows Server 2019 and later) and carries the same signed binaries and scripts of the
+release; it unpacks them into a folder only administrators can write (`Program Files\HvPortal\Setup\...`), runs the
+installer script of sections 2 and 4 with your choices and shows its output. The log is saved in
+`C:\ProgramData\HvPortal\SetupLogs`. The wizard is in Italian or English (Windows display language).
+
+A setup signed with a self-signed certificate (or unsigned) makes Windows show "Windows protected your PC" until the
+publisher certificate is trusted: import `HvPortal-CodeSigning.cer` as described above, or choose *More info > Run
+anyway* after checking the SHA-256 (`SHA256SUMS.txt`, or the value shown by the portal for the agent setup).
+
+For unattended installations keep using the scripts below; they are also inside each setup:
+`HvPortal.Gateway.Setup.exe --extract C:\HvPortal\files` unpacks `gateway\` (or `agent\`) and `installer\`.
+
 ## 2. Install the gateway (elevated PowerShell on the management server)
 
 ```powershell

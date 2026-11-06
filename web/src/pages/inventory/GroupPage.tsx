@@ -126,7 +126,7 @@ export function InventoryHome() {
           {inv.canManageGroups && <Button size="sm" variant="outline" onClick={() => ops.openNewGroup(null)}><FolderPlus />{t('group.new')}</Button>}
           {inv.hosts.some((h) => h.canCreateVm) && <Button size="sm" onClick={() => ops.openCreateVm()}><Plus />{t('wiz.title')}</Button>}
         </>}>
-        <TabsList variant="line" className="-mb-px h-9 w-full justify-start overflow-x-auto rounded-none bg-transparent p-0">
+        <TabsList variant="line" className="page-tabs -mb-px h-9 w-full justify-start rounded-none bg-transparent p-0">
           {views.map((v) => (
             <TabsTrigger key={v} value={v} className="flex-none gap-1.5 px-3">
               {t(('inv.view.' + v) as TKey)}{v !== 'agents' && <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground tabular">{counts[v]}</span>}

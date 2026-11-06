@@ -98,6 +98,38 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-026 Graphical setup for the gateway and the agent
+- **Context**: installing with PowerShell commands (parameters to remember, names to repeat on every update, PFX
+  import by hand) is not friendly for occasional administrators.
+- **Decision**: `installer/HvPortal.Setup` builds two wizard programs, `HvPortal.Gateway.Setup.exe` and
+  `HvPortal.Agent.Setup.exe`, each a single file with the release payload embedded (binaries + installer scripts).
+  - The wizard is a front end, not a second installer: it runs the same `Install-Gateway.ps1` / `Install-Agent.ps1`
+    through `installer\Invoke-Setup.ps1`. Choices are written to a JSON file and splatted to the script, so nothing
+    typed in the wizard reaches a command line or is parsed as PowerShell; unknown parameter names are refused; the
+    enrollment token travels in the `HVP_ENROLLMENT_TOKEN` environment variable of the child process. Every field is
+    also validated by `SetupLogic.cs` (names, ports, thumbprint, firewall addresses, gateway URL, fingerprint, account).
+  - The payload is unpacked into `Program Files\HvPortal\Setup\<component>-<guid>` with a protected ACL
+    (Administrators and SYSTEM only) and removed at the end: the scripts run elevated, so no other user may change
+    them in between; it also avoids running anything from `%TEMP%`.
+  - Gateway: on an update the settings are read from the service environment and pre-filled; a .pfx can be imported
+    into `LocalMachine\My` (machine key, not exportable) from the wizard; ports in use are reported before installing
+    (the ports the running gateway already holds are its own). `Install-Gateway.ps1` repeats the port and certificate
+    checks **before** it stops the running service, so a refused update leaves the working gateway up.
+  - Agent: the portal shows one line of connection data (`HVPORTAL-SETUP gateway=... ca=... token=... role=...`) that
+    the wizard reads from the clipboard; the portal serves the agent setup from `packages\` next to the zip
+    (`GET /downloads/agent-setup`, `hosts.manage`, audited) and the guide offers "Guided setup" first. When the pasted
+    data were created for the other kind of agent (host / management), the wizard follows them and says so.
+  - .NET Framework 4.7.2 / Windows Forms: present on Windows Server 2019 and later, so the setup is one small file
+    that starts without installing or unpacking a runtime. Elevation is requested by the program itself (UAC).
+- **Alternatives**: MSI with WiX or Inno Setup — external tool chains to license and download, and a second
+  installation logic to keep aligned with the scripts; a self-contained .NET 10 single-file wizard — 70 MB larger
+  per setup and it unpacks native libraries to `%TEMP%` at start (blocked by some antivirus policies).
+- **Consequences**: the scripts stay the single source of truth (and the way for unattended installs:
+  `--extract`). A setup that is unsigned or signed with a self-signed certificate triggers SmartScreen until the
+  publisher certificate is trusted. The wizard needs a desktop session; on Server Core use the scripts. The wizard
+  pages are checked by rendering them (`--render`); the installation itself needs elevation and is in the real-host
+  plan (V43–V44).
+
 ## ADR-025 Virtual switches, checkpoint apply on a running VM, VM notes (agent protocol 7)
 - **Virtual switches**: three typed operations — `ListNetAdapters` (physical adapters and the switch bound to each),
   `NewSwitch` (`NewSwitchRequest`: name, External/Internal/Private, physical adapter and "share with the host" for

@@ -1,0 +1,9 @@
+<Project>
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+  <!-- The same project is built twice (Gateway and Agent setup): each variant keeps its own intermediate folder,
+       otherwise the second build removes the output of the first as stale. -->
+  <PropertyGroup>
+    <SetupComponent Condition="'$(SetupComponent)' == ''">Agent</SetupComponent>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)obj\$(SetupComponent)\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

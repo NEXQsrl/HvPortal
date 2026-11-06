@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Graphical setup of the gateway or of the agent: one executable that carries the payload (binaries + installer
+    scripts) and drives the same scripts used for scripted installations. Built by installer\Build-Release.ps1:
+      dotnet build installer\HvPortal.Setup -c Release -p:SetupComponent=Gateway|Agent -p:PayloadZip=<zip> -o <dir>
+    .NET Framework 4.7.2 on purpose: it is part of Windows Server 2019 and later, so the setup is a single small file
+    that starts without installing or unpacking a runtime. Not part of HvPortal.slnx (its logic is unit-tested through
+    SetupLogic.cs, linked into the gateway test project).
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <SetupComponent Condition="'$(SetupComponent)' == ''">Agent</SetupComponent>
+    <AssemblyName>HvPortal.$(SetupComponent).Setup</AssemblyName>
+    <RootNamespace>HvPortal.Setup</RootNamespace>
+    <AssemblyTitle>HvPortal $(SetupComponent) Setup</AssemblyTitle>
+    <DefineConstants Condition="'$(SetupComponent)' == 'Gateway'">$(DefineConstants);SETUP_GATEWAY</DefineConstants>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Prefer32Bit>false</Prefer32Bit>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <DebugType>none</DebugType>
+    <!-- One file only: no HvPortal.*.Setup.exe.config next to the setup. -->
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
+    <!-- Both variants keep their intermediate files under obj\<component>: none of them is source code. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;bin\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.ServiceProcess" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(PayloadZip)' != ''">
+    <EmbeddedResource Include="$(PayloadZip)" LogicalName="payload.zip" />
+  </ItemGroup>
+
+</Project>

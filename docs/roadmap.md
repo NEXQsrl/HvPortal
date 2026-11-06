@@ -45,6 +45,8 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 - Checkpoints can be applied to a running VM (turned off first). VM description replaced by the Hyper-V notes.
 - Navigator: the sidebar is gone; icon-only navigation above a tree that follows the page (inventory, networks,
   storage, tasks, audit, settings, guide). Real-host plan V38–V42.
+- Graphical setup programs for the gateway and the agent (ADR-026), agent setup downloadable from the portal with
+  "Paste from the portal"; page tab bars no longer show a scrollbar. Real-host plan V43–V44.
 
 ## v0.4.0 — delivered (code + automated tests; real-host validation pending)
 - Management agents (ADR-022): remote Hyper-V hosts (e.g. workgroup) managed from a management server with

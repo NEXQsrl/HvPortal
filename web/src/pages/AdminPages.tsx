@@ -241,7 +241,7 @@ export function SettingsPage() {
   return (
     <Tabs value={tab} onValueChange={(v) => setParams(v === 'security' ? {} : { tab: v }, { replace: true })} className="flex h-full min-h-0 flex-col gap-0">
       <PageHeader icon={<Settings className="size-5" />} title={t('nav.settings')}>
-        <TabsList variant="line" className="-mb-px h-9 w-full justify-start overflow-x-auto rounded-none bg-transparent p-0">
+        <TabsList variant="line" className="page-tabs -mb-px h-9 w-full justify-start rounded-none bg-transparent p-0">
           {SETTINGS_TABS.map((x) => <TabsTrigger key={x} value={x} className="flex-none px-3">{t(('settings.tab.' + x) as TKey)}</TabsTrigger>)}
         </TabsList>
       </PageHeader>

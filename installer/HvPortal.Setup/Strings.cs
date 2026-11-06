@@ -1,0 +1,237 @@
+#nullable enable
+using System.Collections.Generic;
+using System.Globalization;
+
+namespace HvPortal.Setup
+{
+    /// <summary>Texts of the setup, Italian or English according to the Windows display language (or --lang it|en).</summary>
+    internal static class Strings
+    {
+        public static bool Italian = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "it";
+
+        public static string T(string key) => (Italian ? It : En).TryGetValue(key, out var s) ? s : (En.TryGetValue(key, out var e) ? e : key);
+
+        public static string T(string key, params object[] args) => string.Format(CultureInfo.CurrentCulture, T(key), args);
+
+        private static readonly Dictionary<string, string> En = new Dictionary<string, string>
+        {
+            ["back"] = "< Back", ["next"] = "Next >", ["install"] = "Install", ["upgrade"] = "Update", ["cancel"] = "Cancel", ["close"] = "Close",
+            ["title.gateway"] = "HvPortal Gateway Setup", ["title.agent"] = "HvPortal Agent Setup",
+            ["version"] = "Version {0}",
+            ["needAdmin"] = "The setup needs administrator rights to install the Windows service. Start it again and accept the request.",
+            ["noPayload"] = "This setup file contains no installation files (it was not built by Build-Release.ps1).",
+            ["cancelConfirm"] = "Leave the setup? Nothing has been installed yet.",
+
+            ["welcome.title"] = "Welcome",
+            ["welcome.gateway"] = "This wizard installs the HvPortal gateway on this server: the web portal and the service the Hyper-V agents connect to.",
+            ["welcome.agent"] = "This wizard installs the HvPortal agent on this server and connects it to your gateway.",
+            ["welcome.new"] = "It will: copy the program to {0}, create the Windows service {1} (dedicated account, not administrator) and start it.",
+            ["welcome.upgradeGateway"] = "HvPortal Gateway is already installed here: this is an update. The current settings are shown in the next pages. The database is copied before the update and the previous version comes back by itself if the new one does not start.",
+            ["welcome.upgradeAgent"] = "HvPortal Agent is already installed here: this is an update. The connection to the gateway is kept. The previous version comes back by itself if the new one does not start.",
+            ["welcome.scripts"] = "For unattended installations the PowerShell scripts are still available: run this file with  --extract <folder>.",
+
+            ["net.title"] = "Addresses and ports",
+            ["net.sub"] = "How browsers and agents reach this gateway.",
+            ["net.names"] = "Names and IP addresses of this server (separated by commas)",
+            ["net.namesHint"] = "Every name or address typed in the browser or used by an agent must be listed: they go into the internal certificate.",
+            ["net.uiPort"] = "Portal port (browser)",
+            ["net.uiPortHint"] = "8443 by default; 443 lets you omit the port in the address (it must not be used by IIS or other software).",
+            ["net.agentPort"] = "Agent port",
+            ["net.bind"] = "Listen on address",
+            ["net.bindHint"] = "0.0.0.0 = every network adapter of this server.",
+
+            ["cert.title"] = "Portal certificate",
+            ["cert.sub"] = "The certificate browsers see when they open the portal.",
+            ["cert.internal"] = "Internal certificate (browsers show a warning until you trust the internal CA)",
+            ["cert.store"] = "A certificate already in this computer's store:",
+            ["cert.pfx"] = "Import a certificate file from your CA (.pfx):",
+            ["cert.browse"] = "Browse…",
+            ["cert.password"] = "Password of the .pfx file",
+            ["cert.none"] = "(no suitable certificate in the computer store)",
+            ["cert.hint"] = "The certificate must contain the name users type in the browser. The setup gives the gateway service read access to its private key. Agents always use the internal CA: nothing changes for them.",
+            ["cert.expires"] = "expires {0}",
+            ["cert.importFailed"] = "The certificate could not be imported: {0}",
+            ["cert.noKey"] = "The file contains no private key.",
+            ["cert.choose"] = "Choose a certificate.",
+            ["cert.choosePfx"] = "Choose the .pfx file.",
+
+            ["fw.title"] = "Windows Firewall",
+            ["fw.sub"] = "Inbound rules for the two ports of the gateway.",
+            ["fw.open"] = "Create the firewall rules for the portal and the agent port",
+            ["fw.openUpgrade"] = "Create the firewall rules again (needed if you changed a port)",
+            ["fw.ui"] = "Who may open the portal",
+            ["fw.agents"] = "Which hosts may connect as agents",
+            ["fw.hint"] = "LocalSubnet = the networks this server is directly connected to. Otherwise addresses or subnets separated by commas, for example 10.0.10.0/24, 172.40.1.169. Any = everybody.",
+            ["fw.skip"] = "Without rules the portal answers only from this server until you open the ports yourself.",
+
+            ["mode.title"] = "Where is the agent installed",
+            ["mode.sub"] = "Choose what this server is.",
+            ["mode.host"] = "On a Hyper-V host (recommended)",
+            ["mode.hostHelp"] = "The agent manages the VMs of this server. Its service account joins the local group \"Hyper-V Administrators\" only.",
+            ["mode.management"] = "On a management server",
+            ["mode.managementHelp"] = "This server has no Hyper-V: the agent reaches remote hosts over the network with the accounts entered in the portal.",
+            ["mode.noHyperV"] = "Hyper-V was not found on this server (service vmms missing). Choose \"management server\", or install the Hyper-V role first.",
+
+            ["enroll.title"] = "Connection to the gateway",
+            ["enroll.sub"] = "Data shown by the portal in \"Add host\" (or \"New management agent\").",
+            ["enroll.paste"] = "Paste from the portal",
+            ["enroll.pasteHelp"] = "In the portal (Add host > Guided setup) copy the line \"Data for the setup\", then press this button.",
+            ["enroll.pasteFailed"] = "The clipboard does not contain the setup data of the portal. Copy them again from the portal, or fill the three fields by hand.",
+            ["enroll.roleChanged"] = "The portal created these data for an agent \"{0}\", while \"{1}\" was chosen in this setup.\n\nThe setup now installs the agent as: {0}.",
+            ["enroll.gateway"] = "Gateway address (for example https://gw01.contoso.local:8444)",
+            ["enroll.ca"] = "CA fingerprint (SHA-256)",
+            ["enroll.token"] = "One-time token (valid 15 minutes)",
+            ["enroll.keep"] = "Keep the current connection to the gateway",
+            ["enroll.again"] = "Connect again with a new token",
+
+            ["acct.title"] = "Service account",
+            ["acct.sub"] = "The Windows identity the agent runs as.",
+            ["acct.virtual"] = "Automatic account (recommended)",
+            ["acct.virtualHelp"] = "NT SERVICE\\HvPortalAgent: no password, cannot sign in, minimum rights.",
+            ["acct.keep"] = "Keep the account in use now",
+            ["acct.named"] = "Dedicated local user:",
+            ["acct.namedHelp"] = "Created by the setup with a random password nobody knows, only \"Log on as a service\", every other sign-in denied. Use it when your rules require a named account.",
+
+            ["summary.title"] = "Ready",
+            ["summary.sub"] = "Check the choices, then start.",
+            ["summary.names"] = "Names", ["summary.ports"] = "Ports", ["summary.portsValue"] = "portal {0}, agents {1}, address {2}",
+            ["summary.cert"] = "Certificate", ["summary.certInternal"] = "internal", ["summary.firewall"] = "Firewall",
+            ["summary.firewallValue"] = "portal from {0}; agents from {1}", ["summary.firewallNone"] = "no rule created",
+            ["summary.mode"] = "Installation", ["summary.gateway"] = "Gateway", ["summary.account"] = "Service account",
+            ["summary.keepEnroll"] = "current connection kept", ["summary.accountVirtual"] = "automatic", ["summary.accountKeep"] = "unchanged",
+
+            ["run.title"] = "Installation", ["run.sub"] = "Please wait…", ["run.extract"] = "Unpacking the installation files…", ["run.start"] = "Starting the installation…",
+            ["done.ok"] = "Installation completed", ["done.fail"] = "Installation not completed",
+            ["done.failText"] = "The last lines above say what went wrong. Fix the cause and run the setup again: it resumes from what is already installed. If a previous version was running, check that its service has started again.",
+            ["done.gateway"] = "The portal is at {0}",
+            ["done.open"] = "Open the portal",
+            ["done.token"] = "First access: enter this setup token in the portal (also saved in {0})",
+            ["done.copy"] = "Copy",
+            ["done.agent"] = "The agent is installed and running. Check the host in the portal: it turns online within a few seconds.",
+            ["done.log"] = "Log saved in {0}",
+
+            ["err.names"] = "Enter at least one valid name or IPv4 address of this server (not \"localhost\").",
+            ["err.ports"] = "Ports must be numbers between 1 and 65535 and different from each other.",
+            ["err.bind"] = "The listen address must be an IPv4 address (0.0.0.0 for all).",
+            ["err.thumbprint"] = "The certificate is not valid.",
+            ["err.firewall"] = "Firewall addresses: use LocalSubnet, Any, IPv4 addresses, subnets (10.0.0.0/24) or ranges.",
+            ["err.gateway"] = "The gateway address must look like https://name:8444.",
+            ["err.fingerprint"] = "The CA fingerprint must be 64 hexadecimal characters (copy it from the portal).",
+            ["err.token"] = "Paste the one-time token shown by the portal.",
+            ["err.account"] = "User name: 1-20 letters, digits, dot, dash or underscore.",
+            ["err.portBusy"] = "Port {0} is already in use on this server by another program (for 443 often IIS). Choose another port or stop that program.",
+        };
+
+        private static readonly Dictionary<string, string> It = new Dictionary<string, string>
+        {
+            ["back"] = "< Indietro", ["next"] = "Avanti >", ["install"] = "Installa", ["upgrade"] = "Aggiorna", ["cancel"] = "Annulla", ["close"] = "Chiudi",
+            ["title.gateway"] = "Installazione di HvPortal Gateway", ["title.agent"] = "Installazione di HvPortal Agent",
+            ["version"] = "Versione {0}",
+            ["needAdmin"] = "Il setup ha bisogno dei diritti di amministratore per installare il servizio Windows. Riavvialo e accetta la richiesta.",
+            ["noPayload"] = "Questo file di setup non contiene i file di installazione (non è stato creato da Build-Release.ps1).",
+            ["cancelConfirm"] = "Uscire dal setup? Non è ancora stato installato nulla.",
+
+            ["welcome.title"] = "Benvenuto",
+            ["welcome.gateway"] = "Questa procedura installa il gateway di HvPortal su questo server: il portale web e il servizio a cui si collegano gli agent Hyper-V.",
+            ["welcome.agent"] = "Questa procedura installa l'agent di HvPortal su questo server e lo collega al tuo gateway.",
+            ["welcome.new"] = "Farà questo: copia il programma in {0}, crea il servizio Windows {1} (account dedicato, non amministratore) e lo avvia.",
+            ["welcome.upgradeGateway"] = "HvPortal Gateway è già installato qui: questo è un aggiornamento. Le impostazioni attuali sono riportate nelle prossime pagine. Il database viene copiato prima dell'aggiornamento e la versione precedente torna da sola se la nuova non parte.",
+            ["welcome.upgradeAgent"] = "HvPortal Agent è già installato qui: questo è un aggiornamento. Il collegamento al gateway viene mantenuto. La versione precedente torna da sola se la nuova non parte.",
+            ["welcome.scripts"] = "Per le installazioni automatiche restano disponibili gli script PowerShell: avvia questo file con  --extract <cartella>.",
+
+            ["net.title"] = "Indirizzi e porte",
+            ["net.sub"] = "Come browser e agent raggiungono questo gateway.",
+            ["net.names"] = "Nomi e indirizzi IP di questo server (separati da virgole)",
+            ["net.namesHint"] = "Vanno indicati tutti i nomi o indirizzi scritti nel browser o usati da un agent: finiscono nel certificato interno.",
+            ["net.uiPort"] = "Porta del portale (browser)",
+            ["net.uiPortHint"] = "8443 predefinita; con 443 non serve scrivere la porta nell'indirizzo (non deve essere usata da IIS o altri programmi).",
+            ["net.agentPort"] = "Porta degli agent",
+            ["net.bind"] = "In ascolto sull'indirizzo",
+            ["net.bindHint"] = "0.0.0.0 = tutte le schede di rete di questo server.",
+
+            ["cert.title"] = "Certificato del portale",
+            ["cert.sub"] = "Il certificato che vedono i browser quando aprono il portale.",
+            ["cert.internal"] = "Certificato interno (i browser mostrano un avviso finché non consideri attendibile la CA interna)",
+            ["cert.store"] = "Un certificato già presente nell'archivio di questo computer:",
+            ["cert.pfx"] = "Importa un file di certificato della tua CA (.pfx):",
+            ["cert.browse"] = "Sfoglia…",
+            ["cert.password"] = "Password del file .pfx",
+            ["cert.none"] = "(nessun certificato adatto nell'archivio del computer)",
+            ["cert.hint"] = "Il certificato deve contenere il nome che gli utenti scrivono nel browser. Il setup dà al servizio del gateway l'accesso in lettura alla chiave privata. Gli agent usano sempre la CA interna: per loro non cambia nulla.",
+            ["cert.expires"] = "scade il {0}",
+            ["cert.importFailed"] = "Impossibile importare il certificato: {0}",
+            ["cert.noKey"] = "Il file non contiene la chiave privata.",
+            ["cert.choose"] = "Scegli un certificato.",
+            ["cert.choosePfx"] = "Scegli il file .pfx.",
+
+            ["fw.title"] = "Windows Firewall",
+            ["fw.sub"] = "Regole in ingresso per le due porte del gateway.",
+            ["fw.open"] = "Crea le regole del firewall per il portale e per la porta degli agent",
+            ["fw.openUpgrade"] = "Ricrea le regole del firewall (necessario se hai cambiato una porta)",
+            ["fw.ui"] = "Chi può aprire il portale",
+            ["fw.agents"] = "Quali host possono collegarsi come agent",
+            ["fw.hint"] = "LocalSubnet = le reti a cui questo server è collegato direttamente. Altrimenti indirizzi o subnet separati da virgole, ad esempio 10.0.10.0/24, 172.40.1.169. Any = chiunque.",
+            ["fw.skip"] = "Senza regole il portale risponde solo da questo server finché non apri tu le porte.",
+
+            ["mode.title"] = "Dove viene installato l'agent",
+            ["mode.sub"] = "Scegli che cos'è questo server.",
+            ["mode.host"] = "Su un host Hyper-V (consigliato)",
+            ["mode.hostHelp"] = "L'agent gestisce le VM di questo server. Il suo account di servizio entra solo nel gruppo locale \"Hyper-V Administrators\".",
+            ["mode.management"] = "Su un server di management",
+            ["mode.managementHelp"] = "Questo server non ha Hyper-V: l'agent raggiunge gli host remoti in rete con gli account inseriti nel portale.",
+            ["mode.noHyperV"] = "Su questo server non è stato trovato Hyper-V (manca il servizio vmms). Scegli \"server di management\", oppure installa prima il ruolo Hyper-V.",
+
+            ["enroll.title"] = "Collegamento al gateway",
+            ["enroll.sub"] = "Dati mostrati dal portale in \"Aggiungi host\" (o \"Nuovo agent di management\").",
+            ["enroll.paste"] = "Incolla dal portale",
+            ["enroll.pasteHelp"] = "Nel portale (Aggiungi host > Setup guidato) copia la riga \"Dati per il setup\", poi premi questo pulsante.",
+            ["enroll.pasteFailed"] = "Negli appunti non ci sono i dati per il setup del portale. Copiali di nuovo dal portale, oppure compila a mano i tre campi.",
+            ["enroll.roleChanged"] = "Il portale ha creato questi dati per un agent \"{0}\", mentre in questo setup era stato scelto \"{1}\".\n\nIl setup ora installa l'agent come: {0}.",
+            ["enroll.gateway"] = "Indirizzo del gateway (ad esempio https://gw01.contoso.local:8444)",
+            ["enroll.ca"] = "Impronta della CA (SHA-256)",
+            ["enroll.token"] = "Token monouso (valido 15 minuti)",
+            ["enroll.keep"] = "Mantieni il collegamento attuale al gateway",
+            ["enroll.again"] = "Collega di nuovo con un nuovo token",
+
+            ["acct.title"] = "Account di servizio",
+            ["acct.sub"] = "L'identità Windows con cui gira l'agent.",
+            ["acct.virtual"] = "Account automatico (consigliato)",
+            ["acct.virtualHelp"] = "NT SERVICE\\HvPortalAgent: senza password, non può fare accesso, permessi minimi.",
+            ["acct.keep"] = "Mantieni l'account in uso adesso",
+            ["acct.named"] = "Utente locale dedicato:",
+            ["acct.namedHelp"] = "Creato dal setup con una password casuale che nessuno conosce, solo \"Accesso come servizio\", ogni altro accesso negato. Usalo quando le tue regole richiedono un account con nome.",
+
+            ["summary.title"] = "Tutto pronto",
+            ["summary.sub"] = "Controlla le scelte, poi avvia.",
+            ["summary.names"] = "Nomi", ["summary.ports"] = "Porte", ["summary.portsValue"] = "portale {0}, agent {1}, indirizzo {2}",
+            ["summary.cert"] = "Certificato", ["summary.certInternal"] = "interno", ["summary.firewall"] = "Firewall",
+            ["summary.firewallValue"] = "portale da {0}; agent da {1}", ["summary.firewallNone"] = "nessuna regola creata",
+            ["summary.mode"] = "Installazione", ["summary.gateway"] = "Gateway", ["summary.account"] = "Account di servizio",
+            ["summary.keepEnroll"] = "collegamento attuale mantenuto", ["summary.accountVirtual"] = "automatico", ["summary.accountKeep"] = "invariato",
+
+            ["run.title"] = "Installazione", ["run.sub"] = "Attendere…", ["run.extract"] = "Estrazione dei file di installazione…", ["run.start"] = "Avvio dell'installazione…",
+            ["done.ok"] = "Installazione completata", ["done.fail"] = "Installazione non completata",
+            ["done.failText"] = "Le ultime righe qui sopra indicano che cosa non ha funzionato. Correggi la causa e rilancia il setup: riparte da ciò che è già installato. Se era in funzione una versione precedente, controlla che il suo servizio sia ripartito.",
+            ["done.gateway"] = "Il portale è all'indirizzo {0}",
+            ["done.open"] = "Apri il portale",
+            ["done.token"] = "Primo accesso: inserisci nel portale questo token di setup (salvato anche in {0})",
+            ["done.copy"] = "Copia",
+            ["done.agent"] = "L'agent è installato e in esecuzione. Controlla l'host nel portale: diventa online in pochi secondi.",
+            ["done.log"] = "Log salvato in {0}",
+
+            ["err.names"] = "Inserisci almeno un nome o indirizzo IPv4 valido di questo server (non \"localhost\").",
+            ["err.ports"] = "Le porte devono essere numeri tra 1 e 65535 e diverse tra loro.",
+            ["err.bind"] = "L'indirizzo di ascolto deve essere un indirizzo IPv4 (0.0.0.0 per tutti).",
+            ["err.thumbprint"] = "Il certificato non è valido.",
+            ["err.firewall"] = "Indirizzi del firewall: usa LocalSubnet, Any, indirizzi IPv4, subnet (10.0.0.0/24) o intervalli.",
+            ["err.gateway"] = "L'indirizzo del gateway deve essere del tipo https://nome:8444.",
+            ["err.fingerprint"] = "L'impronta della CA deve avere 64 caratteri esadecimali (copiala dal portale).",
+            ["err.token"] = "Incolla il token monouso mostrato dal portale.",
+            ["err.account"] = "Nome utente: 1-20 lettere, cifre, punto, trattino o trattino basso.",
+            ["err.portBusy"] = "La porta {0} è già usata su questo server da un altro programma (per la 443 spesso IIS). Scegli un'altra porta o ferma quel programma.",
+        };
+
+        public static IEnumerable<string> EnglishKeys => En.Keys;
+        public static IEnumerable<string> ItalianKeys => It.Keys;
+    }
+}

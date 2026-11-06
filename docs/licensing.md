@@ -20,6 +20,7 @@ until publication is authorized.
 | .NET runtime, ASP.NET Core, EF Core, SQLite provider, System.Management, Hosting.WindowsServices, ProtectedData, OpenApi | gateway/agent | MIT (.NET Foundation) |
 | SQLitePCLRaw + SQLite (e_sqlite3) | gateway | Apache-2.0 / public domain |
 | QRCoder | gateway (local QR) | MIT |
+| .NET Framework 4.7.2 (Windows Forms) | graphical setups (`installer/HvPortal.Setup`) — part of Windows, not redistributed; built against `Microsoft.NETFramework.ReferenceAssemblies` (build-time only) | Windows component / MIT (reference assemblies) |
 | Microsoft.IdentityModel.Protocols.OpenIdConnect 8.16.0 (+ JsonWebTokens, Tokens, Logging, Abstractions) | gateway (Entra ID sign-in: metadata, keys, id_token validation) | MIT |
 | React, React DOM, React Router | web | MIT |
 | @microsoft/signalr | web | MIT |

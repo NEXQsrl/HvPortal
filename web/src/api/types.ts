@@ -288,6 +288,9 @@ export interface EnrollmentInfo {
   management?: boolean;
 }
 
+/** Graphical setup of the agent served by the gateway (present only when the release provides it). */
+export interface AgentSetupInfo { fileName: string; sizeBytes: number; sha256: string }
+
 export interface PackageInfo {
   fileName: string;
   sizeBytes: number;

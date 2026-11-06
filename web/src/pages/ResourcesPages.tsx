@@ -63,7 +63,7 @@ export function StoragePage() {
     <Tabs value={tab} onValueChange={(v) => setParams((p) => { const n = new URLSearchParams(p); if (v === 'overview') n.delete('tab'); else n.set('tab', v); n.delete('view'); return n; }, { replace: true })}
       className="flex h-full min-h-0 flex-col gap-0">
       <PageHeader icon={<HardDrive className="size-5" />} title={t('sto.title')} subtitle={t('sto.help')}>
-        <TabsList variant="line" className="-mb-px h-9 w-full justify-start overflow-x-auto rounded-none bg-transparent p-0">
+        <TabsList variant="line" className="page-tabs -mb-px h-9 w-full justify-start rounded-none bg-transparent p-0">
           {STORAGE_TABS.map((x) => <TabsTrigger key={x} value={x} className="flex-none px-3">{t(('sto.tab.' + x) as TKey)}</TabsTrigger>)}
         </TabsList>
       </PageHeader>

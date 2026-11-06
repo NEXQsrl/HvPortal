@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using System.Text.Json;
 using HvPortal.Gateway.Authorization;
 using HvPortal.Gateway.Data;
 using HvPortal.Gateway.Security;
@@ -32,6 +33,7 @@ public sealed class DownloadTests : IAsyncLifetime
         var c = _app.CreateBrowser();
         await c.LoginAsync("reader-dl");
         Assert.Equal(HttpStatusCode.Forbidden, (await c.GetAsync("/api/v1/downloads/agent")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await c.GetAsync("/api/v1/downloads/agent-setup")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await c.GetAsync("/api/v1/downloads")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await c.GetAsync("/api/v1/hosts/connection-info")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await _app.CreateBrowser().GetAsync("/api/v1/downloads/agent")).StatusCode);
@@ -67,6 +69,20 @@ public sealed class DownloadTests : IAsyncLifetime
         Assert.False(info.GetProperty("signed").GetBoolean());
         Assert.False(info.GetProperty("selfSigned").GetBoolean());
         Assert.Equal(4096, info.GetProperty("sizeBytes").GetInt64());
+
+        // No setup file on this gateway: the guide offers only the PowerShell method.
+        Assert.Equal(JsonValueKind.Null, (await (await c.GetAsync("/api/v1/downloads")).JsonAsync()).GetProperty("agentSetup").ValueKind);
+        Assert.Equal(HttpStatusCode.NotFound, (await c.GetAsync("/api/v1/downloads/agent-setup")).StatusCode);
+        // With the graphical setup next to the package: size and hash computed by the gateway, download audited.
+        var setup = RandomNumberGenerator.GetBytes(2048);
+        await File.WriteAllBytesAsync(Path.Combine(_app.PackagesDirectory, "HvPortal.Agent.Setup.exe"), setup);
+        var setupInfo = (await (await c.GetAsync("/api/v1/downloads")).JsonAsync()).GetProperty("agentSetup");
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(setup)), setupInfo.GetProperty("sha256").GetString());
+        Assert.Equal(2048, setupInfo.GetProperty("sizeBytes").GetInt64());
+        var setupDownload = await c.GetAsync("/api/v1/downloads/agent-setup");
+        Assert.Equal(HttpStatusCode.OK, setupDownload.StatusCode);
+        Assert.Equal(setup, await setupDownload.Content.ReadAsByteArrayAsync());
+        Assert.True(await _app.WithDbAsync(db => db.AuditEntries.AnyAsync(a => a.Action == "downloads.agent_setup" && a.Outcome == AuditOutcome.Success)));
 
         // Self-signed build (New-CodeSigningCertificate.ps1): reported as such, never as a plain trusted signature.
         var manifest = Path.Combine(_app.PackagesDirectory, "HvPortal.Agent-win-x64.json");

@@ -33,7 +33,10 @@ docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Do
 
 # Packaging / release
 .\installer\New-AgentPackage.ps1 -OutputDirectory artifacts\packages   # zip served by the gateway (/api/v1/downloads)
-.\installer\Build-Release.ps1 [-SkipTests]
+.\installer\Build-Release.ps1 [-SkipTests]                             # also builds setup\HvPortal.{Gateway,Agent}.Setup.exe
+# Graphical setup alone (net472 WinForms, not in the solution); pages can be checked without installing:
+dotnet build installer\HvPortal.Setup -c Release -p:SetupComponent=Agent -o <dir>      # or Gateway; -p:PayloadZip=<zip> embeds the files
+<dir>\HvPortal.Agent.Setup.exe --render <folder> --lang it                            # PNG of every wizard page
 # Signed release (self-signed "NEXQ S.r.l." code-signing cert in CurrentUser\My; only the public .cer is exported)
 .\installer\New-CodeSigningCertificate.ps1                                   # prints the thumbprint (reuses a valid one)
 .\installer\Build-Release.ps1 -SigningCertificateThumbprint <thumbprint>     # signs HvPortal.*.exe/.dll + all .ps1, ships installer\HvPortal-CodeSigning.cer
@@ -53,6 +56,9 @@ Practical notes:
   Hyper-V (VM creation, config changes, console frames) is tested via the test double `FakeAgentDispatcher`
   (test project only) and listed in `docs/verification/real-host-test-plan.md`. Never present it as validated.
 - After changes, update `docs/testing.md` (suite counts) and the relevant docs/ADR.
+- The graphical setups (ADR-026) only drive `Install-Gateway.ps1` / `Install-Agent.ps1` through `Invoke-Setup.ps1`:
+  a new installer parameter needs the script, `installer/HvPortal.Setup/SetupLogic.cs` (+ wizard page and both
+  languages in `Strings.cs`) and `SetupLogicTests` (which checks the names and types against the real scripts).
 - Self-signed signatures show `UnknownError` (untrusted root) until the `.cer` is imported into `LocalMachine\Root` +
   `TrustedPublisher`; they do not give SmartScreen/antivirus reputation. Never claim a build is "trusted" because it is
   signed, and never export or commit the private key (`artifacts/` is git-ignored). No timestamp server by default:

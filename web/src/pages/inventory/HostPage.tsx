@@ -54,7 +54,7 @@ export function HostPage() {
           {h.canCreateVm && <Button size="sm" onClick={() => ops.openCreateVm({ hostId: h.id })}><Plus />{t('host.newVm')}</Button>}
           <ActionsButton items={ops.hostActions(h, { page: true })} label={h.displayName}>{t('common.actions')}<ChevronDown /></ActionsButton>
         </>}>
-        <TabsList variant="line" className="-mb-px h-9 w-full justify-start overflow-x-auto rounded-none bg-transparent p-0">
+        <TabsList variant="line" className="page-tabs -mb-px h-9 w-full justify-start rounded-none bg-transparent p-0">
           {TABS.map((x) => <TabsTrigger key={x} value={x} className="flex-none px-3">{t(('host.tab.' + x) as TKey)}{x === 'vms' && <span className="ml-1 text-xs text-muted-foreground">{vms.length}</span>}</TabsTrigger>)}
         </TabsList>
       </PageHeader>

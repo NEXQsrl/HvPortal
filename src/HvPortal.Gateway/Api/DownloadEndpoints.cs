@@ -17,6 +17,8 @@ public static class DownloadEndpoints
 {
     public const string AgentPackageFile = "HvPortal.Agent-win-x64.zip";
     public const string AgentManifestFile = "HvPortal.Agent-win-x64.json";
+    /// <summary>Graphical setup of the agent (installer\HvPortal.Setup, built by Build-Release.ps1): optional, same folder.</summary>
+    public const string AgentSetupFile = "HvPortal.Agent.Setup.exe";
 
     private static readonly ConcurrentDictionary<string, (long Length, DateTime Modified, string Sha256)> HashCache = new();
 
@@ -36,7 +38,23 @@ public static class DownloadEndpoints
                 return denied;
             }
             var info = Describe(options.Value);
-            return Results.Ok(new { agent = info });
+            return Results.Ok(new { agent = info, agentSetup = DescribeSetup(options.Value) });
+        });
+
+        g.MapGet("/agent-setup", async (HttpContext http, IOptions<GatewayOptions> options) =>
+        {
+            if (await http.GuardAsync(Permissions.HostsManage, ResourceRef.Global, "downloads.agent_setup") is { } denied)
+            {
+                return denied;
+            }
+            var path = Path.Combine(PackagesDirectory(options.Value), AgentSetupFile);
+            if (!File.Exists(path))
+            {
+                return ApiSupport.NotFound();
+            }
+            var info = DescribeSetup(options.Value);
+            await http.WriteAuditAsync("downloads.agent_setup", resourceType: "package", resourceId: AgentSetupFile, details: new { info?.Sha256, info?.SizeBytes });
+            return Results.File(path, "application/octet-stream", AgentSetupFile, enableRangeProcessing: false);
         });
 
         g.MapGet("/agent", async (HttpContext http, IOptions<GatewayOptions> options) =>
@@ -69,13 +87,7 @@ public static class DownloadEndpoints
             return null;
         }
         var fi = new FileInfo(path);
-        var key = fi.FullName;
-        if (!HashCache.TryGetValue(key, out var cached) || cached.Length != fi.Length || cached.Modified != fi.LastWriteTimeUtc)
-        {
-            using var stream = fi.OpenRead();
-            cached = (fi.Length, fi.LastWriteTimeUtc, Convert.ToHexString(SHA256.HashData(stream)));
-            HashCache[key] = cached;
-        }
+        var cached = Hash(fi);
         PackageManifest? manifest = null;
         var manifestPath = Path.Combine(dir, AgentManifestFile);
         if (File.Exists(manifestPath))
@@ -91,5 +103,26 @@ public static class DownloadEndpoints
         }
         return new PackageInfo(AgentPackageFile, fi.Length, cached.Sha256, manifest?.Version, manifest?.BuiltAtUtc,
             manifest?.Signed ?? false, manifest?.Signer, manifest is { Signed: true, SelfSigned: true });
+    }
+
+    public sealed record SetupInfo(string FileName, long SizeBytes, string Sha256);
+
+    /// <summary>The agent setup file when this gateway has one (size and SHA-256 computed here, like the package).</summary>
+    public static SetupInfo? DescribeSetup(GatewayOptions options)
+    {
+        var fi = new FileInfo(Path.Combine(PackagesDirectory(options), AgentSetupFile));
+        return fi.Exists ? new SetupInfo(AgentSetupFile, fi.Length, Hash(fi).Sha256) : null;
+    }
+
+    private static (long Length, DateTime Modified, string Sha256) Hash(FileInfo fi)
+    {
+        var key = fi.FullName;
+        if (!HashCache.TryGetValue(key, out var cached) || cached.Length != fi.Length || cached.Modified != fi.LastWriteTimeUtc)
+        {
+            using var stream = fi.OpenRead();
+            cached = (fi.Length, fi.LastWriteTimeUtc, Convert.ToHexString(SHA256.HashData(stream)));
+            HashCache[key] = cached;
+        }
+        return cached;
     }
 }

@@ -21,4 +21,13 @@
     <ProjectReference Include="..\..\src\HvPortal.Gateway\HvPortal.Gateway.csproj" />
   </ItemGroup>
 
+  <!-- Graphical setup (installer\HvPortal.Setup, .NET Framework, not in the solution): its logic and the wrapper script
+       it runs are tested here. -->
+  <ItemGroup>
+    <Compile Include="..\..\installer\HvPortal.Setup\SetupLogic.cs" Link="Setup\SetupLogic.cs" />
+    <None Include="..\..\installer\Invoke-Setup.ps1" Link="Setup\Invoke-Setup.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\installer\Install-Gateway.ps1" Link="Setup\Install-Gateway.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\installer\Install-Agent.ps1" Link="Setup\Install-Agent.ps1" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

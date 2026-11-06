@@ -79,7 +79,7 @@ export function VmPage() {
           {vm.canConsole && <Button size="sm" variant="outline" onClick={() => setTab('console')}><Monitor />{t('vm.tab.console')}</Button>}
           <ActionsButton items={ops.vmActions(vm, { page: true })} label={vm.name}>{t('common.actions')}<ChevronDown /></ActionsButton>
         </>}>
-        <TabsList variant="line" className="-mb-px h-9 w-full justify-start overflow-x-auto rounded-none bg-transparent p-0">
+        <TabsList variant="line" className="page-tabs -mb-px h-9 w-full justify-start rounded-none bg-transparent p-0">
           {TABS.filter((x) => (x !== 'console' || vm.canConsole)).map((x) => (
             <TabsTrigger key={x} value={x} className="flex-none px-3">{t(('vm.tab.' + x) as TKey)}</TabsTrigger>
           ))}

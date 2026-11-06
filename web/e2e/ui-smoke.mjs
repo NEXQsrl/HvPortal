@@ -91,6 +91,22 @@ try {
   await page.getByRole('button', { name: 'Crea e ottieni il token di registrazione' }).click();
   await page.getByRole('heading', { name: /Registra l'agente/ }).waitFor();
   const dialog = page.getByRole('dialog');
+  // Guided setup (default when the gateway provides HvPortal.Agent.Setup.exe): download + one line of connection data.
+  // A method is marked as chosen only once the gateway has said whether it provides the setup file.
+  await dialog.locator('[role="radio"][aria-checked="true"]').waitFor();
+  if ((await dialog.getByRole('radio', { name: /Setup guidato/ }).getAttribute('aria-checked')) === 'true') {
+    const data = (await dialog.locator('pre.command').filter({ hasText: 'HVPORTAL-SETUP' }).innerText()).trim();
+    check('guided setup: connection data line (gateway, CA fingerprint, token, role), never localhost',
+      /^HVPORTAL-SETUP gateway=https:\/\/\S+:\d+ ca=[0-9A-F]{64} token=\S{30,} role=host$/.test(data) && !/localhost|127\.0\.0\.1/.test(data), data.slice(0, 70));
+    const shownSetupHash = (await dialog.locator('.setup-hash').innerText()).trim();
+    const [setupDownload] = await Promise.all([page.waitForEvent('download'), dialog.getByRole('link', { name: /Scarica il setup dell'agent/ }).click()]);
+    const setupPath = join(out, 'downloaded-agent-setup.bin');
+    await setupDownload.saveAs(setupPath);
+    check('guided setup: the setup file downloads and matches the displayed SHA-256',
+      setupDownload.suggestedFilename() === 'HvPortal.Agent.Setup.exe' && createHash('sha256').update(readFileSync(setupPath)).digest('hex').toUpperCase() === shownSetupHash);
+    await shot(page, '03a-guided-setup');
+    await dialog.getByRole('radio', { name: 'PowerShell' }).click();
+  }
   const installCmd = await dialog.locator('pre.command').filter({ hasText: 'HVP_ENROLLMENT_TOKEN' }).innerText();
   const enrollToken = /HVP_ENROLLMENT_TOKEN = '([^']+)'/.exec(installCmd)[1];
   const fingerprint = /-CaSha256 ([0-9A-F]{64})/.exec(installCmd)[1];
@@ -139,6 +155,13 @@ try {
   check('host detail reports real Hyper-V access status', /AccessDenied|NotInstalled|ServiceStopped/.test(accessBanner) || (await page.getByText('Hyper-V: Ok').count()) > 0, accessBanner.slice(0, 80));
   check('host page shows volumes and network adapters', (await page.getByRole('heading', { name: 'Volumi' }).count()) === 1 && (await page.getByRole('heading', { name: 'Schede di rete' }).count()) === 1);
   check('host page has vCenter-like tabs', (await page.getByRole('tab').count()) >= 6);
+  // The tab bar must never show a scrollbar: nothing overflows it vertically (the underline of the active tab used to)
+  // and, when the tabs do not fit, it scrolls sideways without a visible bar.
+  const tabBar = await page.locator('.page-tabs').first().evaluate(el => {
+    const style = getComputedStyle(el);
+    return { overflowY: style.overflowY, scrollbarWidth: style.scrollbarWidth, tall: el.scrollHeight - el.clientHeight, wide: el.scrollWidth - el.clientWidth };
+  });
+  check('host page tab bar has no scrollbar', tabBar.overflowY === 'hidden' && tabBar.scrollbarWidth === 'none' && tabBar.tall <= 0 && tabBar.wide <= 0, JSON.stringify(tabBar));
   await shot(page, '05-host-detail');
   check('host page has the "Gruppi VM Hyper-V" tab', (await page.getByRole('tab', { name: 'Gruppi VM Hyper-V' }).count()) === 1);
   await page.getByRole('tab', { name: 'Impostazioni' }).click();
@@ -331,7 +354,11 @@ try {
   // The pages of the guide are listed in the navigator tree.
   await page.getByRole('treeitem', { name: 'Collegare un host Hyper-V' }).click();
   await page.getByRole('heading', { name: 'Collegare un host Hyper-V' }).waitFor();
+  // Both installation methods are documented there; the PowerShell one keeps the commands.
+  await page.locator('[role="radio"][aria-checked="true"]').waitFor();
+  await page.getByRole('radio', { name: 'PowerShell' }).click();
   await page.locator('pre.command').filter({ hasText: 'Test-NetConnection' }).waitFor();
+  check('guide page documents both installation methods', (await page.getByRole('radio', { name: /Setup guidato/ }).count()) === 1);
   await page.getByRole('treeitem', { name: 'Risoluzione dei problemi' }).click();
   await page.getByRole('heading', { name: 'Risoluzione dei problemi' }).first().waitFor();
   check('troubleshooting page with its sections', (await page.getByRole('heading', { level: 2 }).count()) >= 4);
