@@ -52,6 +52,11 @@ public static class AgentProtocol
         {
             return 9;
         }
+        // An older agent would ignore the flag and keep the disks while the user asked to delete them.
+        if (command.Kind is AgentCommandKind.DeleteVm && command.DeleteDisks == true)
+        {
+            return 9;
+        }
         if (command.Operation is >= HvOperation.GetHostHealth)
         {
             return 9;
@@ -232,6 +237,8 @@ public sealed record AgentCommand
     public ConsoleInput? Input { get; init; }
     /// <summary>UpdateAgent only.</summary>
     public AgentUpdateRequest? Update { get; init; }
+    /// <summary>DeleteVm only (protocol 9): also delete the virtual disk files of the VM (see HvOperation.RemoveVmWithDisks).</summary>
+    public bool? DeleteDisks { get; init; }
     /// <summary>
     /// Management agents only (protocol 6): the remote host the command is for. Set by the gateway, never by callers;
     /// a host agent rejects commands that carry it, a management agent rejects commands without it.

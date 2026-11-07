@@ -1,7 +1,7 @@
 import { Archive, Camera, FolderInput, LayoutTemplate, MoveRight, FolderMinus, FolderPlus, Gauge, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save, Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { del, newIdempotencyKey, patch, post } from '@/api/client';
+import { del, patch, post } from '@/api/client';
 import type { Accepted, Group, VmTemplate } from '@/api/ops-types';
 import { realtime } from '@/api/realtime';
 import type { EnrollmentInfo, Host, PowerOperation, Vm } from '@/api/types';
@@ -20,6 +20,7 @@ import { AddHostDialog, EnrollmentDialog, RemoteHostDialog, RevokeHostDialog } f
 import { LiveManagementEnrollment, NewManagementAgentDialog } from './ManagementAgents';
 import { CaptureTemplateDialog } from './TemplateDialogs';
 import { CreateCheckpointDialog, EditNotesDialog, PowerDialog } from './VmDialogs';
+import { DeleteVmDialog } from './DeleteVmDialog';
 import { MoveVmDialog } from './MoveVmDialog';
 import { BackupNowDialog } from '@/components/backup/BackupNowDialog';
 
@@ -235,14 +236,7 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
       {d?.kind === 'power' && <PowerDialog vm={d.vm} op={d.op} onQueued={queued} onClose={close} />}
       {d?.kind === 'checkpoint' && <CreateCheckpointDialog vm={d.vm} onQueued={queued} onClose={close} />}
       {d?.kind === 'editVm' && <EditNotesDialog vm={d.vm} onQueued={queued} onClose={close} />}
-      {d?.kind === 'deleteVm' && (
-        <ConfirmTypedDialog title={t('vm.deleteTitle', { name: d.vm.name })} name={d.vm.name} confirmLabel={t('vm.delete')} onClose={close}
-          impact={<>{t('vm.deleteImpact')}<br /><strong>{t('vm.deleteDisksKept')}</strong></>}
-          onConfirm={async (typed) => {
-            const r = await post<Accepted>(`/api/v1/vms/${d.vm.id}/delete`, { confirmName: typed, idempotencyKey: newIdempotencyKey() });
-            queued(r, `${t('op.Delete')} — ${d.vm.name}`);
-          }} />
-      )}
+      {d?.kind === 'deleteVm' && <DeleteVmDialog vm={d.vm} onQueued={queued} onClose={close} />}
       {d?.kind === 'addToGroup' && (
         <AddToGroupDialog vmIds={d.vms.map((v) => v.id)} title={`${t('vm.addToGroup')} ${d.vms.map((v) => v.name).join(', ')}`} onClose={close}
           onAdd={async (groupId) => { await post(`/api/v1/groups/${groupId}/members`, { vmIds: d.vms.map((v) => v.id) }); inv.reload(); }} />

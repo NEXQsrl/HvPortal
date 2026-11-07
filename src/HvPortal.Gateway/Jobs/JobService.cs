@@ -186,22 +186,30 @@ public sealed class JobService
         return (job, true);
     }
 
-    /// <summary>Deletes the VM configuration on Hyper-V (DestroySystem). Disk files are kept. VM must be Off or Saved.</summary>
-    public async Task<(Job Job, bool Created)> CreateVmDeleteJobAsync(Guid userId, VirtualMachine vm, string? idempotencyKey, CancellationToken ct)
+    /// <summary>Operation of a delete job that also deletes the disk files of the VM (agent 0.7.0+).</summary>
+    public const string DeleteWithDisksOperation = "DeleteWithDisks";
+
+    /// <summary>
+    /// Deletes the VM on Hyper-V; VM must be Off or Saved. Without <paramref name="deleteDisks"/> only the configuration
+    /// (DestroySystem, disk files kept); with it also the disk files that belong only to that VM (RemoveVmWithDisks).
+    /// </summary>
+    public async Task<(Job Job, bool Created)> CreateVmDeleteJobAsync(Guid userId, VirtualMachine vm, string? idempotencyKey, CancellationToken ct,
+        bool deleteDisks = false)
     {
         if (idempotencyKey is not null)
         {
             var existing = await _db.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.RequestedByUserId == userId && j.IdempotencyKey == idempotencyKey, ct);
             if (existing is not null)
             {
-                return existing.TargetId == vm.Id && existing.Type == DeleteJobType ? (existing, false) : throw new IdempotencyConflictException();
+                return existing.TargetId == vm.Id && existing.Type == DeleteJobType && (existing.Operation == DeleteWithDisksOperation) == deleteDisks
+                ? (existing, false) : throw new IdempotencyConflictException();
             }
         }
         var now = _time.GetUtcNow();
         var job = new Job
         {
             Type = DeleteJobType,
-            Operation = "Delete",
+            Operation = deleteDisks ? DeleteWithDisksOperation : "Delete",
             TargetType = ScopeType.Vm,
             TargetId = vm.Id,
             TargetName = vm.Name,
@@ -210,11 +218,12 @@ public sealed class JobService
             RequiredPermission = Permissions.VmDelete,
             Status = JobStatus.Queued,
             CreatedAt = now,
-            TimeoutSeconds = 300,
+            TimeoutSeconds = deleteDisks ? 900 : 300,
             IdempotencyKey = idempotencyKey,
         };
         _db.Jobs.Add(job);
-        _db.JobEvents.Add(new JobEvent { JobId = job.Id, At = now, Kind = "created", Message = $"Delete requested for {vm.Name}" });
+        _db.JobEvents.Add(new JobEvent { JobId = job.Id, At = now, Kind = "created",
+            Message = deleteDisks ? $"Delete requested for {vm.Name}, with its disk files" : $"Delete requested for {vm.Name}" });
         await _db.SaveChangesAsync(ct);
         _signal.Notify();
         return (job, true);

@@ -36,6 +36,16 @@ export const enInfra = {
   'jobop.vm.migrate.Host': 'Move VM to another host',
   'jobop.vm.migrate.Storage': 'Move VM storage',
   'audit.a.vm.migrate': 'VM move',
+  // VM delete with its disks
+  'vmdel.option': 'Also delete the disk files from the host',
+  'vmdel.optionHelp': 'The virtual disks attached to this VM are deleted from the disk too. It cannot be undone: only a backup brings them back.',
+  'vmdel.oldAgent': 'Needs agent 0.7.0 or later on this host: update the agent to delete the disk files too.',
+  'vmdel.confirmWithDisks': 'Delete VM and disks',
+  'vmdel.disksDeleted': 'The disk files of the VM are deleted too.',
+  'vmdel.files': 'Disk files of the VM',
+  'vmdel.filesUnknown': 'The list is not available now; the agent reads it from the host when the task runs.',
+  'vmdel.rules': 'Never deleted: files another VM uses (attached, or parent of a differencing disk, such as a template), files outside the folders the portal may use, ISO images, the parent disk of a differencing disk. A VM with checkpoints is refused: delete its checkpoints first. The task result lists every file deleted or kept.',
+  'jobop.vm.delete.DeleteWithDisks': 'Delete VM and disks',
 
   // Host health
   'host.tab.health': 'Health',
@@ -256,6 +266,15 @@ export const itInfra: Record<keyof typeof enInfra, string> = {
   'jobop.vm.migrate.Host': 'Sposta VM su un altro host',
   'jobop.vm.migrate.Storage': 'Sposta storage VM',
   'audit.a.vm.migrate': 'Spostamento VM',
+  'vmdel.option': "Elimina anche i file dei dischi dall'host",
+  'vmdel.optionHelp': 'Vengono cancellati dal disco anche i dischi virtuali collegati a questa VM. Non si può annullare: li riporta indietro solo un backup.',
+  'vmdel.oldAgent': "Serve l'agente 0.7.0 o successivo su questo host: aggiorna l'agente per eliminare anche i file dei dischi.",
+  'vmdel.confirmWithDisks': 'Elimina VM e dischi',
+  'vmdel.disksDeleted': 'Vengono eliminati anche i file dei dischi della VM.',
+  'vmdel.files': 'File dei dischi della VM',
+  'vmdel.filesUnknown': "L'elenco non è disponibile ora; l'agente lo legge dall'host quando l'attività parte.",
+  'vmdel.rules': "Non vengono mai eliminati: file usati da un'altra VM (collegati, o padre di un disco differenziale, come un template), file fuori dalle cartelle consentite al portale, immagini ISO, il disco padre di un disco differenziale. Una VM con checkpoint viene rifiutata: elimina prima i checkpoint. Il risultato dell'attività elenca ogni file eliminato o mantenuto.",
+  'jobop.vm.delete.DeleteWithDisks': 'Elimina VM e dischi',
 
   'host.tab.health': 'Stato',
   'health.Ok': 'Integro',

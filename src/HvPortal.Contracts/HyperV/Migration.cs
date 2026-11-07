@@ -28,3 +28,11 @@ public sealed record MoveVmResult(Guid VmId, string? Name, string? DestinationHo
 
 /// <summary>Protocol 9. Create &lt;Parent&gt;\&lt;Name&gt; (file explorer). Parent must be an allowed folder of the host.</summary>
 public sealed record NewFolderRequest(string Parent, string Name);
+
+/// <summary>Result of RemoveVmWithDisks: the disk files deleted, kept (with the reason) and not deletable (with the error).</summary>
+public sealed record VmDiskDeletion
+{
+    public IReadOnlyList<string> Deleted { get; init; } = [];
+    public IReadOnlyList<string> Kept { get; init; } = [];
+    public IReadOnlyList<string> Failed { get; init; } = [];
+}

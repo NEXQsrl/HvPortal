@@ -419,6 +419,7 @@ public sealed partial class JobRunner : BackgroundService
                     Kind = isDeleteJob ? AgentCommandKind.DeleteVm : AgentCommandKind.VmPower,
                     VmId = vm!.HyperVId,
                     PowerOperation = isDeleteJob ? null : powerOp,
+                    DeleteDisks = isDeleteJob && job.Operation == JobService.DeleteWithDisksOperation ? true : null,
                     TimeoutSeconds = job.TimeoutSeconds,
                     Reason = "HvPortal job " + job.Id.ToString("N"),
                 };

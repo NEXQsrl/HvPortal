@@ -11,6 +11,9 @@ namespace HvPortal.Gateway.Tests.Infrastructure;
 /// </summary>
 public sealed class FakeAgentDispatcher : IAgentDispatcher
 {
+    /// <summary>Hyper-V ids of VMs deleted with DeleteDisks (their disk files deleted too).</summary>
+    public System.Collections.Concurrent.ConcurrentBag<Guid> DeletedWithDisks { get; } = [];
+
     private readonly ConcurrentDictionary<Guid, bool> _connected = new();
     private readonly ConcurrentDictionary<Guid, (Guid HostId, string Name, VmPowerState State, long UptimeMs)> _vms = new();
 
@@ -163,6 +166,12 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                     return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.InvalidState });
                 }
                 _vms.TryRemove(delId, out _);
+                if (command.DeleteDisks == true)
+                {
+                    DeletedWithDisks.Add(delId);
+                    return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Succeeded,
+                        Message = "VM deleted. Disk files deleted: 1." });
+                }
                 return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Succeeded, Message = "deleted" });
 
             case AgentCommandKind.VmPower:

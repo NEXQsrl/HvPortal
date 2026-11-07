@@ -98,6 +98,26 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-037 Delete a VM with its disk files, only on explicit request (agent protocol 9)
+- **Context**: deleting a VM removed only its configuration (`DestroySystem`, ADR-009 era) and left the disk files on
+  the host: safe, but administrators then had to find and delete the files by hand, often outside the portal.
+- **Decision**: `POST /vms/{id}/delete` takes `deleteDisks` (default `false`). With it the job is `vm.delete`,
+  operation `DeleteWithDisks` (900 s); the gateway sends `DeleteVm` with `DeleteDisks = true`, which needs protocol 9
+  (`AgentProtocol.RequiredVersion`; an older agent is refused with `agent_outdated` at request time instead of
+  deleting only the configuration). The agent runs the fixed-script operation `RemoveVmWithDisks` (never accepted as a
+  plain `HyperVOperation` command). The script, **before** changing anything: the VM must be Off or Saved and have no
+  checkpoints; it lists the disks attached to the VM; a file is deleted only when it is a `.vhd`/`.vhdx`/`.avhdx` that
+  exists, is not used by any other VM of the host (attached, or anywhere in the parent chain of their disks) and lies
+  inside the allowed storage folders (ADR-034). Then `Remove-VM -Force` and the files one by one (`Remove-Item`, never
+  recursive). Parents of the VM's own differencing disks, ISO images and folders are never deleted. The job message
+  lists deleted, kept (with the reason) and not deletable (with the error) files; the VM record is removed as for the
+  configuration-only delete. Same permission (`vm.delete`), typed VM name and recent re-authentication; the request is
+  audited with `deleteDisks`.
+- **Consequences**: irreversible: only a backup brings the disks back. A file shared with a VM on another host (SMB
+  share) is not detected as in use. A file that cannot be deleted leaves the job Succeeded with the list in its message
+  (the VM itself is gone).
+- Not validated on a real host (real-host plan V68).
+
 ## ADR-036 Host health: a read-only report never better than what was read (agent protocol 9)
 - **Context**: administrators want failing disks, degraded pools, full volumes and hardware errors of a host visible
   in the portal, without RDP and without a separate monitoring product.

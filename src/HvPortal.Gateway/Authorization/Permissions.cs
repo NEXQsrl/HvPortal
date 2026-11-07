@@ -64,7 +64,7 @@ public static class Permissions
         new(VmConfigNetwork, "Change network adapters", VmScopes, true),
         new(VmCheckpointCreate, "Create checkpoints", VmScopes, true),
         new(VmCheckpointApply, "Apply or delete checkpoints", VmScopes, true),
-        new(VmDelete, "Delete VMs (configuration; disk files are kept)", VmScopes, true),
+        new(VmDelete, "Delete VMs (configuration; with the explicit option also their disk files)", VmScopes, true),
         new(VmConsole, "Open VM console", VmScopes, true),
         new(VmMigrate, "Move VMs to another host (needs vm.create there) or their files to another folder", VmScopes, true),
         new(BackupRun, "Back up VMs (ad hoc), run backup jobs, verify restore points", VmScopes, true),

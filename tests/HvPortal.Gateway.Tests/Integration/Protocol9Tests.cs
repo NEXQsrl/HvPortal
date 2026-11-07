@@ -6,6 +6,7 @@ using HvPortal.Contracts.Agent;
 using HvPortal.Contracts.HyperV;
 using HvPortal.Gateway.Authorization;
 using HvPortal.Gateway.Data;
+using HvPortal.Gateway.Jobs;
 using HvPortal.Gateway.Security;
 using HvPortal.Gateway.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
@@ -64,6 +65,37 @@ public sealed class Protocol9Tests : IAsyncLifetime
 
     private Task<int> DeniedAsync(string action) =>
         _app.WithDbAsync(db => db.AuditEntries.CountAsync(a => a.Action == action && a.Outcome == AuditOutcome.Denied));
+
+    // ------------------------------------------------------------------ VM delete with its disks
+
+    [Fact]
+    public async Task Deleting_a_vm_with_its_disks_is_explicit_and_needs_agent_0_7()
+    {
+        var (hostId, vms) = await _app.CreateHostAsync("del-host", ("old-vm", VmPowerState.Off), ("keep-vm", VmPowerState.Off));
+        var (oldHost, oldVms) = await _app.CreateHostAsync("del-old", ("legacy", VmPowerState.Off));
+        _app.Agent.ProtocolVersions[oldHost] = 8;
+        var admin = await UserAsync("del-admin", BuiltInRoles.InfrastructureAdmin);
+        var reader = await UserAsync("del-reader", BuiltInRoles.ReadOnly);
+        Assert.Equal(HttpStatusCode.Forbidden, (await reader.PostJsonAsync($"/api/v1/vms/{vms["old-vm"]}/delete", new { confirmName = "old-vm", deleteDisks = true })).StatusCode);
+        Assert.Equal("confirmation_required", await (await admin.PostJsonAsync($"/api/v1/vms/{vms["old-vm"]}/delete", new { confirmName = "x", deleteDisks = true })).CodeAsync());
+        // An agent older than 0.7.0 would keep the disks: refused, not silently downgraded to a configuration-only delete.
+        Assert.Equal("agent_outdated", await (await admin.PostJsonAsync($"/api/v1/vms/{oldVms["legacy"]}/delete", new { confirmName = "legacy", deleteDisks = true })).CodeAsync());
+
+        var job = await JobAsync(await admin.PostJsonAsync($"/api/v1/vms/{vms["old-vm"]}/delete", new { confirmName = "old-vm", deleteDisks = true }));
+        Assert.Equal(JobStatus.Succeeded, job.Status);
+        Assert.Equal(JobService.DeleteWithDisksOperation, job.Operation);
+        Assert.Contains("Disk files deleted", job.ResultMessage ?? "", StringComparison.Ordinal);
+        var hyperVId = await _app.WithDbAsync(db => db.AuditEntries.AnyAsync(a => a.Action == "vm.delete.request" && a.DetailsJson!.Contains("\"deleteDisks\":true")));
+        Assert.True(hyperVId);
+        Assert.False(await _app.WithDbAsync(db => db.VirtualMachines.AnyAsync(v => v.Id == vms["old-vm"])));
+        Assert.Single(_app.Agent.DeletedWithDisks);
+
+        // Without the flag: configuration only, as before.
+        var plain = await JobAsync(await admin.PostJsonAsync($"/api/v1/vms/{vms["keep-vm"]}/delete", new { confirmName = "keep-vm" }));
+        Assert.Equal(JobStatus.Succeeded, plain.Status);
+        Assert.Equal("Delete", plain.Operation);
+        Assert.Single(_app.Agent.DeletedWithDisks);
+    }
 
     // ------------------------------------------------------------------ networks with VLAN
 

@@ -390,7 +390,7 @@ public sealed class PowerShellOperationRunner
                     return HvOperations.FromElement<SwitchRef>(args) is { } rs ? OperationValidation.Validate(rs) : "invalid_arguments";
                 case HvOperation.SyncVmGroups:
                     return HvOperations.FromElement<VmGroupSyncRequest>(args) is { } sync ? OperationValidation.Validate(sync) : "invalid_arguments";
-                case HvOperation.GetVmConfig:
+                case HvOperation.GetVmConfig or HvOperation.RemoveVmWithDisks:
                     return HvOperations.FromElement<VmRef>(args) is { VmId: var id } && id != Guid.Empty ? null : "invalid_vm";
                 case HvOperation.SetVmConfig:
                     if (HvOperations.FromElement<VmConfigChange>(args) is not { } c)

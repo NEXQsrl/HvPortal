@@ -742,6 +742,53 @@ try {
             } $null $applied
         }
 
+        'RemoveVmWithDisks' {
+            # Delete the VM and the disk files attached to it. Nothing is touched before every check passed; a file is
+            # deleted only when it is a virtual disk of this VM that no other VM uses (attached, or as the parent of one
+            # of its differencing disks) and that lies inside the allowed storage folders. Parents of this VM's own
+            # differencing disks are never deleted (they may be shared templates).
+            $vm = Get-VmById $a.vmId
+            if ("$($vm.State)" -notin @('Off', 'Saved')) { throw "invalid_state: The VM must be Off or Saved to be deleted (it is $($vm.State))." }
+            if (Get-VMSnapshot -VM $vm -ErrorAction SilentlyContinue | Select-Object -First 1) {
+                throw 'The VM has checkpoints: delete them first (their files belong to the disk chain), or delete the VM without its disks.'
+            }
+            $disks = @(Get-VMHardDiskDrive -VM $vm | Where-Object { $_.Path } | ForEach-Object { [string]$_.Path } | Select-Object -Unique)
+            $inUse = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+            foreach ($other in @(Get-VM | Where-Object { $_.Id -ne $vm.Id })) {
+                foreach ($drive in @(Get-VMHardDiskDrive -VM $other | Where-Object { $_.Path })) {
+                    $p = [string]$drive.Path
+                    for ($i = 0; $p -and $i -lt 64; $i++) {
+                        [void]$inUse.Add($p)
+                        $p = [string](Get-VHD -Path $p -ErrorAction SilentlyContinue).ParentPath
+                    }
+                }
+            }
+            $toDelete = New-Object System.Collections.ArrayList
+            $kept = New-Object System.Collections.ArrayList
+            foreach ($d in $disks) {
+                if ($inUse.Contains($d)) { [void]$kept.Add("$d (used by another VM)"); continue }
+                if ($d -notmatch '\.(vhd|vhdx|avhdx)$') { [void]$kept.Add("$d (not a virtual disk file)"); continue }
+                if (-not (Test-Path -LiteralPath $d)) { [void]$kept.Add("$d (file not found)"); continue }
+                try { Assert-StorageFolder (Split-Path -Path $d -Parent) 'The folder of the disk' }
+                catch { [void]$kept.Add("$d (outside the folders the portal may use)"); continue }
+                [void]$toDelete.Add($d)
+            }
+            Remove-VM -VM $vm -Force
+            [void]$applied.Add('vmRemoved')
+            $deleted = New-Object System.Collections.ArrayList
+            $failed = New-Object System.Collections.ArrayList
+            foreach ($d in $toDelete) {
+                try {
+                    Remove-Item -LiteralPath $d -Force -ErrorAction Stop
+                    [void]$deleted.Add($d)
+                    [void]$applied.Add("deleted:$d")
+                } catch {
+                    [void]$failed.Add("$d ($($_.Exception.Message))")
+                }
+            }
+            Write-Response $true @{ deleted = @($deleted); kept = @($kept); failed = @($failed) } $null $applied
+        }
+
         'RemoveTemplate' {
             $folder = Get-TemplateFolder ([string]$a.folder) $a.roots
             if (-not (Test-Path -LiteralPath $folder)) {

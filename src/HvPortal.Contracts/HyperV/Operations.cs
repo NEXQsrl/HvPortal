@@ -74,6 +74,12 @@ public enum HvOperation
     ReadBackupFile,
     /// <summary>Protocol 9. Restore points found in a repository (their manifests), to show or import them again.</summary>
     ListBackups,
+    /// <summary>
+    /// Protocol 9. Delete a VM (Off or Saved, no checkpoints) AND its virtual disk files: only the disks attached to it,
+    /// never a file another VM uses (attached or as parent of a differencing disk), never outside the allowed storage
+    /// folders. Sent by the agent itself for <c>DeleteVm</c> with <c>DeleteDisks</c>; never queued by the gateway.
+    /// </summary>
+    RemoveVmWithDisks,
 }
 
 public static class HvOperations

@@ -64,6 +64,30 @@ public sealed class Protocol9Tests
     }
 
     [Fact]
+    public void Deleting_the_disks_of_a_vm_needs_protocol_9_and_never_touches_files_of_other_vms()
+    {
+        var delete = new AgentCommand { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.DeleteVm, VmId = Guid.NewGuid() };
+        Assert.True(AgentProtocol.RequiredVersion(delete) < 9);
+        Assert.Equal(9, AgentProtocol.RequiredVersion(delete with { DeleteDisks = true }));
+        Assert.True(CommandExecutor.IsMutating(delete with { DeleteDisks = true }));
+        Assert.Null(PowerShellOperationRunner.Validate(HvOperation.RemoveVmWithDisks, HvOperations.ToElement(new VmRef(Guid.NewGuid()))));
+        Assert.Equal("invalid_vm", PowerShellOperationRunner.Validate(HvOperation.RemoveVmWithDisks, HvOperations.ToElement(new VmRef(Guid.Empty))));
+
+        var branch = Branch(Script(), "RemoveVmWithDisks").Replace("\r", "");
+        // Every check happens before Remove-VM; only then files are deleted, one by one, never recursively.
+        var removeVm = branch.IndexOf("Remove-VM -VM $vm -Force", StringComparison.Ordinal);
+        Assert.True(removeVm > 0);
+        foreach (var check in new[] { "-notin @('Off', 'Saved')", "Get-VMSnapshot -VM $vm", "$inUse.Contains($d)", "Assert-StorageFolder", @"-notmatch '\.(vhd|vhdx|avhdx)$'" })
+        {
+            var at = branch.IndexOf(check, StringComparison.Ordinal);
+            Assert.True(at > 0 && at < removeVm, check);
+        }
+        Assert.Contains("ParentPath", branch, StringComparison.Ordinal);
+        Assert.Contains("Remove-Item -LiteralPath $d -Force -ErrorAction Stop", branch, StringComparison.Ordinal);
+        Assert.DoesNotContain("-Recurse", branch, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Vlans_are_1_to_4094_and_need_a_switch()
     {
         Assert.Null(OperationValidation.Validate(new NewVmRequest { Name = "web", SwitchName = "vSwitch", VlanId = 4094 }));
@@ -297,6 +321,37 @@ public sealed class Protocol9Tests
         }
         Assert.DoesNotContain("Invoke-Expression", updater, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Start-Process", updater, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static readonly string[] ExpectedStorageLists = [@"2:C:\HvpA|C:\HvpB", @"1:C:\HvpOnly", "0:"];
+
+    [Fact]
+    public void Install_agent_keeps_several_storage_folders_separate_in_windows_powershell()
+    {
+        // Regression: "$x = @(Test-StorageFolders ...)" wrapped the returned array, so two folders reached New-Item as
+        // the single path "D:\VMs D:\ISO" ("The given path's format is not supported") in the middle of an upgrade.
+        var dir = Path.Combine(AppContext.BaseDirectory, "Installer");
+        var install = File.ReadAllText(Path.Combine(dir, "Install-Agent.ps1"));
+        const string line = "$storageList = [string[]](Test-StorageFolders $StorageFolders)";
+        Assert.Contains(line, install, StringComparison.Ordinal);
+        Assert.DoesNotContain("@(Test-StorageFolders", install, StringComparison.Ordinal);
+
+        var ps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+        Assert.True(File.Exists(ps), ps);
+        // Test-StorageFolders only reads the drive type: nothing is created. Same line as Install-Agent.ps1.
+        var script = ". '" + Path.Combine(dir, "Common.ps1").Replace("'", "''") + "'\n"
+                     + "foreach ($case in @(@('C:\\HvpA', 'C:\\HvpB\\'), @('C:\\HvpOnly'), @(''))) {\n"
+                     + "  [string[]]$StorageFolders = $case\n  " + line + "\n"
+                     + "  Write-Output ('{0}:{1}' -f $storageList.Count, ($storageList -join '|'))\n}";
+        var start = new ProcessStartInfo(ps, "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand "
+                                             + Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script)))
+        { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, error);
+        Assert.Equal(ExpectedStorageLists, output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
     [Fact]

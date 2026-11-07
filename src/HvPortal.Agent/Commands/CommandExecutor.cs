@@ -121,6 +121,10 @@ public sealed class CommandExecutor
                 case AgentCommandKind.DeleteVm when command.VmId is { } deleteId && deleteId != Guid.Empty:
                     return await RunDeleteAsync(command, deleteId, progress, ct);
 
+                // Only reachable through DeleteVm with DeleteDisks: the agent builds its arguments itself.
+                case AgentCommandKind.HyperVOperation when command.Operation is HvOperation.RemoveVmWithDisks:
+                    return Reject(command, "RemoveVmWithDisks is sent only as DeleteVm with DeleteDisks.");
+
                 case AgentCommandKind.HyperVOperation when command.Operation is { } op && Enum.IsDefined(op) && _ops is not null:
                     return await RunOperationAsync(command, op, ct);
 
@@ -226,6 +230,10 @@ public sealed class CommandExecutor
         try
         {
             _logger.LogWarning("Deleting VM {VmId} (command {CommandId})", vmId, command.CommandId);
+            if (command.DeleteDisks == true)
+            {
+                return await RunDeleteWithDisksAsync(command, vmId, timeout, ct);
+            }
             var p = new Progress<(int Percent, string Message)>(x =>
                 progress.Report(new AgentCommandProgress { CommandId = command.CommandId, Percent = x.Percent, Message = x.Message }));
             var outcome = await _host.DeleteVmAsync(vmId, timeout, p, ct);
@@ -236,6 +244,41 @@ public sealed class CommandExecutor
         {
             gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Delete the VM and its disk files (fixed script, RemoveVmWithDisks). The VM being already gone is reported like the
+    /// configuration-only delete; an error before Remove-VM leaves everything as it was; files the script could not
+    /// delete or refused to delete are listed in the message, never reported as deleted.
+    /// </summary>
+    private async Task<AgentCommandResult> RunDeleteWithDisksAsync(AgentCommand command, Guid vmId, TimeSpan timeout, CancellationToken ct)
+    {
+        if (_ops is null)
+        {
+            return Reject(command, "This agent cannot run Hyper-V operations (operations script missing): the disks cannot be deleted.");
+        }
+        if (await _host.GetVmAsync(vmId, ct) is null)
+        {
+            return new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.AlreadyInState, Message = "VM not present on the host (already deleted)." };
+        }
+        var outcome = await _ops.RunAsync(HvOperation.RemoveVmWithDisks, HvOperations.ToElement(new VmRef(vmId)), timeout, ct);
+        if (!outcome.Ok)
+        {
+            var invalidState = outcome.Error?.StartsWith("invalid_state", StringComparison.Ordinal) == true;
+            return new AgentCommandResult
+            {
+                CommandId = command.CommandId,
+                Status = invalidState ? AgentCommandStatus.InvalidState : outcome.Applied.Contains("vmRemoved") ? AgentCommandStatus.Unverified : AgentCommandStatus.Failed,
+                Message = outcome.Error,
+                Operation = outcome,
+            };
+        }
+        var result = outcome.Result is { } r ? HvOperations.FromElement<VmDiskDeletion>(r) : null;
+        var message = $"VM deleted. Disk files deleted: {result?.Deleted.Count ?? 0}"
+            + (result is { Kept.Count: > 0 } ? $"; kept: {string.Join("; ", result.Kept)}" : "")
+            + (result is { Failed.Count: > 0 } ? $"; NOT deleted (error): {string.Join("; ", result.Failed)}" : "") + ".";
+        _logger.LogWarning("Delete VM {VmId} with disks: {Message}", vmId, message);
+        return new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Succeeded, Message = message, Operation = outcome };
     }
 
     internal static string SanitizeReason(string? reason)

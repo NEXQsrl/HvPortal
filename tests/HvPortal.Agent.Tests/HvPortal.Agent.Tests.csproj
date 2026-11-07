@@ -23,6 +23,8 @@
   <!-- The updater run by the scheduled task on the host (agent updates from the portal): its checks are tested here. -->
   <ItemGroup>
     <None Include="..\..\installer\Update-HvPortalAgent.ps1" Link="Installer\Update-HvPortalAgent.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\installer\Install-Agent.ps1" Link="Installer\Install-Agent.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\installer\Common.ps1" Link="Installer\Common.ps1" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -61,7 +61,11 @@ if ($policy -eq 'AllSigned') {
 if (-not (Test-Path (Join-Path $Source 'Ops\HvPortal.Ops.ps1'))) { throw "Ops\HvPortal.Ops.ps1 not found in $Source (incomplete package)." }
 # Checked before anything changes: a wrong folder must not leave the agent stopped.
 $storageList = $null
-if ($PSBoundParameters.ContainsKey('StorageFolders')) { $storageList = @(Test-StorageFolders $StorageFolders) }
+if ($PSBoundParameters.ContainsKey('StorageFolders')) {
+    # No @(...) here: Test-StorageFolders returns the array as one object, and @() would wrap it, so two folders
+    # would become the single string "D:\VMs D:\ISO" (New-Item: "The given path's format is not supported").
+    $storageList = [string[]](Test-StorageFolders $StorageFolders)
+}
 if ($Management -and -not (Test-Path (Join-Path $Source 'Ops\HvPortal.Remote.ps1'))) { throw "Ops\HvPortal.Remote.ps1 not found in $Source (package older than 0.4.0)." }
 
 $virtual = "NT SERVICE\$service"

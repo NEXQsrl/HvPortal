@@ -14,7 +14,8 @@ namespace HvPortal.Gateway.Api;
 public static class InventoryManagementEndpoints
 {
     public sealed record HostUpdateRequest(string? DisplayName, string? Description);
-    public sealed record ConfirmRequest(string? ConfirmName, string? IdempotencyKey);
+    /// <summary>DeleteDisks: VM delete only — also delete the disk files that belong only to that VM (agent 0.7.0+).</summary>
+    public sealed record ConfirmRequest(string? ConfirmName, string? IdempotencyKey, bool DeleteDisks = false);
 
     public const int MaxDescriptionLength = 1000;
 
@@ -191,12 +192,19 @@ public static class InventoryManagementEndpoints
         {
             return ApiSupport.BadRequest("invalid_idempotency_key");
         }
+        // An older agent would delete only the configuration: refused instead of keeping the disks silently.
+        if (req.DeleteDisks && agents.IsConnected(vm.HostId) && agents.ProtocolVersionOf(vm.HostId) < 9)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated",
+                "Deleting the disk files needs agent 0.7.0 or later on this host. Update the agent, or delete the VM without its disks.");
+        }
         try
         {
-            var (job, created) = await jobs.CreateVmDeleteJobAsync(http.User.UserId(), vm, req.IdempotencyKey, http.RequestAborted);
+            var (job, created) = await jobs.CreateVmDeleteJobAsync(http.User.UserId(), vm, req.IdempotencyKey, http.RequestAborted, req.DeleteDisks);
             if (created)
             {
-                await http.WriteAuditAsync("vm.delete.request", resourceType: "vm", resourceId: id.ToString("D"), details: new { jobId = job.Id, vm = vm.Name });
+                await http.WriteAuditAsync("vm.delete.request", resourceType: "vm", resourceId: id.ToString("D"),
+                    details: new { jobId = job.Id, vm = vm.Name, deleteDisks = req.DeleteDisks });
             }
             return Results.Accepted($"/api/v1/jobs/{job.Id}", new { jobId = job.Id, created });
         }

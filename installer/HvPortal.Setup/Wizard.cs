@@ -601,7 +601,11 @@ namespace HvPortal.Setup
                 c.Gap(14);
                 updates = c.Check(Strings.T("storage.updates"), true);
                 c.Text(Strings.T("storage.updatesHelp"), muted: true, indent: 22);
-                folders.Enter += (_, __) => restrict.Checked = true;
+                // The list (pre-filled with an example) is editable only when "only these folders" is chosen, so it is
+                // never mistaken for a value that applies with the other choices.
+                void Sync() => folders.Enabled = restrict.Checked;
+                restrict.CheckedChanged += (_, __) => Sync();
+                Sync();
             });
             page.Leave = () =>
             {
