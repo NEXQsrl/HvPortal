@@ -117,6 +117,17 @@ export interface Host {
   managementAgentName?: string | null;
   /** Only for global host administrators; the password is never returned. */
   remote?: { computerName: string; userName: string; useHttps: boolean; credentialUpdatedAt: string | null } | null;
+  /** Agent 0.7.0+ connected with Hyper-V access: host health, VM move, backups, new folders. */
+  agent7?: boolean;
+  /** Folders the portal may use on the host (empty = not restricted; null = unknown, agent older than 0.7.0). */
+  storageFolders?: string[] | null;
+  /** Remote hosts: the folders are set in the portal; hosts with an agent decide them at install time. */
+  storageFoldersEditable?: boolean;
+  /** Local folder for temporary copies of backups (shares with credentials, restore tests, file restore). */
+  backupStagingPath?: string | null;
+  /** The updater task is registered on the host (updates from the portal possible for signed builds). */
+  updaterInstalled?: boolean | null;
+  lastUpdateResult?: string | null;
 }
 
 export interface ManagementAgent {
@@ -185,6 +196,12 @@ export interface Vm {
   /** May create a template from this VM (templates.manage on its host, agent 0.6.0+). */
   canTemplate: boolean;
   canApplyCheckpoint: boolean;
+  /** vm.migrate on the VM and agent 0.7.0+ on its host. */
+  canMigrate?: boolean;
+  /** backup.run on the VM and agent 0.7.0+ on its host. */
+  canBackup?: boolean;
+  /** backup.restore on the VM. */
+  canRestore?: boolean;
 }
 
 export interface Job {

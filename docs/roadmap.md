@@ -35,6 +35,34 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 - Agent protocol 3 (agent 0.3.1): `BrowseFolders`, `NewVm.Location`; the gateway never sends them to older agents;
   agents reply `Rejected` to commands they cannot parse instead of dropping the channel.
 
+## v0.7.0 — delivered in code (automated tests against the test double; real-host validation pending)
+Agent protocol 9 (agent 0.7.0). Nothing that touches Hyper-V has run on a real host yet: real-host plan V49–V67.
+- **VM backups** (ADR-031): repositories on a host folder or an SMB share, also a NAS outside the domain with stored
+  credentials and a local staging folder; backup jobs for VMs and groups with daily (time zone) or hourly schedule,
+  retention by count and age, *Keep*; restore points = export of a checkpoint + SHA-256 manifest, verify, rescan;
+  restore as a new VM, over the original VM, as an isolated restore test (heartbeat), a single disk, single files
+  (read-only attach). Permissions `backup.run`, `backup.restore`, new `backup.manage`; role *Backup operator* extended.
+  Long jobs have their own concurrency budget. Not provided: application-consistency guarantee, incremental copies,
+  deduplication, immutability.
+- **Notifications** (ADR-033): e-mail (SMTP STARTTLS) and webhooks (generic, Teams, Slack) for backup runs, failed
+  restore tests and outdated agents. **API tokens** (ADR-032): read-only `backup.read` tokens for monitoring on
+  `/api/v1/public/backup/*`.
+- **Agent update from the portal** (ADR-029): signed packages only (catalog signed by the publisher of the installed
+  agent), SYSTEM updater task the agent may only start, no downgrade, job verified by the reconnection;
+  `-DisableRemoteUpdate`. The first 0.7.0 installation is by hand.
+- **Upgrade fix** of the installers: wait for the service process to exit, retry locked files, put the previous binaries
+  back when the replacement fails (the "clrjit.dll access denied" upgrade failure).
+- **Portal networks** (ADR-030): network = switch + access VLAN, chosen by name for new VMs, added and changed adapters;
+  VLAN change can re-tag the adapters on it.
+- **VM move** (ADR-035): to another host (`Move-VM`, live migration, with or without storage) and to another folder
+  (`Move-VMStorage`); group limits and storage folders apply; the portal record follows the VM.
+- **Allowed storage folders** (ADR-034): `Install-Agent.ps1 -StorageFolders` (and the setup page) limits the folders
+  the portal may use on a host, enforced by the agent; set in the portal for remote hosts; new folders in the file
+  explorer.
+- **Host health** (ADR-036): hardware, disks, volumes, pools, NICs, recent hardware events, Hyper-V services.
+- UI (being finished): Settings area tree with Users and Audit; VM summary with disks and uptime cards; scrollable
+  dialogs; new sign-in page; topic guides for every user (Guide > topics).
+
 ## v0.6.0 — delivered (code + automated tests + browser e2e; real-host validation pending)
 - VM templates (ADR-028, agent protocol 8): create a template from a VM that is off (copy of its disks), create VMs
   from it choosing name and resources (also from the New VM wizard), rename and delete; permission
@@ -107,12 +135,17 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 
 ## Milestone 3
 - Failover clusters (`root\MSCluster`): nodes, CSV, quorum, owner resolution per operation, drain/maintenance,
-  live and storage migration.
+  live and storage migration (standalone hosts: done in 0.7.0).
 - Templates, next steps (the base is in 0.6.0): versions, generalized images, unique identities, secure first-boot injection, no embedded secrets, copy between hosts.
-- Notifications: email + webhooks with retry, de-duplication, SSRF protection (allow-list, no private ranges unless
-  allowed, DNS re-resolution checks).
-- Backup provider interface + first external provider; consistency reporting; restore to new VM; isolated restore
-  tests; product configuration/key backup automation.
+- Notifications, next steps (e-mail + webhooks are in 0.7.0): retry and queue, de-duplication, SSRF protection
+  (allow-list, no private ranges unless allowed, DNS re-resolution checks), encrypted webhook addresses.
+- Backup, next steps (native full-copy backups, restore to a new VM, isolated restore tests and checkpoint-type
+  reporting are in 0.7.0): incremental chains (RCT, reference points), signed manifests, repository immutability where
+  the storage supports it, copy of restore points to a second repository, backup provider interface + first external
+  provider; product configuration/key backup automation.
+- Fixes found while documenting 0.7.0: storage-folder check for operations that use the host default folders; access
+  change guard for VM moves; re-authentication for repository credentials, notification settings and destructive
+  restores; authorization of the host chosen for a file-restore mount.
 
 ## Milestone 4
 - Console v2 (VMConnect/RDP on 2179, enhanced session) after the [study](console-study.md); basic console done in v0.3.
@@ -122,4 +155,6 @@ SQLite, administrator bootstrap, TOTP, RBAC (scopes Global/Host/Group/VM), audit
 
 ## Research items
 Console protocol feasibility · RCT-based incremental chains · immutability on supported storage only ·
-Server Core installation UX · TPM-bound agent keys.
+Server Core installation UX · TPM-bound agent keys · authentication of `Move-VM` started by the agent service on the
+source host (Kerberos constrained delegation vs. computer account) · which host-health sections need administrator
+rights.

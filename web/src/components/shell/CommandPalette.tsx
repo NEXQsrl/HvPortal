@@ -7,7 +7,7 @@ import { useOps } from '@/components/ops/OperationsProvider';
 import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator, CommandShortcut } from '@/components/ui/command';
 import { useI18n, type TKey } from '@/i18n';
 import { useSession } from '@/session';
-import { GUIDE_PAGES } from '@/pages/guide/GuidePages';
+import { visibleGuidePages } from '@/pages/guide/GuidePages';
 import { NAV_ITEMS } from './nav';
 
 /** Ctrl+K: jump to any VM, host, group or page, or start a common action. */
@@ -84,15 +84,14 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
           <CommandItem value={`page ${t('inv.view.vms')}`} onSelect={() => go('/inventory?view=vms')}><Monitor />{t('nav.inventory')} › {t('inv.view.vms')}</CommandItem>
           <CommandItem value="page account" onSelect={() => go('/account')}><UserRound />{t('nav.account')}</CommandItem>
         </CommandGroup>
-        {can('hosts.manage') && (
-          <CommandGroup heading={t('guide.home.title')}>
-            {GUIDE_PAGES.filter((p) => !p.end).map((p) => (
-              <CommandItem key={p.to} value={`guide ${t(p.title)} ${p.desc ? t(p.desc) : ''}`} onSelect={() => go(p.to)}>
-                <p.icon />{t(p.title)}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        )}
+        {/* Topic guides for everyone; the administration pages only with hosts.manage. */}
+        <CommandGroup heading={t('guide.home.title')}>
+          {visibleGuidePages(can).filter((p) => !p.end).map((p) => (
+            <CommandItem key={p.to} value={`guide ${t(p.title)} ${p.desc ? t(p.desc) : ''}`} onSelect={() => go(p.to)}>
+              <p.icon />{t(p.title)}
+            </CommandItem>
+          ))}
+        </CommandGroup>
       </CommandList>
       </Command>
     </CommandDialog>

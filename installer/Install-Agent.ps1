@@ -17,6 +17,14 @@
     expires, gets only "Log on as a service", is denied local, Remote Desktop, network and batch logon, and is added to
     "Hyper-V Administrators" (not Administrators). Same rights as the default account, but a named identity.
     Upgrades without -ServiceAccount keep the account the service already uses.
+  - -StorageFolders 'D:\VMs','E:\ISO': the only folders of this host the portal may use (file explorer, folder pickers,
+    VM locations, new disks, ISO/template libraries, backup folders). Missing folders are created. Enforced by the agent;
+    the portal cannot change it. Without the parameter an upgrade keeps the current list; -StorageFolders '' removes
+    the restriction (every local fixed drive, system folders excluded).
+  - Updates from the portal: a scheduled task "\HvPortal\HvPortal Agent Update" (SYSTEM) is registered; the agent
+    service may only start it. It installs a package downloaded by the agent only when the package's signed catalog is
+    signed by the same certificate as the installed agent (unsigned builds are never installed this way).
+    -DisableRemoteUpdate removes the task (updates by hand only).
 .EXAMPLE
   $env:HVP_ENROLLMENT_TOKEN = '<token>'; .\Install-Agent.ps1 -Source ..\agent -Gateway https://gw01.contoso.local:8444 -CaSha256 <fingerprint>
 #>
@@ -30,7 +38,9 @@ param(
     [string]$EnrollmentToken = $env:HVP_ENROLLMENT_TOKEN,
     [switch]$ForceReenroll,
     [switch]$Management,
-    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$')][string]$ServiceAccount
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$')][string]$ServiceAccount,
+    [string[]]$StorageFolders,
+    [switch]$DisableRemoteUpdate
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
@@ -49,13 +59,16 @@ if ($policy -eq 'AllSigned') {
     Write-Warning 'Group Policy enforces AllSigned for PowerShell: the unsigned operations script will be refused unless this build is signed.'
 }
 if (-not (Test-Path (Join-Path $Source 'Ops\HvPortal.Ops.ps1'))) { throw "Ops\HvPortal.Ops.ps1 not found in $Source (incomplete package)." }
+# Checked before anything changes: a wrong folder must not leave the agent stopped.
+$storageList = $null
+if ($PSBoundParameters.ContainsKey('StorageFolders')) { $storageList = @(Test-StorageFolders $StorageFolders) }
 if ($Management -and -not (Test-Path (Join-Path $Source 'Ops\HvPortal.Remote.ps1'))) { throw "Ops\HvPortal.Remote.ps1 not found in $Source (package older than 0.4.0)." }
 
 $virtual = "NT SERVICE\$service"
 $previousLogon = $null
 if (Get-Service $service -ErrorAction SilentlyContinue) {
     $previousLogon = Get-ServiceStartName $service
-    Stop-Service $service -Force
+    Stop-HvPortalService -ServiceName $service
 }
 # Upgrade of a service already running as a dedicated local account: keep it (its password is not known here).
 $keepLogon = (-not $ServiceAccount) -and $previousLogon -and $previousLogon -notlike 'NT SERVICE\*' -and $previousLogon -ne 'LocalSystem'
@@ -97,6 +110,25 @@ New-Item -ItemType Directory -Force -Path $DataPath | Out-Null
 Set-PrivateAcl -Path $DataPath -ExtraAccounts $accounts
 Register-EventSource 'HvPortal Agent'
 Set-ServiceEnvironment -ServiceName $service -Variables @{ HVP_AGENT_DATA_DIR = $DataPath }
+
+# Allowed storage folders (read by the agent at start; private file in the data directory).
+if ($null -ne $storageList) { Set-StorageFolders -DataPath $DataPath -Folders $storageList }
+$storageFile = Join-Path $DataPath 'storage.json'
+if (Test-Path $storageFile) {
+    $current = @((Get-Content $storageFile -Raw | ConvertFrom-Json).folders)
+    Write-Host "Storage folders the portal may use: $($current -join ', ')"
+} else {
+    Write-Host 'Storage folders: not restricted (every local fixed drive, system folders excluded). Restrict with -StorageFolders.'
+}
+
+# Updates from the portal (signed builds only): the updater task, that only the agent service account may start.
+if ($DisableRemoteUpdate) {
+    Unregister-AgentUpdater
+    Write-Host 'Updates from the portal disabled (updater task removed).'
+} else {
+    $sids = @($accounts | ForEach-Object { (New-Object System.Security.Principal.NTAccount $_).Translate([System.Security.Principal.SecurityIdentifier]).Value })
+    Register-AgentUpdater -SourceDirectory $PSScriptRoot -ServiceSids $sids
+}
 
 # Least privilege for Hyper-V: membership in the built-in "Hyper-V Administrators" group (SID S-1-5-32-578).
 # A management agent needs no local Hyper-V rights: it uses the credentials of each remote host.

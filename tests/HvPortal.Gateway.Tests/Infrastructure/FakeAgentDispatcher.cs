@@ -83,6 +83,40 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
         ManagementDisconnected.Enqueue(agentId);
     }
 
+    /// <summary>Simulated agent versions (host or management agent id); default "0.7.0" with the current protocol when connected.</summary>
+    public ConcurrentDictionary<Guid, string> AgentVersions { get; } = new();
+
+    /// <summary>When set, an UpdateAgent command makes the agent "come back" with this version (as the updater task would).</summary>
+    public string? VersionAfterUpdate { get; set; }
+
+    public (int Protocol, string? Version)? AgentOf(Guid hostOrAgentId) =>
+        IsConnected(hostOrAgentId) || IsManagementAgentConnected(hostOrAgentId)
+            ? (ProtocolVersions.TryGetValue(hostOrAgentId, out var p) ? p : AgentProtocol.Version, AgentVersions.GetValueOrDefault(hostOrAgentId, "0.7.0"))
+            : null;
+
+    public Task<AgentCommandResult> SendToManagementAgentAsync(Guid agentId, AgentCommand command, TimeSpan timeout, CancellationToken ct)
+    {
+        if (!IsManagementAgentConnected(agentId))
+        {
+            throw new HostNotConnectedException(agentId);
+        }
+        Received.Enqueue(command);
+        return Task.FromResult(UpdateAgent(agentId, command));
+    }
+
+    private AgentCommandResult UpdateAgent(Guid id, AgentCommand command)
+    {
+        if (command.Update is null)
+        {
+            return new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Rejected };
+        }
+        if (VersionAfterUpdate is { } v)
+        {
+            AgentVersions[id] = v;
+        }
+        return new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Succeeded, Message = "staged" };
+    }
+
     public Task<AgentCommandResult> SendAsync(Guid hostId, AgentCommand command, Action<AgentCommandProgress>? onProgress, TimeSpan timeout, CancellationToken ct)
     {
         if (!IsConnected(hostId))
@@ -210,6 +244,9 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
 
             case AgentCommandKind.ConsoleInput:
                 return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Succeeded });
+
+            case AgentCommandKind.UpdateAgent:
+                return Task.FromResult(UpdateAgent(hostId, command));
 
             default:
                 return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Rejected });
@@ -362,6 +399,46 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                         (_specs.TryGetValue(kv.Key, out var sized) ? sized.DiskGb : 64L) << 30, 10L << 30, null)).ToList());
             case HvOperation.ListIsos:
                 return Ok(new[] { new IsoFile(@"D:\ISO\win.iso", 5L << 30, DateTimeOffset.UtcNow) });
+            case HvOperation.GetHostHealth:
+                return Ok(Health ?? new HostHealthReport
+                {
+                    CollectedUtc = DateTimeOffset.UtcNow,
+                    PhysicalDisks = [new PhysicalDiskHealth { Name = "Disk 0", HealthStatus = "Healthy", Status = HealthLevel.Ok }],
+                    Volumes = [new VolumeHealth { Name = "C:", SizeBytes = 100L << 30, FreeBytes = 50L << 30, HealthStatus = "Healthy", Status = HealthLevel.Ok }],
+                    Services = [new ServiceHealth("vmms", "Hyper-V Virtual Machine Management", "Running", "Automatic")],
+                });
+            case HvOperation.MoveVm:
+                var mv = HvOperations.FromElement<MoveVmRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(mv) is { } badMove)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = badMove };
+                }
+                if (!_vms.TryGetValue(mv.VmId, out var moving) || moving.HostId != hostId)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "VM not found on this host." };
+                }
+                if (MoveDestinationHost is { } destHost)
+                {
+                    _vms[mv.VmId] = moving with { HostId = destHost };
+                }
+                return Ok(new MoveVmResult(mv.VmId, moving.Name, mv.DestinationHost, mv.DestinationPath, moving.State.ToString()), "moved");
+            case HvOperation.MoveVmStorage:
+                var ms = HvOperations.FromElement<MoveVmStorageRequest>(command.OperationArgs)!;
+                return OperationValidation.Validate(ms) is { } badStorage
+                    ? new HvOperationOutcome { Ok = false, Error = badStorage }
+                    : Ok(new MoveVmResult(ms.VmId, null, null, ms.DestinationPath + @"\vm", "Running"), "moved");
+            case HvOperation.NewFolder:
+                var nf = HvOperations.FromElement<NewFolderRequest>(command.OperationArgs)!;
+                var created = System.IO.Path.Combine(nf.Parent, nf.Name);
+                if (!Folders.TryGetValue(nf.Parent, out var parentSubs)) return new HvOperationOutcome { Ok = false, Error = "not_found: folder not found." };
+                if (parentSubs.Contains(nf.Name, StringComparer.OrdinalIgnoreCase)) return new HvOperationOutcome { Ok = false, Error = "file_exists: a file or folder with this name already exists." };
+                Folders[nf.Parent] = [.. parentSubs, nf.Name];
+                Folders[created] = [];
+                return Ok(new FolderEntry(nf.Name, created));
+            case HvOperation.GetBackupReadiness or HvOperation.BackupVm or HvOperation.VerifyBackup or HvOperation.RemoveBackup or HvOperation.ListBackups
+                or HvOperation.RestoreBackup or HvOperation.RestoreBackupDisk or HvOperation.MountBackupDisk or HvOperation.DismountBackupDisk
+                or HvOperation.ListBackupFiles or HvOperation.ReadBackupFile:
+                return BackupOperation(hostId, command);
             case HvOperation.ListFolder or HvOperation.ReadFile or HvOperation.WriteFileBegin or HvOperation.WriteFileChunk
                 or HvOperation.WriteFileCommit or HvOperation.WriteFileAbort:
                 return FileOperation(command);
@@ -389,6 +466,113 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 });
             default:
                 return new HvOperationOutcome { Ok = false, Error = "Unsupported operation." };
+        }
+    }
+
+    /// <summary>Health report returned by GetHostHealth (default: a healthy host).</summary>
+    public HostHealthReport? Health { get; set; }
+
+    /// <summary>When set, a MoveVm moves the simulated VM to this host.</summary>
+    public Guid? MoveDestinationHost { get; set; }
+
+    /// <summary>Simulated repositories: "&lt;repository path&gt;|&lt;point folder&gt;" -> manifest written by BackupVm.</summary>
+    public ConcurrentDictionary<string, BackupManifest> Repository { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>When set, BackupVm fails with this message.</summary>
+    public string? BackupFailure { get; set; }
+
+    /// <summary>Result of the next restore tests (heartbeat seen).</summary>
+    public bool RestoreTestPasses { get; set; } = true;
+
+    /// <summary>Mounted backup disks: mount id -> volume root.</summary>
+    public ConcurrentDictionary<Guid, string> BackupMountsSimulated { get; } = new();
+
+    private HvOperationOutcome BackupOperation(Guid hostId, AgentCommand command)
+    {
+        HvOperationOutcome Ok(object result, params string[] applied) => new() { Ok = true, Result = HvOperations.ToElement(result), Applied = applied };
+        HvOperationOutcome Fail(string error) => new() { Ok = false, Error = error };
+        switch (command.Operation)
+        {
+            case HvOperation.GetBackupReadiness:
+                var ready = HvOperations.FromElement<BackupReadinessRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(ready) is { } badReady) return Fail(badReady);
+                var checks = new List<BackupCheck> { new("hyperv-module", "Ok", "Hyper-V PowerShell module available.", null) };
+                if (ready.Target is { } t)
+                {
+                    checks.Add(new("repository", "Ok", $"Repository {t.Path} reachable and writable.", null));
+                }
+                return Ok(new BackupReadiness(checks));
+            case HvOperation.BackupVm:
+                var b = HvOperations.FromElement<BackupVmRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(b) is { } badBackup) return Fail(badBackup);
+                if (!_vms.TryGetValue(b.VmId, out var vm) || vm.HostId != hostId) return Fail("VM not found on this host.");
+                if (BackupFailure is { } failure) return Fail(failure);
+                var files = new List<BackupFile>
+                {
+                    new($@"{vm.Name}\Virtual Machines\{b.VmId:D}.vmcx", 40_000, new string('a', 64)),
+                    new($@"{vm.Name}\Virtual Hard Disks\{vm.Name}.vhdx", 10L << 30, new string('b', 64)),
+                };
+                var manifest = new BackupManifest
+                {
+                    PointId = b.PointId, VmId = b.VmId, VmName = vm.Name, HostName = "FAKEHOST", CreatedUtc = DateTimeOffset.UtcNow, CompletedUtc = DateTimeOffset.UtcNow,
+                    CheckpointTypeRequested = b.CheckpointType, CheckpointTypeUsed = "Production", Generation = 2, ProcessorCount = 2, MemoryStartupMb = 4096,
+                    ConfigFile = files[0].Path, Disks = [files[1].Path], Files = files, TotalBytes = files.Sum(f => f.SizeBytes),
+                };
+                Repository[b.Target.Path + "|" + b.Folder] = manifest;
+                return Ok(manifest, "checkpoint", "exported", "checkpointRemoved", "manifest");
+            case HvOperation.VerifyBackup:
+                var v = HvOperations.FromElement<BackupPointRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(v) is { } badVerify) return Fail(badVerify);
+                return Repository.TryGetValue(v.Target.Path + "|" + v.Folder, out var m)
+                    ? Ok(new BackupVerifyResult(true, m.Files.Count, m.TotalBytes, []), "verified")
+                    : Ok(new BackupVerifyResult(false, 0, 0, ["missing: hvportal-backup.json"]), "verified");
+            case HvOperation.RemoveBackup:
+                var r = HvOperations.FromElement<BackupPointRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(r) is { } badRemove) return Fail(badRemove);
+                return Ok(new { removed = Repository.TryRemove(r.Target.Path + "|" + r.Folder, out _) }, "removed");
+            case HvOperation.ListBackups:
+                var l = HvOperations.FromElement<BackupPointRequest>(command.OperationArgs)!;
+                return Ok(Repository.Where(kv => kv.Key.StartsWith(l.Target.Path + "|", StringComparison.OrdinalIgnoreCase))
+                    .Select(kv => new { folder = kv.Key.Split('|')[1], manifest = kv.Value }).ToList());
+            case HvOperation.RestoreBackup:
+                var rb = HvOperations.FromElement<RestoreBackupRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(rb) is { } badRestore) return Fail(badRestore);
+                if (!Repository.TryGetValue(rb.Source.Path + "|" + rb.Folder, out var point)) return Fail("The restore point has no manifest.");
+                if (rb.Mode == RestoreModes.Test)
+                {
+                    return Ok(new RestoreBackupResult { Mode = rb.Mode, Name = rb.NewName, TestPassed = RestoreTestPasses, TestSeconds = 42,
+                        TestDetail = RestoreTestPasses ? "The VM started and the guest reported heartbeat OkApplicationsUnknown after 42 s." : "No healthy heartbeat within 600 s." }, "imported", "testVmRemoved");
+                }
+                if (rb.Mode == RestoreModes.Replace)
+                {
+                    return Ok(new RestoreBackupResult { Mode = rb.Mode, VmId = rb.ReplaceVmId, Name = point.VmName }, "originalRemoved", "imported");
+                }
+                var restoredId = Guid.NewGuid();
+                _vms[restoredId] = (hostId, rb.NewName!, rb.StartAfter ? VmPowerState.Running : VmPowerState.Off, 0);
+                return Ok(new RestoreBackupResult { Mode = rb.Mode, VmId = restoredId, Name = rb.NewName, Path = (rb.Location ?? @"D:\VMs") + @"\" + rb.NewName }, "imported");
+            case HvOperation.RestoreBackupDisk:
+                var rd = HvOperations.FromElement<RestoreDiskRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(rd) is { } badDisk) return Fail(badDisk);
+                return Ok(new RestoreDiskResult(rd.DestinationFolder + @"\disk-restored.vhdx", rd.AttachVmId is not null, rd.AttachVmId), "copied");
+            case HvOperation.MountBackupDisk:
+                var mb = HvOperations.FromElement<MountBackupDiskRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(mb) is { } badMount) return Fail(badMount);
+                var mountId = Guid.NewGuid();
+                BackupMountsSimulated[mountId] = @"F:\";
+                Folders[@"F:\"] = ["Users"];
+                Files[@"F:\report.docx"] = [1, 2, 3, 4];
+                return Ok(new BackupMount(mountId, [new MountedVolume(@"F:\", "Windows", "NTFS", 100L << 30)], DateTimeOffset.UtcNow.AddHours(2), false), "mounted");
+            case HvOperation.DismountBackupDisk:
+                var d = HvOperations.FromElement<BackupMountRef>(command.OperationArgs)!;
+                return Ok(new { detached = BackupMountsSimulated.TryRemove(d.MountId, out _) }, "dismounted");
+            case HvOperation.ListBackupFiles:
+                var lf = HvOperations.FromElement<BackupFileListRequest>(command.OperationArgs)!;
+                if (!BackupMountsSimulated.ContainsKey(lf.MountId)) return Fail("not_found: the backup disk is no longer attached.");
+                return FileOperation(command with { Operation = HvOperation.ListFolder, OperationArgs = HvOperations.ToElement(new FileListRequest(lf.Path)) });
+            default:
+                var rf = HvOperations.FromElement<BackupFileReadRequest>(command.OperationArgs)!;
+                if (!BackupMountsSimulated.ContainsKey(rf.MountId)) return Fail("not_found: the backup disk is no longer attached.");
+                return FileOperation(command with { Operation = HvOperation.ReadFile, OperationArgs = HvOperations.ToElement(new FileReadRequest(rf.Path, rf.Offset, rf.Length)) });
         }
     }
 

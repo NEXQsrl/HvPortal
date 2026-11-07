@@ -8,7 +8,10 @@
 | `NT SERVICE\HvPortalGateway` | gateway service | non-admin virtual account; read/execute on binaries; full control on its data directory only |
 | `NT SERVICE\HvPortalAgent` | agent service | member of *Hyper-V Administrators* (S-1-5-32-578); not a local administrator; no domain account |
 | optional local user (`Install-Agent.ps1 -ServiceAccount`) | agent service instead of the virtual account | same group and ACLs as the virtual account (which leaves *Hyper-V Administrators*); random 40-char password unknown to anyone, set via `Win32_Service.Change`; only *Log on as a service*, local/RDP/network/batch logon denied; removed by the uninstaller |
-| Agent certificate (CN=hvportal-host-&lt;id&gt;, EKU clientAuth) | agent → gateway | identifies one host; revocable |
+| Agent certificate (CN=hvportal-host-&lt;id&gt;, EKU clientAuth) | agent → gateway | identifies one host; revocable; also authenticates the package download of agent updates (`/agent/v1/package`) |
+| Scheduled task `\HvPortal\HvPortal Agent Update` (v0.7.0, ADR-029) | updater on each agent machine | runs as **SYSTEM** the fixed `Program Files\HvPortal\Updater\Update-HvPortalAgent.ps1`; task descriptor: SYSTEM and Administrators full control, the agent service SID(s) read + run only; installs only packages signed by the publisher of the installed agent; absent with `-DisableRemoteUpdate` |
+| API token (`hvp_...`, v0.7.0, ADR-032) | monitoring systems | read-only scope `backup.read` on `/api/v1/public/*` only; not bound to a user |
+| Computer account of a Hyper-V host (`HOST$`) | Hyper-V and the agent (its virtual account appears on the network as the computer account) on SMB backup repositories without credentials, and toward the destination of a VM move (Kerberos) | expected — **unverified** (real-host plan V66, V67): needs share and NTFS rights on that repository, and the right to manage Hyper-V on a move destination; with stored credentials a share is opened with the repository's user instead |
 | Local OS administrator of the gateway server | operator | can read keys/DB and run the admin CLI — trusted by design |
 
 Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM between gateway and hosts).
@@ -63,16 +66,22 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
 - Revocation: logout, password change (all sessions), admin password/MFA reset, user disable, MFA enable/disable,
   security-stamp change. Users can list and revoke their own sessions.
 - **Re-authentication window** (5 min) for critical actions: user/role/assignment changes, security settings, host
-  creation/revocation/token issuance, MFA changes.
+  creation/revocation/token issuance, MFA changes, and in v0.7.0: creation of API tokens, creating or changing a backup
+  repository (credentials), notification settings, agent updates from the portal and a *Replace* restore. Other
+  restores and the deletion of restore points rely on the permission, typed confirmations where noted, and audit.
 
 ## RBAC
 
 - Permissions (see `Permissions.cs`): `inventory.read`, `vm.power`, `vm.power.force`, `vm.config.*`,
-  `vm.checkpoint.*`, `vm.delete`, `vm.console`, `vm.migrate`, `vm.create`, `network.manage`, `host.files.*`,
-  `backup.run`, `backup.restore`, `jobs.read.all`, `jobs.cancel.all`, `hosts.manage`, `users.manage`, `roles.manage`,
-  `settings.manage`, `audit.read`.
+  `vm.checkpoint.*`, `vm.delete`, `vm.console`, `vm.migrate`, `vm.create`, `templates.manage`, `network.manage`,
+  `host.files.*`, `backup.run`, `backup.restore`, `backup.manage`, `groups.manage`, `jobs.read.all`, `jobs.cancel.all`,
+  `hosts.manage`, `users.manage`, `roles.manage`, `settings.manage`, `audit.read`.
 - Built-in roles: platform administrator, infrastructure administrator, folder administrator, VM operator, backup
-  operator, auditor, read only. Custom roles supported.
+  operator, auditor, read only. Custom roles supported. Since v0.7.0 the *Backup operator* holds `inventory.read`,
+  `backup.run`, `backup.restore`, `backup.manage`, `jobs.read.all` **and `vm.create`** (a restore as a new VM creates a
+  VM): assigned at Global scope it may create VMs on every host. Where that matters use a custom role without
+  `vm.create` (restores as a new VM are then refused) — on a narrower scope `backup.manage` and the backup area, which
+  need Global, are not available.
 - Scopes: Global, Host, Logical group, VM (Cluster, Network, Backup repository, Template are modeled for later).
 - **Evaluation**: default deny; effective scopes of a VM = VM + its host + each logical group containing it **and
   that group's ancestors** + Global;
@@ -104,6 +113,30 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
 - **Deleting a user** (`users.manage` + re-auth, typed name): sessions, MFA secrets, recovery codes, pending tokens and
   role assignments are removed; the audit log keeps the past actions; queued jobs of the user fail with
   `authorization_revoked`. Not allowed on yourself, on a more privileged user, on the last platform administrator.
+- **Backups** (ADR-031): the backup area (repositories, jobs, runs, overview) needs a backup permission at Global
+  scope; `backup.manage` is Global only. A restore point is evaluated on its VM while the VM exists (unreadable VM =
+  404) and on Global once the VM is gone, so restore points of deleted VMs are reachable only by Global holders.
+  `backup.restore` is enough for every restore mode: *Replace* (typed VM name + re-authentication) turns the VM off and removes it from
+  Hyper-V before importing the point, without `vm.delete` or `vm.config.*`; a restore as a new VM also needs
+  `vm.create` on the target host; a single disk needs `vm.config.storage` on the VM it is attached to, or
+  `host.files.write` on the host. Scheduled runs and retention act as the user who last saved the backup job and are
+  re-authorized per VM at execution. File restore: only the user who attached a disk can browse it, `backup.restore`
+  is re-checked on every listing and download, every download is audited with its SHA-256; attaching the disk on a host
+  other than the VM's also needs `host.files.write` on that host. Points found by a repository rescan are attached to no
+  VM (their manifest is not signed): only Global holders see and restore them, and only as a new VM.
+- **VM move** (ADR-035): `vm.migrate` on the VM plus `vm.create` on the destination host, both re-checked at execution,
+  as are the limits of the VM's groups; the destination host name comes from the portal's records. A move between hosts changes which host-scoped role
+  assignments (Allow and Deny) apply to the VM; it is not treated as an access change of ADR-015.
+- **Portal networks** (ADR-030): `network.manage` on the host; switch and VLAN of a chosen network are stamped by the
+  gateway. Limits of groups restrict switches, not VLANs.
+- **Allowed storage folders** (ADR-034): decided on the host (`Install-Agent.ps1 -StorageFolders`) and enforced by the
+  agent against the real file system, so a compromised or misconfigured gateway cannot widen them; fail closed when the
+  file is invalid. For remote hosts the list is set in the portal (`hosts.manage` global) and enforced by the management
+  agent (a management agent older than 0.7.0 would ignore it, so the portal refuses to set it). Where the script falls
+  back to a default folder of the host, the agent passes the list with the request and the script refuses a default
+  folder outside it.
+- **Agent updates** (ADR-029): `hosts.manage` at Global scope and a recent re-authentication, the permission re-checked
+  when the job runs.
 
 ## Web protections
 
@@ -128,6 +161,37 @@ WinRM (`Invoke-Command -FilePath` of the fixed operations script; HTTP 5985 is e
 uses normal certificate validation — no skip options) and SMB administrative shares with `LOGON32_LOGON_NEW_CREDENTIALS`.
 The management server needs no local Hyper-V rights (the service account is not added to *Hyper-V Administrators*).
 
+**Agent self-update (ADR-029, v0.7.0).** The gateway can only *offer* its agent package (version, size, SHA-256). The
+agent downloads it over the agent port with its client certificate, checks size and SHA-256 and starts a SYSTEM
+scheduled task it may run but not change. The task copies the package to a private folder and installs it only when
+the installed `HvPortal.Agent.exe` is signed, the package's catalog `HvPortal.Agent.cat` and its new
+`HvPortal.Agent.exe` are signed by the same certificate thumbprint, `Test-FileCatalog` reports every file unchanged,
+and the version is not older. A compromised gateway or agent service can therefore trigger a reinstall of a version
+signed by the publisher, not install its own code. A self-signed publisher is pinned by thumbprint (its untrusted-root
+status is accepted); that does not make the build trusted by Windows, and the private signing key becomes a key to
+every agent (keep it off the gateway and the hosts). Unsigned builds are never installed this way.
+
+**Backup repository credentials (ADR-031).** Stored encrypted; decrypted by the gateway only when a job runs or a disk
+is mounted, sent inside that one command over the agent channel (never in job parameters, never in the audit), used by
+the fixed script as a process-scoped PowerShell drive and dropped at the end of the operation. For a remote host the
+command, password included, travels to the host through the existing WinRM session (ADR-022). The scripts build the
+`SecureString` character by character instead of `ConvertTo-SecureString -AsPlainText`, so the password is not a cmdlet
+parameter that PowerShell **module logging** would record; for remote hosts the whole request (with the password) is
+the `-ArgumentList` of `Invoke-Command` on the management server, which module logging of `Microsoft.PowerShell.Core`
+could record: check it (real-host plan V58) and keep module logging off for that module there, or use local repositories
+or credential-less shares for remote hosts.
+
+**Notifications (ADR-033).** Outbound only when configured: SMTP to the configured server (STARTTLS, or none —
+credentials are refused without TLS) and HTTPS POSTs to the configured webhooks. Webhook addresses are sealed with the
+key ring; no redirects; loopback, link-local (cloud metadata), unspecified and multicast destinations are refused, also
+after DNS resolution; private addresses are allowed (on-premises receivers), so a `settings.manage` holder decides which
+internal HTTPS address receives the fixed JSON body. Messages contain job names, VM names and error texts.
+
+**Public API with tokens (ADR-032).** `/api/v1/public/*` accepts only `Authorization: Bearer hvp_...` tokens with the
+`backup.read` scope (GET, rate-limited 120/min per address); it returns names and statuses, no paths, hosts or
+credentials, not filtered by RBAC. A token works only while its creator exists and is enabled; refused uses are audited
+at most once per token prefix and minute.
+
 ## Keys and secrets
 
 | Material | Storage | Protection | Recovery |
@@ -136,9 +200,14 @@ The management server needs no local Hyper-V rights (the service account is not 
 | Internal CA + server cert | `pki\ca.bin`, `pki\server.bin` | encrypted with key ring + ACL | included in the key export |
 | TOTP secrets | DB | AES-GCM via key ring | needs key ring |
 | Remote host passwords (management agents only) | DB (`Hosts.RemotePasswordEncrypted`) | AES-GCM via key ring, AAD bound to the host id; write-only API; never audited | needs key ring; otherwise re-enter in the portal |
+| Backup repository passwords (shares outside the domain, v0.7.0) | DB (`BackupRepositories.PasswordEncrypted`) | AES-GCM via key ring, purpose bound to the repository id; write-only API; never audited | needs key ring; otherwise re-enter in Backup > Repositories |
+| SMTP password (v0.7.0) | DB (`Settings` row `notifications`, `passwordSealed`) | AES-GCM via key ring (purpose `notification-smtp-password`); write-only API | needs key ring; otherwise re-enter |
+| Webhook addresses (often carrying a secret token) | DB (`Settings` row `notifications`) | **not encrypted**; returned masked by the API | re-enter |
+| API tokens (v0.7.0) | DB (`ApiTokens.TokenHash`) | SHA-256 only, plus the first 8 characters | not recoverable: create a new one |
 | Recovery codes, tokens | DB | HMAC / SHA-256 only | not recoverable (by design) |
 | ASP.NET Data Protection keys | `keys\dataprotection` | DPAPI LocalMachine | not needed (sessions re-established) |
 | Agent private key | `<agent data>\identity.bin` | DPAPI LocalMachine + ACL | re-enroll |
+| Code-signing private key (release builds) | build machine, `CurrentUser\My` | never exported or committed | lose it = sign with a new certificate and update every agent by hand once (ADR-029) |
 
 ## Account recovery
 

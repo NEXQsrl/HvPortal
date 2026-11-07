@@ -28,6 +28,41 @@ public static class HostFileEndpoints
         g.MapGet("/", ListAsync);
         g.MapGet("/download", DownloadAsync);
         g.MapPost("/upload", UploadAsync);
+        g.MapPost("/folders", NewFolderAsync);
+    }
+
+    public sealed record NewFolderBody(string? Parent, string? Name, Guid? GroupId);
+
+    /// <summary>Protocol 9: a new folder inside a folder the user may write to (and inside the host's allowed storage folders).</summary>
+    private static async Task<IResult> NewFolderAsync(Guid id, NewFolderBody body, HttpContext http, PortalDbContext db, AccessEvaluator access,
+        IAgentDispatcher agents, GroupPolicyService policies)
+    {
+        var (error, roots) = await CheckAsync(id, body.GroupId, Permissions.HostFilesWrite, "host.files.folder.create", http, db, access, agents, policies);
+        if (error is not null)
+        {
+            return error;
+        }
+        if (agents.ProtocolVersionOf(id) < 9)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Creating folders needs agent 0.7.0 or later on this host. Update the agent.");
+        }
+        var request = new NewFolderRequest(body.Parent is null ? "" : HostPaths.Normalize(body.Parent), body.Name?.Trim() ?? "");
+        if (OperationValidation.Validate(request) is { } invalid)
+        {
+            return ApiSupport.BadRequest(invalid);
+        }
+        if (await OutsideRootsAsync(http, "host.files.folder.create", id, roots, request.Parent) is { } outside)
+        {
+            return outside;
+        }
+        var (outcome, failed) = await SendAsync(agents, id, HvOperation.NewFolder, request, http.RequestAborted);
+        if (failed is not null)
+        {
+            await http.WriteAuditAsync("host.files.folder.create", AuditOutcome.Failure, "host", id.ToString("D"), new { request.Parent, request.Name });
+            return failed;
+        }
+        await http.WriteAuditAsync("host.files.folder.create", resourceType: "host", resourceId: id.ToString("D"), details: new { request.Parent, request.Name, body.GroupId });
+        return Results.Ok(outcome!.Result);
     }
 
     /// <summary>
@@ -91,7 +126,7 @@ public static class HostFileEndpoints
         return ApiSupport.Forbidden("storage_not_allowed", "The path is outside the storage paths of the folder.");
     }
 
-    private static async Task<(HvOperationOutcome? Outcome, IResult? Error)> SendAsync(IAgentDispatcher agents, Guid hostId, HvOperation op, object args, CancellationToken ct)
+    internal static async Task<(HvOperationOutcome? Outcome, IResult? Error)> SendAsync(IAgentDispatcher agents, Guid hostId, HvOperation op, object args, CancellationToken ct, int timeoutSeconds = 120)
     {
         try
         {
@@ -101,8 +136,8 @@ public static class HostFileEndpoints
                 Kind = AgentCommandKind.HyperVOperation,
                 Operation = op,
                 OperationArgs = HvOperations.ToElement(args),
-                TimeoutSeconds = 120,
-            }, null, TimeSpan.FromSeconds(135), ct);
+                TimeoutSeconds = timeoutSeconds,
+            }, null, TimeSpan.FromSeconds(timeoutSeconds + 15), ct);
             if (r.Operation is { Ok: true } ok)
             {
                 return (ok, null);
@@ -243,7 +278,7 @@ public static class HostFileEndpoints
         }
     }
 
-    private static string AsciiName(string name)
+    internal static string AsciiName(string name)
     {
         var sb = new StringBuilder(name.Length);
         foreach (var c in name)

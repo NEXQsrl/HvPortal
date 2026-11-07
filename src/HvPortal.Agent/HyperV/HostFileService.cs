@@ -58,6 +58,7 @@ public static class HostFileService
     {
         var dir = new DirectoryInfo(fs.ToPhysical(path));
         var atRoot = dir.Parent is null;
+        var top = atRoot || fs.IsStorageRoot(path);
         var folders = new List<FolderEntry>();
         var files = new List<FileEntry>();
         var truncated = false;
@@ -86,7 +87,7 @@ public static class HostFileService
         return new FolderListing
         {
             Path = path,
-            Parent = atRoot ? null : fs.ToHost(dir.Parent!.FullName),
+            Parent = top ? null : fs.ToHost(dir.Parent!.FullName),
             Folders = folders.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
             Files = files.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
             FreeBytes = fs.FreeSpace(path[..3]),
@@ -279,6 +280,39 @@ public static class HostFileService
     }
 
     public static void Abort(FileWriteAbortRequest request) => Discard(request.UploadId);
+
+    /// <summary>
+    /// Protocol 9: creates &lt;Parent&gt;\&lt;Name&gt;. The parent must be an acceptable folder (inside the allowed storage folders
+    /// when the host restricts them); an existing file or folder with that name is never touched.
+    /// </summary>
+    public static FolderEntry NewFolder(NewFolderRequest request, HostFileAccess? access = null)
+    {
+        var fs = access ?? HostFileAccess.Local;
+        if (OperationValidation.Validate(request) is { } invalid)
+        {
+            throw new HostPathException(invalid + ": invalid folder name or location.");
+        }
+        var parent = CheckFolder(request.Parent, true, fs);
+        var hostPath = parent.Length == 3 ? parent + request.Name : parent + @"\" + request.Name;
+        fs.CheckAllowed(hostPath);
+        return fs.Run(() =>
+        {
+            var physical = fs.ToPhysical(hostPath);
+            if (Directory.Exists(physical) || File.Exists(physical))
+            {
+                throw new HostPathException("file_exists: a file or folder with this name already exists.");
+            }
+            try
+            {
+                Directory.CreateDirectory(physical);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw new HostPathException("access_denied: the agent service account cannot create folders here.");
+            }
+            return new FolderEntry(request.Name, hostPath);
+        });
+    }
 
     private static Upload Get(Guid id) =>
         Uploads.TryGetValue(id, out var u) ? u : throw new HostPathException("upload_not_found: unknown or expired upload.");

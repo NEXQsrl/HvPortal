@@ -1,4 +1,4 @@
-import { Camera, FolderInput, LayoutTemplate, FolderMinus, FolderPlus, Gauge, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save, Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
+import { Archive, Camera, FolderInput, LayoutTemplate, MoveRight, FolderMinus, FolderPlus, Gauge, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save, Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { del, newIdempotencyKey, patch, post } from '@/api/client';
@@ -20,6 +20,8 @@ import { AddHostDialog, EnrollmentDialog, RemoteHostDialog, RevokeHostDialog } f
 import { LiveManagementEnrollment, NewManagementAgentDialog } from './ManagementAgents';
 import { CaptureTemplateDialog } from './TemplateDialogs';
 import { CreateCheckpointDialog, EditNotesDialog, PowerDialog } from './VmDialogs';
+import { MoveVmDialog } from './MoveVmDialog';
+import { BackupNowDialog } from '@/components/backup/BackupNowDialog';
 
 const POWER_ICONS: Record<PowerOperation, typeof Play> = {
   Start: Play, Shutdown: Power, Restart: RotateCcw, TurnOff: PowerOff, Reset: Undo2, Pause, Resume: Play, Save,
@@ -46,7 +48,9 @@ type DialogState =
   | { kind: 'editGroup'; group: Group }
   | { kind: 'moveGroup'; group: Group }
   | { kind: 'deleteGroup'; group: Group }
-  | { kind: 'addVms'; group: Group };
+  | { kind: 'addVms'; group: Group }
+  | { kind: 'moveVm'; vm: Vm }
+  | { kind: 'backupVm'; vm: Vm };
 
 interface Ops {
   vmActions: (vm: Vm, opts?: { groupId?: string; page?: boolean }) => Action[];
@@ -138,6 +142,8 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     if (vm.canCheckpoint) list.push({ key: 'checkpoint', label: t('vm.createCheckpoint'), icon: Camera, separatorBefore: !vm.canConfigure, onSelect: () => setDialog({ kind: 'checkpoint', vm }) });
     if (vm.canAnnotate) list.push({ key: 'notes', label: t('menu.editNotes'), icon: Pencil, onSelect: () => setDialog({ kind: 'editVm', vm }) });
     if (vm.canTemplate) list.push({ key: 'template', label: t('tpl.capture'), icon: LayoutTemplate, onSelect: () => setDialog({ kind: 'captureTemplate', vm }) });
+    if (vm.canMigrate) list.push({ key: 'move', label: t('move.action'), icon: MoveRight, onSelect: () => setDialog({ kind: 'moveVm', vm }) });
+    if (vm.canBackup) list.push({ key: 'backup', label: t('bk.backupNow'), icon: Archive, onSelect: () => setDialog({ kind: 'backupVm', vm }) });
     if (manageGroups) {
       list.push({ key: 'add-group', label: t('vm.addToGroup'), icon: FolderPlus, separatorBefore: true, onSelect: () => setDialog({ kind: 'addToGroup', vms: [vm] }) });
       const g = opts.groupId ? inv.groupById.get(opts.groupId) : undefined;
@@ -284,6 +290,8 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
         </ActionDialog>
       )}
       {d?.kind === 'addVms' && <AddVmsDialog group={d.group} onClose={() => { close(); inv.reload(); }} />}
+      {d?.kind === 'moveVm' && <MoveVmDialog vm={d.vm} onQueued={queued} onClose={close} />}
+      {d?.kind === 'backupVm' && <BackupNowDialog vm={d.vm} onQueued={queued} onClose={close} />}
     </Ctx.Provider>
   );
 }

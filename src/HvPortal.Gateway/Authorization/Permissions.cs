@@ -28,6 +28,7 @@ public static class Permissions
     public const string VmMigrate = "vm.migrate";
     public const string BackupRun = "backup.run";
     public const string BackupRestore = "backup.restore";
+    public const string BackupManage = "backup.manage";
     public const string JobsReadAll = "jobs.read.all";
     public const string JobsCancelAll = "jobs.cancel.all";
     public const string HostsManage = "hosts.manage";
@@ -65,9 +66,10 @@ public static class Permissions
         new(VmCheckpointApply, "Apply or delete checkpoints", VmScopes, true),
         new(VmDelete, "Delete VMs (configuration; disk files are kept)", VmScopes, true),
         new(VmConsole, "Open VM console", VmScopes, true),
-        new(VmMigrate, "Migrate VMs and storage", VmScopes, false),
-        new(BackupRun, "Run backups", [.. VmScopes, ScopeType.BackupRepository], false),
-        new(BackupRestore, "Restore backups", [.. VmScopes, ScopeType.BackupRepository], false),
+        new(VmMigrate, "Move VMs to another host (needs vm.create there) or their files to another folder", VmScopes, true),
+        new(BackupRun, "Back up VMs (ad hoc), run backup jobs, verify restore points", VmScopes, true),
+        new(BackupRestore, "Restore VMs, disks and files from restore points, run restore tests", VmScopes, true),
+        new(BackupManage, "Manage backup repositories and backup jobs, delete restore points", GlobalOnly, true),
         new(GroupsManage, "Create, move and delete VM groups and their membership", GlobalOnly, true),
         new(JobsReadAll, "Read jobs of all users", GlobalOnly, true),
         new(JobsCancelAll, "Cancel jobs of all users", GlobalOnly, true),
@@ -113,8 +115,11 @@ public static class BuiltInRoles
              Authorization.Permissions.VmConsole, Authorization.Permissions.VmCreate, Authorization.Permissions.VmConfigCompute, Authorization.Permissions.VmConfigStorage,
              Authorization.Permissions.VmConfigNetwork, Authorization.Permissions.VmCheckpointCreate, Authorization.Permissions.VmCheckpointApply,
              Authorization.Permissions.VmDelete, Authorization.Permissions.NetworkManage, Authorization.Permissions.HostFilesRead, Authorization.Permissions.HostFilesWrite]),
-        new(BackupOperator, "Backup operator", "Run backups and restores",
-            [Authorization.Permissions.InventoryRead, Authorization.Permissions.BackupRun, Authorization.Permissions.BackupRestore]),
+        new(BackupOperator, "Backup operator", "Back up and restore VMs, manage repositories and backup jobs",
+            [Authorization.Permissions.InventoryRead, Authorization.Permissions.BackupRun, Authorization.Permissions.BackupRestore,
+             Authorization.Permissions.BackupManage, Authorization.Permissions.JobsReadAll,
+             // Restoring as a new VM (and restore tests) creates a VM on the chosen host.
+             Authorization.Permissions.VmCreate]),
         new(Auditor, "Auditor", "Read inventory, all jobs and the audit log",
             [Authorization.Permissions.InventoryRead, Authorization.Permissions.AuditRead, Authorization.Permissions.JobsReadAll]),
         new(ReadOnly, "Read only", "Read inventory",

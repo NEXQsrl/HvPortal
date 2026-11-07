@@ -122,6 +122,30 @@ public sealed class SetupLogicTests
     }
 
     [Fact]
+    public void Storage_folders_are_local_folders_outside_system_folders_and_reach_the_script_as_an_array()
+    {
+        Assert.Equal([@"D:\VMs", @"E:\Virtual Machines", @"F:\"], SetupRules.SplitFolders("D:\\VMs\\\r\nE:\\Virtual Machines;F:\\\n\nd:\\vms"));
+        foreach (var ok in new[] { @"D:\VMs", @"E:\", @"D:\Hyper-V\ISO" })
+        {
+            Assert.True(SetupRules.IsStorageFolder(ok), ok);
+        }
+        foreach (var bad in new[] { @"C:\Windows", @"C:\Program Files\HvPortal", @"D:\$Recycle.Bin", @"\\nas\share", @"D:\a\..\Windows", "D:", "VMs", @"D:\a*b" })
+        {
+            Assert.False(SetupRules.IsStorageFolder(bad), bad);
+        }
+        var o = new AgentSetupOptions { Enroll = false, StorageFolders = [@"D:\VMs", @"C:\Users\x"] };
+        Assert.Equal(["err.storage"], o.Validate());
+        o.StorageFolders = [@"D:\VMs", @"D:\ISO"];
+        Assert.Empty(o.Validate());
+        Assert.Equal(new[] { @"D:\VMs", @"D:\ISO" }, o.ToParameters("src")["StorageFolders"]);
+        // An empty list removes the restriction; null keeps what the host has (nothing sent).
+        o.StorageFolders = [];
+        Assert.Equal(new[] { "" }, o.ToParameters("src")["StorageFolders"]);
+        o.StorageFolders = null;
+        Assert.False(o.ToParameters("src").ContainsKey("StorageFolders"));
+    }
+
+    [Fact]
     public void Portal_data_is_read_from_the_setup_string_and_from_the_powershell_command()
     {
         var ca = new string('c', 64).ToUpperInvariant();
@@ -232,7 +256,11 @@ public sealed class SetupLogicTests
 
         var sent = component == "Gateway"
             ? new GatewaySetupOptions { PublicNames = ["gw"], UiCertificateThumbprint = new string('A', 40), OpenFirewall = true }.ToParameters("src")
-            : new AgentSetupOptions { Gateway = "https://gw:8444", CaSha256 = new string('A', 64), Token = new string('t', 32), ForceReenroll = true, Management = true, ServiceAccount = "svc" }.ToParameters("src");
+            : new AgentSetupOptions
+            {
+                Gateway = "https://gw:8444", CaSha256 = new string('A', 64), Token = new string('t', 32), ForceReenroll = true, Management = true, ServiceAccount = "svc",
+                StorageFolders = [@"D:\VMs"], DisableRemoteUpdate = true,
+            }.ToParameters("src");
         foreach (var (name, value) in sent)
         {
             Assert.True(declared.TryGetValue(name, out var type), $"Install-{component}.ps1 has no parameter '{name}'.");
@@ -251,7 +279,7 @@ public sealed class SetupLogicTests
     public async Task Gateway_installer_refuses_before_it_stops_the_running_service()
     {
         var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Setup", "Install-Gateway.ps1"));
-        var stop = script.IndexOf("Stop-Service $service", StringComparison.Ordinal);
+        var stop = script.IndexOf("Stop-HvPortalService -ServiceName $service", StringComparison.Ordinal);
         Assert.True(stop > 0);
         foreach (var check in new[] { "UiPort and AgentPort must be different", "is already in use by", "not found in LocalMachine\\My", "has no private key" })
         {

@@ -44,6 +44,36 @@ public enum HvOperation
     NewTemplate,
     /// <summary>Protocol 8. Delete the folder of a template (TemplateFolderRequest): only disk files directly inside it.</summary>
     RemoveTemplate,
+    /// <summary>Protocol 9. Hardware, disks, volumes and storage health of the host, recent hardware errors (read-only, HostHealthReport).</summary>
+    GetHostHealth,
+    /// <summary>Protocol 9. Move a VM to another Hyper-V host (Move-VM: live migration when running, with its storage when asked).</summary>
+    MoveVm,
+    /// <summary>Protocol 9. Move the files of a VM to another folder of the same host (Move-VMStorage; a running VM keeps running).</summary>
+    MoveVmStorage,
+    /// <summary>Protocol 9. Create a sub-folder inside an allowed folder of the host (file explorer, in-process).</summary>
+    NewFolder,
+    /// <summary>Protocol 9. What backups need on this host: Hyper-V module, backup integration of the VMs, repository and staging folder.</summary>
+    GetBackupReadiness,
+    /// <summary>Protocol 9. Back up a VM: checkpoint, export of the checkpoint into the repository, checkpoint removed, manifest with SHA-256.</summary>
+    BackupVm,
+    /// <summary>Protocol 9. Verify a restore point: every file of its manifest present with the same size and SHA-256.</summary>
+    VerifyBackup,
+    /// <summary>Protocol 9. Delete the folder of a restore point (only a folder that carries a HvPortal manifest with the same point id).</summary>
+    RemoveBackup,
+    /// <summary>Protocol 9. Restore a VM from a restore point: as a new VM, over the original VM, or as a test (started isolated, checked, removed).</summary>
+    RestoreBackup,
+    /// <summary>Protocol 9. Copy one disk of a restore point to a folder of the host and optionally attach it to a VM (file-level restore inside the guest).</summary>
+    RestoreBackupDisk,
+    /// <summary>Protocol 9. Attach one disk of a restore point to the host read-only, to browse and download its files.</summary>
+    MountBackupDisk,
+    /// <summary>Protocol 9. Detach a disk attached by MountBackupDisk.</summary>
+    DismountBackupDisk,
+    /// <summary>Protocol 9. Folders and files inside a mounted restore point disk (in-process, read-only).</summary>
+    ListBackupFiles,
+    /// <summary>Protocol 9. One chunk of a file inside a mounted restore point disk (in-process, read-only).</summary>
+    ReadBackupFile,
+    /// <summary>Protocol 9. Restore points found in a repository (their manifests), to show or import them again.</summary>
+    ListBackups,
 }
 
 public static class HvOperations
@@ -56,7 +86,11 @@ public static class HvOperations
 
 public sealed record VmRef(Guid VmId);
 
-public sealed record NetworkAdapterChange(string AdapterId, string? SwitchName, int? VlanId);
+/// <summary>
+/// NetworkId (gateway only, never used by the agent): the portal network (switch + VLAN) chosen for the adapter; the
+/// gateway replaces SwitchName and VlanId with the network's values.
+/// </summary>
+public sealed record NetworkAdapterChange(string AdapterId, string? SwitchName, int? VlanId, Guid? NetworkId = null);
 
 /// <summary>
 /// Folder (protocol 7): where the new VHDX is created. Null = host default virtual disk folder. Set by the gateway only
@@ -97,6 +131,13 @@ public sealed record VmConfigChange
     public IReadOnlyList<NetworkAdapterChange>? NetworkAdapterChanges { get; init; }
     /// <summary>Add a synthetic network adapter connected to this switch ("" = not connected).</summary>
     public string? AddNetworkAdapterSwitch { get; init; }
+    /// <summary>
+    /// Protocol 9. Access VLAN of the added adapter (1-4094; null = untagged). Set by the gateway from the portal network
+    /// the adapter is connected to; older agents would ignore it, so the gateway never sends it to them.
+    /// </summary>
+    public int? AddNetworkAdapterVlanId { get; init; }
+    /// <summary>Gateway only: portal network of the added adapter (resolved to AddNetworkAdapterSwitch/AddNetworkAdapterVlanId).</summary>
+    public Guid? AddNetworkAdapterNetworkId { get; init; }
     public NewDiskSpec? NewDisk { get; init; }
     public ExpandDiskSpec? ExpandDisk { get; init; }
     /// <summary>Allowed ISO library roots (from the host settings); the agent refuses ISO paths outside them.</summary>
@@ -116,6 +157,13 @@ public sealed record NewVmRequest
     public int DiskSizeGb { get; init; } = 60;
     public bool DiskFixed { get; init; }
     public string? SwitchName { get; init; }
+    /// <summary>
+    /// Protocol 9. Access VLAN of the network adapter (1-4094; null = untagged), from the portal network chosen in the
+    /// wizard. Older agents would create the VM untagged, so the gateway never sends it to them.
+    /// </summary>
+    public int? VlanId { get; init; }
+    /// <summary>Gateway only: the portal network (switch + VLAN) chosen in the wizard; resolved to SwitchName/VlanId by the gateway.</summary>
+    public Guid? NetworkId { get; init; }
     public string? IsoPath { get; init; }
     /// <summary>Gen2: MicrosoftWindows | MicrosoftUEFICertificateAuthority | Off</summary>
     public string? SecureBootTemplate { get; init; }

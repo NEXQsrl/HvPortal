@@ -40,16 +40,18 @@ export function ActionDialog({ title, description, children, confirmLabel, onCon
   };
   return (
     <Dialog open onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
-      <DialogContent className={cn(wide ? 'sm:max-w-3xl' : 'sm:max-w-lg')}>
-        <DialogHeader>
+      {/* Never taller than the window: title and buttons stay in place and the fields scroll (small laptop screens,
+          long forms such as the limits of a new group). */}
+      <DialogContent className={cn('flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden', wide ? 'sm:max-w-3xl' : 'sm:max-w-lg')}>
+        <DialogHeader className="shrink-0 pr-6">
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
-        <form id="action-dialog-form" className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (!disabled && !busy) void go(); }}>
+        <form id="action-dialog-form" className="-mx-4 min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-0.5" onSubmit={(e) => { e.preventDefault(); if (!disabled && !busy) void go(); }}>
           {children}
           <ErrorAlert error={error} />
         </form>
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           {footer}
           <Button type="button" variant="outline" onClick={onClose} disabled={busy}>{t('common.cancel')}</Button>
           <Button type="submit" form="action-dialog-form" variant={danger ? 'destructive' : 'default'} disabled={disabled || busy}>{confirmLabel}</Button>

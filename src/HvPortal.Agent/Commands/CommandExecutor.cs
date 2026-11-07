@@ -39,9 +39,19 @@ public sealed class CommandExecutor
         AgentCommandKind.VmPower or AgentCommandKind.DeleteVm => true,
         AgentCommandKind.HyperVOperation => c.Operation is HvOperation.SetVmConfig or HvOperation.NewVm or HvOperation.NewCheckpoint
             or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint or HvOperation.SyncVmGroups
-            or HvOperation.NewSwitch or HvOperation.RemoveSwitch or HvOperation.NewTemplate or HvOperation.RemoveTemplate,
+            or HvOperation.NewSwitch or HvOperation.RemoveSwitch or HvOperation.NewTemplate or HvOperation.RemoveTemplate
+            or HvOperation.MoveVm or HvOperation.MoveVmStorage or HvOperation.NewFolder
+            or HvOperation.BackupVm or HvOperation.RemoveBackup or HvOperation.RestoreBackup or HvOperation.RestoreBackupDisk
+            or HvOperation.MountBackupDisk or HvOperation.DismountBackupDisk,
         _ => false,
     };
+
+    /// <summary>Operations that copy whole virtual disks (templates, backups, restores, moves): they may run for hours.</summary>
+    internal static bool CopiesDisks(AgentCommand command, HvOperation op) =>
+        op is HvOperation.NewTemplate or HvOperation.BackupVm or HvOperation.VerifyBackup or HvOperation.RestoreBackup
+            or HvOperation.RestoreBackupDisk or HvOperation.MountBackupDisk or HvOperation.MoveVm or HvOperation.MoveVmStorage
+        || (op == HvOperation.NewVm && command.OperationArgs is { ValueKind: System.Text.Json.JsonValueKind.Object } a
+            && a.TryGetProperty("templateDisks", out var d) && d.ValueKind == System.Text.Json.JsonValueKind.Array && d.GetArrayLength() > 0);
 
     public async Task<AgentCommandResult> ExecuteAsync(AgentCommand command, IProgress<AgentCommandProgress> progress, CancellationToken ct)
     {
@@ -168,15 +178,11 @@ public sealed class CommandExecutor
         }
     }
 
-    /// <summary>Copying the disks of a template (to create it, or to create a VM from it) can take hours on large disks.</summary>
-    private static readonly TimeSpan MaxCopyTimeout = TimeSpan.FromHours(8);
+    /// <summary>Copying whole virtual disks (templates, backups to a NAS, restores, moves) can take many hours on large disks.</summary>
+    private static readonly TimeSpan MaxCopyTimeout = TimeSpan.FromHours(12);
 
-    internal static TimeSpan TimeoutFor(AgentCommand command, HvOperation op)
-    {
-        var copies = op == HvOperation.NewTemplate || (op == HvOperation.NewVm && command.OperationArgs is { ValueKind: System.Text.Json.JsonValueKind.Object } a
-            && a.TryGetProperty("templateDisks", out var d) && d.ValueKind == System.Text.Json.JsonValueKind.Array && d.GetArrayLength() > 0);
-        return TimeSpan.FromSeconds(Math.Clamp(command.TimeoutSeconds, 10, (int)(copies ? MaxCopyTimeout : MaxTimeout).TotalSeconds));
-    }
+    internal static TimeSpan TimeoutFor(AgentCommand command, HvOperation op) =>
+        TimeSpan.FromSeconds(Math.Clamp(command.TimeoutSeconds, 10, (int)(CopiesDisks(command, op) ? MaxCopyTimeout : MaxTimeout).TotalSeconds));
 
     private async Task<AgentCommandResult> RunOperationAsync(AgentCommand command, HvOperation op, CancellationToken ct)
     {

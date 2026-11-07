@@ -175,6 +175,32 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         }
     }
 
+    /// <summary>
+    /// Same identity check as the channel, for plain HTTPS requests on the agent port (package download): client
+    /// certificate of the internal CA, recorded, not revoked or expired, of an active host agent or management agent.
+    /// Returns the host or management agent id.
+    /// </summary>
+    public async Task<Guid?> AuthenticateAsync(HttpContext http)
+    {
+        var cert = await http.Connection.GetClientCertificateAsync(http.RequestAborted);
+        if (cert is null || !_ca.ValidateClientCertificate(cert))
+        {
+            return null;
+        }
+        var thumbprint = InternalCertificateAuthority.Sha256Thumbprint(cert);
+        using var scope = _scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
+        var now = _time.GetUtcNow();
+        var row = await db.AgentCertificates.AsNoTracking().FirstOrDefaultAsync(c => c.ThumbprintSha256 == thumbprint, http.RequestAborted);
+        if (row is null || row.RevokedAt is not null || row.NotAfter <= now)
+        {
+            return null;
+        }
+        var active = await db.Hosts.AsNoTracking().AnyAsync(h => h.Id == row.HostId && h.Status == HostStatus.Active && h.ConnectionMode == HostConnectionMode.Agent, http.RequestAborted)
+                     || await db.ManagementAgents.AsNoTracking().AnyAsync(a => a.Id == row.HostId && a.Status == HostStatus.Active, http.RequestAborted);
+        return active ? row.HostId : null;
+    }
+
     public async Task<AgentCommandResult> SendAsync(Guid hostId, AgentCommand command, Action<AgentCommandProgress>? onProgress,
         TimeSpan timeout, CancellationToken ct)
     {
@@ -185,22 +211,36 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         // Remote host: the management agent needs to know which host the command is for (server-controlled field).
         command = command with { TargetHostId = session.IsManagement ? hostId : null };
         // Older agents cannot even parse newer command kinds (and would drop the channel): refuse locally, nothing is sent.
+        return await SendToSessionAsync(session, hostId, command, onProgress, timeout, ct);
+    }
+
+    /// <summary>A command for a management agent itself (protocol 9: UpdateAgent), not for one of its remote hosts.</summary>
+    public async Task<AgentCommandResult> SendToManagementAgentAsync(Guid agentId, AgentCommand command, TimeSpan timeout, CancellationToken ct)
+    {
+        if (!_managementSessions.TryGetValue(agentId, out var session))
+        {
+            throw new HostNotConnectedException(agentId);
+        }
+        return await SendToSessionAsync(session, agentId, command with { TargetHostId = null }, null, timeout, ct);
+    }
+
+    /// <summary>Version announced by the connected agent or management agent (null when not connected).</summary>
+    public (int Protocol, string? Version)? AgentOf(Guid hostOrAgentId) =>
+        _sessions.TryGetValue(hostOrAgentId, out var s) && !s.IsManagement ? (s.ProtocolVersion, s.AgentVersion)
+        : _managementSessions.TryGetValue(hostOrAgentId, out var m) ? (m.ProtocolVersion, m.AgentVersion) : null;
+
+    private static async Task<AgentCommandResult> SendToSessionAsync(AgentSession session, Guid id, AgentCommand command, Action<AgentCommandProgress>? onProgress,
+        TimeSpan timeout, CancellationToken ct)
+    {
+        var hostId = id;
         var required = AgentProtocol.RequiredVersion(command);
         if (session.ProtocolVersion < required)
         {
-            var minAgent = required switch
-            {
-                >= 6 => "0.4.0",
-                5 => "0.3.3",
-                4 => "0.3.2",
-                3 => "0.3.1",
-                _ => "0.3",
-            };
             return new AgentCommandResult
             {
                 CommandId = command.CommandId,
                 Status = AgentCommandStatus.Rejected,
-                Message = $"The agent on this host does not support this operation (agent protocol {session.ProtocolVersion}). Update the agent to {minAgent} or later.",
+                Message = $"The agent on this host does not support this operation (agent protocol {session.ProtocolVersion}). Update the agent to {AgentProtocol.MinimumAgentFor(required)} or later.",
             };
         }
         var pending = session.Register(command.CommandId, onProgress);
@@ -343,14 +383,15 @@ public sealed class AgentConnectionManager : IAgentDispatcher
             case AgentMessageType.Hello when env.Read<AgentHello>() is { } hello:
                 session.ProtocolVersion = hello.ProtocolVersion;
                 session.AgentVersion = hello.AgentVersion is { Length: > 32 } v ? v[..32] : hello.AgentVersion;
+                var update = hello.LastUpdateResult is { Length: > 500 } u ? u[..500] : hello.LastUpdateResult;
                 if (session.IsManagement)
                 {
-                    await TouchManagementAgentAsync(session.SubjectId, session.AgentVersion);
+                    await TouchManagementAgentAsync(session.SubjectId, session.AgentVersion, hello.UpdaterInstalled, update);
                     await PushTargetsAsync(session, ct);
                 }
                 else
                 {
-                    await TouchHostAsync(session.SubjectId, session.AgentVersion);
+                    await TouchHostAsync(session.SubjectId, session.AgentVersion, hello.UpdaterInstalled, update);
                 }
                 break;
 
@@ -426,6 +467,8 @@ public sealed class AgentConnectionManager : IAgentDispatcher
                         UserName = h.RemoteUserName!,
                         Password = RemoteHostCredentials.Unprotect(_keys, h.Id, h.RemotePasswordEncrypted!),
                         UseHttps = h.RemoteUseHttps,
+                        // Protocol 9: the folders the portal may use there (older agents ignore the field and do not restrict).
+                        StorageFolders = h.StorageFoldersJson is null ? [] : JsonSerializer.Deserialize<List<string>>(h.StorageFoldersJson) ?? [],
                     });
                 }
                 catch (CryptographicException ex)
@@ -528,7 +571,7 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         }
     }
 
-    private async Task TouchHostAsync(Guid hostId, string? agentVersion)
+    private async Task TouchHostAsync(Guid hostId, string? agentVersion, bool? updaterInstalled = null, string? lastUpdate = null)
     {
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
@@ -541,6 +584,8 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         if (agentVersion is not null)
         {
             host.AgentVersion = agentVersion;
+            host.AgentUpdaterInstalled = updaterInstalled;
+            host.AgentLastUpdateResult = lastUpdate;
         }
         await db.SaveChangesAsync();
         if (_sessions.TryGetValue(hostId, out var s))
@@ -549,7 +594,7 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         }
     }
 
-    private async Task TouchManagementAgentAsync(Guid agentId, string? agentVersion)
+    private async Task TouchManagementAgentAsync(Guid agentId, string? agentVersion, bool? updaterInstalled = null, string? lastUpdate = null)
     {
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
@@ -562,6 +607,8 @@ public sealed class AgentConnectionManager : IAgentDispatcher
         if (agentVersion is not null)
         {
             agent.AgentVersion = agentVersion;
+            agent.UpdaterInstalled = updaterInstalled;
+            agent.LastUpdateResult = lastUpdate;
         }
         await db.SaveChangesAsync();
         if (_managementSessions.TryGetValue(agentId, out var s))

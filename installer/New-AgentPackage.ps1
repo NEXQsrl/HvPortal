@@ -22,7 +22,11 @@ param(
     [string]$InstallerDirectory,
     [Parameter(Mandatory)][string]$OutputDirectory,
     [string]$Configuration = 'Release',
-    [string]$Runtime = 'win-x64'
+    [string]$Runtime = 'win-x64',
+    # Signs HvPortal.Agent.cat, a catalog of every file of the package (Windows only). Agents install updates sent by
+    # the portal only when this catalog is signed by the certificate of the installed agent.
+    [string]$SigningCertificateThumbprint,
+    [string]$TimestampServer
 )
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..')
@@ -41,7 +45,8 @@ try {
     }
     $inst = if ($InstallerDirectory) { $InstallerDirectory } else { Join-Path $repo 'installer' }
     # Invoke-Setup.ps1: used by the graphical setup (HvPortal.Agent.Setup.exe), whose payload is this same package.
-    Copy-Item (Join-Path $inst 'Common.ps1'), (Join-Path $inst 'Install-Agent.ps1'), (Join-Path $inst 'Uninstall-HvPortal.ps1'), (Join-Path $inst 'Invoke-Setup.ps1') $installerStage
+    Copy-Item (Join-Path $inst 'Common.ps1'), (Join-Path $inst 'Install-Agent.ps1'), (Join-Path $inst 'Uninstall-HvPortal.ps1'), (Join-Path $inst 'Invoke-Setup.ps1'),
+        (Join-Path $inst 'Update-HvPortalAgent.ps1') $installerStage
     $publisherCer = Join-Path $inst 'HvPortal-CodeSigning.cer'
     if (Test-Path $publisherCer) { Copy-Item $publisherCer $installerStage }
 
@@ -96,6 +101,27 @@ Uninstall:  .\Uninstall-HvPortal.ps1 -Component Agent   (then remove the host in
     # Valid = trusted chain. UnknownError with a self-signed signer = signature present and intact, root not trusted here.
     $selfSigned = $null -ne $sig -and $null -ne $sig.SignerCertificate -and $sig.SignerCertificate.Subject -eq $sig.SignerCertificate.Issuer
     $signed = $null -ne $sig -and ($sig.Status -eq 'Valid' -or ($selfSigned -and $sig.Status -eq 'UnknownError'))
+
+    # Signed catalog of the whole package (updates from the portal check it on the host). Created last, after every
+    # file is final; it lists every file except itself.
+    $catalogSigned = $false
+    if ($SigningCertificateThumbprint -and (Get-Command New-FileCatalog -ErrorAction SilentlyContinue)) {
+        $cert = Get-ChildItem Cert:\LocalMachine\My, Cert:\CurrentUser\My | Where-Object Thumbprint -eq $SigningCertificateThumbprint | Select-Object -First 1
+        if (-not $cert -or -not $cert.HasPrivateKey) { throw "Code signing certificate $SigningCertificateThumbprint not found or without private key." }
+        $catTemp = Join-Path ([IO.Path]::GetTempPath()) ('hvp-agent-' + [guid]::NewGuid().ToString('N') + '.cat')
+        New-FileCatalog -Path $staging -CatalogFilePath $catTemp -CatalogVersion 2.0 | Out-Null
+        $catalog = Join-Path $staging 'HvPortal.Agent.cat'
+        Move-Item $catTemp $catalog
+        $catSig = if ($TimestampServer) { Set-AuthenticodeSignature $catalog $cert -HashAlgorithm SHA256 -TimestampServer $TimestampServer }
+                  else { Set-AuthenticodeSignature $catalog $cert -HashAlgorithm SHA256 }
+        $catSelf = $cert.Subject -eq $cert.Issuer
+        if (-not ($catSig.Status -eq 'Valid' -or ($catSelf -and $catSig.Status -eq 'UnknownError'))) { throw "Signing the package catalog failed: $($catSig.StatusMessage)" }
+        $check = Test-FileCatalog -Path $staging -CatalogFilePath $catalog -FilesToSkip 'HvPortal.Agent.cat'
+        if ("$check" -ne 'Valid') { throw "The package catalog does not validate ($check)." }
+        $catalogSigned = $true
+    } elseif ($SigningCertificateThumbprint) {
+        Write-Warning 'New-FileCatalog is not available here: the package has no signed catalog (updates from the portal will refuse it).'
+    }
     $zip = Join-Path $OutputDirectory 'HvPortal.Agent-win-x64.zip'
     $tmpZip = "$zip.tmp"
     if (Test-Path $tmpZip) { Remove-Item $tmpZip -Force }
@@ -107,6 +133,7 @@ Uninstall:  .\Uninstall-HvPortal.ps1 -Component Agent   (then remove the host in
         signed     = $signed
         signer     = if ($signed) { $sig.SignerCertificate.Subject } else { $null }
         selfSigned = $signed -and $selfSigned
+        catalogSigned = $catalogSigned
     } | ConvertTo-Json | Set-Content -Path (Join-Path $OutputDirectory 'HvPortal.Agent-win-x64.json') -Encoding utf8
     $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
     Write-Host "Agent package: $zip"

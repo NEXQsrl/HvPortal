@@ -461,6 +461,34 @@ public sealed class GroupPolicyService
         return (await CheckQuotasAsync(levels, 0, processors, memory, disk, 0, null, ct), change);
     }
 
+    /// <summary>
+    /// A VM moved to another host and/or folder (protocol 9): the folders it belongs to must allow the destination host
+    /// (when they list hosts) and the destination folder (when they restrict storage on that host).
+    /// </summary>
+    public async Task<PolicyViolation?> CheckMoveAsync(VirtualMachine vm, Guid destinationHostId, string? destinationPath, CancellationToken ct)
+    {
+        var (tree, groups) = await LoadAsync(ct);
+        var levels = Levels(tree.ChainSet(tree.GroupsOf(vm.Id)), groups);
+        if (levels.Count == 0)
+        {
+            return null;
+        }
+        if (destinationHostId != vm.HostId && levels.Any(l => l.Policy.Hosts is { Count: > 0 }) && DelegatedHosts(levels)?.Contains(destinationHostId) != true)
+        {
+            return new PolicyViolation("host_not_allowed", "The folder of this VM does not allow the destination host.");
+        }
+        var rules = StorageRules(levels, destinationHostId);
+        if (rules.Count > 0)
+        {
+            var target = destinationPath ?? (vm.ConfigurationPath is { Length: > 0 } cp && HostPaths.IsValidLocalFolder(cp) ? HostPaths.Normalize(cp) : null);
+            if (target is null || !StorageAllows(rules, target))
+            {
+                return new PolicyViolation("storage_not_allowed", "The destination folder is not among the storage paths allowed for the folder of this VM.");
+            }
+        }
+        return null;
+    }
+
     /// <summary>A private network about to be created for a folder.</summary>
     public async Task<PolicyViolation?> CheckNewSwitchAsync(Guid groupId, Guid? excludeJobId, CancellationToken ct) =>
         await CheckQuotasAsync(await ChainAsync(groupId, ct), 0, 0, 0, 0, 1, excludeJobId, ct);

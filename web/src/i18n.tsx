@@ -4,6 +4,10 @@ import { enGuide, itGuide } from './i18n-guide';
 import { enLimits, itLimits } from './i18n-limits';
 import { enOps, itOps } from './i18n-ops';
 import { enTemplates, itTemplates } from './i18n-templates';
+import { enInfra, itInfra } from './i18n-infra';
+import { enLogin, itLogin } from './i18n-login';
+import { enTopics, itTopics } from './i18n-topics';
+import { enBackup, itBackup } from './i18n-backup';
 
 const enBase = {
   'app.name': 'HvPortal',
@@ -372,7 +376,7 @@ const enBase = {
   'state.Unknown': 'Unknown',
 };
 
-const en = { ...enBase, ...enOps, ...enGuide, ...enLimits, ...enAudit, ...enTemplates };
+const en = { ...enBase, ...enOps, ...enGuide, ...enLimits, ...enAudit, ...enTemplates, ...enInfra, ...enLogin, ...enTopics, ...enBackup };
 type Key = keyof typeof en;
 
 const itBase: Record<keyof typeof enBase, string> = {
@@ -742,7 +746,7 @@ const itBase: Record<keyof typeof enBase, string> = {
   'state.Unknown': 'Sconosciuto',
 };
 
-const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide, ...itLimits, ...itAudit, ...itTemplates };
+const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide, ...itLimits, ...itAudit, ...itTemplates, ...itInfra, ...itLogin, ...itTopics, ...itBackup };
 
 export type Lang = 'it' | 'en';
 const dictionaries: Record<Lang, Record<Key, string>> = { en, it };

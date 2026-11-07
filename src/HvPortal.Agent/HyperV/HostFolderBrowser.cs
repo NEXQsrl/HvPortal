@@ -26,13 +26,14 @@ public static class HostFolderBrowser
         var fs = access ?? HostFileAccess.Local;
         if (request.Path is null)
         {
-            return new FolderListing { Drives = fs.FixedDrives() };
+            return new FolderListing { Drives = TopLevel(fs) };
         }
         var path = CheckFolder(request.Path, mustExist: true, fs);
         return fs.Run(() =>
         {
             var dir = new DirectoryInfo(fs.ToPhysical(path));
             var atRoot = dir.Parent is null;
+            var top = atRoot || fs.IsStorageRoot(path);
             var truncated = false;
             var folders = new List<FolderEntry>();
             foreach (var d in dir.EnumerateDirectories("*", Options))
@@ -68,7 +69,8 @@ public static class HostFolderBrowser
             return new FolderListing
             {
                 Path = path,
-                Parent = atRoot ? null : fs.ToHost(dir.Parent!.FullName),
+                // An allowed storage folder is the top of what the portal sees: no way up from there.
+                Parent = top ? null : fs.ToHost(dir.Parent!.FullName),
                 Folders = folders.OrderBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
                 Isos = isos.OrderBy(f => f.Path, StringComparer.CurrentCultureIgnoreCase).ToList(),
                 FreeBytes = fs.FreeSpace(path[..3]),
@@ -78,6 +80,38 @@ public static class HostFolderBrowser
     }
 
     public static IReadOnlyList<DriveEntry> FixedDrives() => HostFileAccess.Local.FixedDrives();
+
+    /// <summary>
+    /// What the portal sees at the top: the local fixed drives, or only the allowed storage folders (each with the size and
+    /// free space of its drive) when the host restricts them. Allowed folders that do not exist (yet) are left out.
+    /// </summary>
+    public static IReadOnlyList<DriveEntry> TopLevel(HostFileAccess fs)
+    {
+        if (fs.StorageError is { } error)
+        {
+            throw new HostPathException("location_not_allowed: " + error);
+        }
+        var drives = fs.FixedDrives();
+        if (fs.StorageFolders.Count == 0)
+        {
+            return drives;
+        }
+        var list = new List<DriveEntry>();
+        foreach (var folder in fs.StorageFolders)
+        {
+            var drive = drives.FirstOrDefault(d => d.Path.Equals(folder[..3], StringComparison.OrdinalIgnoreCase));
+            if (drive is null)
+            {
+                continue;
+            }
+            var exists = fs.Run(() => Directory.Exists(fs.ToPhysical(folder)));
+            if (exists)
+            {
+                list.Add(new DriveEntry(folder, folder.Length > 3 ? Path.GetFileName(folder.TrimEnd('\\')) : drive.Label, drive.TotalBytes, drive.FreeBytes));
+            }
+        }
+        return list;
+    }
 
     /// <summary>
     /// Validates a host folder against the real file system and returns its normalized host-local path.
@@ -103,6 +137,7 @@ public static class HostFolderBrowser
         {
             throw new HostPathException("System folders cannot be used.");
         }
+        fs.CheckAllowed(full);
         if (!fs.IsFixedDrive(full[..3]))
         {
             throw new HostPathException("Only local fixed drives can be used (no network, removable or optical drives).");

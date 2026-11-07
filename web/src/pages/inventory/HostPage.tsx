@@ -19,13 +19,16 @@ import { HostVmGroups } from '@/components/vm/HostVmGroups';
 import { VmTable } from '@/components/vm/VmTable';
 import { useI18n, type TKey } from '@/i18n';
 import { TemplateLibrarySection } from '@/components/ops/TemplateDialogs';
+import { HostHealthTab } from '@/components/infra/HostHealth';
+import { AgentUpdateSection, BackupStagingSection, StorageFoldersSection } from '@/components/infra/HostInfraSettings';
+import { PortalNetworksSection } from '@/components/infra/PortalNetworks';
 import { formatBytes, formatDuration, LIBRARY_PATH, percent } from '@/lib/format';
 import { useLive, useLoad } from '@/lib/hooks';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/session';
 
-const TABS = ['summary', 'vms', 'vmgroups', 'network', 'storage', 'settings', 'events'] as const;
+const TABS = ['summary', 'health', 'vms', 'vmgroups', 'network', 'storage', 'settings', 'events'] as const;
 type Tab = (typeof TABS)[number];
 
 export function HostPage() {
@@ -69,9 +72,10 @@ export function HostPage() {
       ) : null}
 
       <TabsContent value="summary" className="min-h-0 overflow-auto p-4"><HostSummary host={h} running={vms.filter((v) => v.powerState === 'Running').length} /></TabsContent>
+      <TabsContent value="health" className="min-h-0 overflow-auto p-4">{tab === 'health' && <HostHealthTab host={h} />}</TabsContent>
       <TabsContent value="vms" className="flex min-h-0 flex-col">{tab === 'vms' && <VmTable vms={vms} showHost={false} className="flex-1" />}</TabsContent>
       <TabsContent value="vmgroups" className="min-h-0 overflow-auto p-4">{tab === 'vmgroups' && <HostVmGroups host={h} />}</TabsContent>
-      <TabsContent value="network" className="min-h-0 overflow-auto p-4">{tab === 'network' && <HostSwitches hostId={h.id} />}</TabsContent>
+      <TabsContent value="network" className="min-h-0 space-y-3 overflow-auto p-4">{tab === 'network' && <><HostSwitches hostId={h.id} /><PortalNetworksSection host={h} /></>}</TabsContent>
       <TabsContent value="storage" className="min-h-0 overflow-auto p-4">{tab === 'storage' && <HostStorage host={h} />}</TabsContent>
       <TabsContent value="settings" className="min-h-0 overflow-auto p-4">{tab === 'settings' && <HostSettings host={h} onChanged={data.reload} />}</TabsContent>
       <TabsContent value="events" className="min-h-0 overflow-auto p-4"><Section title={t('host.events')}><EventsTable events={data.data?.events ?? []} /></Section></TabsContent>
@@ -293,6 +297,9 @@ function HostSettings({ host, onChanged }: { host: Host; onChanged: () => void }
         {isos.data && <div className="text-xs text-muted-foreground">{t('host.isoFiles', { n: isos.data.files.length })}</div>}
       </Section>
       <TemplateLibrarySection key={host.templateLibraryPath ?? ''} host={host} onChanged={onChanged} />
+      <StorageFoldersSection key={`sf-${(host.storageFolders ?? []).join('|')}`} host={host} onChanged={onChanged} />
+      <BackupStagingSection key={`bs-${host.backupStagingPath ?? ''}`} host={host} onChanged={onChanged} />
+      <AgentUpdateSection host={host} />
       {manage && (
         <Section title={t('host.dangerZone')} bodyClassName="flex flex-wrap gap-2 p-3">
           {ops.hostActions(host, { page: true }).filter((a) => a.danger || a.key === 'token' || a.key === 'edit').map((a) => (

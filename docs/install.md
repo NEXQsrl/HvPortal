@@ -3,7 +3,8 @@
 ## Docker (Linux container, e.g. Portainer)
 
 The gateway can also run as a container: see [docker/README.md](../docker/README.md) (`docker/docker-compose.yml`,
-`docker/.env.example`). The Hyper-V hosts keep the Windows agent.
+`docker/.env.example`). The Hyper-V hosts keep the Windows agent. The agent package served by a container gateway is
+unsigned and has no signed catalog, so its agents cannot be updated from the portal (section 4d): update them by hand.
 
 ## Topologies
 
@@ -37,6 +38,11 @@ shows the package as *Signed (self-signed)*.
 Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
 Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
 ```
+With a signing certificate the agent package also gets a signed catalog `HvPortal.Agent.cat` covering every file
+(`New-AgentPackage.ps1 -SigningCertificateThumbprint`, called by `Build-Release.ps1`): agents 0.7.0+ accept updates
+from the portal only for packages with that catalog, signed by the same certificate as the agent already installed
+(section 4d). An unsigned release can only be installed and updated by hand.
+
 A self-signed signature is **not** a reputation: SmartScreen and antivirus products do not trust it by themselves.
 Once the certificate is imported, Authenticode reports the files as valid, PowerShell `AllSigned` policies accept the
 scripts, and AppLocker/WDAC or antivirus allow rules can be written *by publisher* instead of by path or hash. Without
@@ -50,7 +56,7 @@ Keep the private key on the build machine only; whoever holds it can sign code t
 | File | Use |
 |---|---|
 | `HvPortal.Gateway.Setup.exe` | installs or updates the gateway. Pages: names and ports, portal certificate (internal, one from the computer store, or **import a .pfx**), Windows Firewall. On an update the current settings are read from the service and pre-filled. At the end it shows the portal address and, on a new installation, the setup token. |
-| `HvPortal.Agent.Setup.exe` | installs or updates the agent. Pages: Hyper-V host or management server, connection data (**Paste from the portal**: Add host > Guided setup), service account (automatic or dedicated local user). On an update the connection to the gateway is kept. Also downloadable from the portal (Add host / New management agent). |
+| `HvPortal.Agent.Setup.exe` | installs or updates the agent. Pages: Hyper-V host or management server, connection data (**Paste from the portal**: Add host > Guided setup), service account (automatic or dedicated local user), **storage and updates** (v0.7.0: every local drive / only the folders typed one per line / on an update keep the current list; "allow updates from the portal", ticked by default — same as `-StorageFolders` and `-DisableRemoteUpdate`, section 4c–4d). On an update the connection to the gateway is kept. Also downloadable from the portal (Add host / New management agent). |
 
 Double-click the file and accept the administrator prompt. Each setup is a single file that needs nothing else
 (.NET Framework 4.7.2, part of Windows Server 2019 and later) and carries the same signed binaries and scripts of the
@@ -174,6 +180,53 @@ encrypted, in the portal. The agent on the host (section 4) remains the recommen
 
 Ports from the management server to each host: TCP 135 + dynamic RPC (WMI/DCOM), 5985 or 5986 (WinRM), 445 (SMB).
 
+## 4c. Optional: allowed storage folders (agent 0.7.0, ADR-034)
+
+By default the portal may use every local fixed drive of the host except the system folders. To limit it to some
+folders, add `-StorageFolders`:
+```powershell
+.\Install-Agent.ps1 -Source ..\agent -Gateway https://gw01.contoso.local:8444 -CaSha256 <fingerprint> -StorageFolders 'D:\VMs','E:\ISO'
+```
+- Local folders of fixed drives only (no UNC, no `..`, no system folders such as `C:\Windows` or `C:\Users`), at most
+  16; missing folders are created. The list is checked **before** the service is stopped: a wrong folder leaves the
+  running agent untouched.
+- The list is written to `C:\ProgramData\HvPortal\Agent\storage.json` and enforced by the agent: file explorer, folder
+  pickers, VM locations, new disks, ISO and template libraries, backup repositories, staging and restore folders, VM
+  file moves. The portal shows it on the host page and cannot change it. If the file is damaged the agent refuses every
+  folder operation until it is fixed (re-run the installer).
+- Upgrades without the parameter keep the list; `-StorageFolders ''` removes the restriction. The agent reads the list
+  at start (the installer restarts it). `HvPortal.Agent.exe status` prints it.
+- Known gap of 0.7.0: an operation that uses the host's **default** folders because no folder was chosen (a VM created
+  without location, a new disk without folder, a restore without location) is not checked against the list. Set the
+  Hyper-V default folders (`Set-VMHost -VirtualMachinePath ... -VirtualHardDiskPath ...`) inside the allowed folders.
+- Remote hosts reached by a management agent: the list is set in the portal (host page > Storage folders, `hosts.manage`)
+  and enforced by the management agent 0.7.0+.
+- The agent account still needs NTFS rights in those folders (section 4a).
+
+## 4d. Updates of the agent from the portal (agent 0.7.0, ADR-029)
+
+`Install-Agent.ps1` 0.7.0 registers a scheduled task `\HvPortal\HvPortal Agent Update` (runs as SYSTEM; the agent
+service account may only start it) and copies the updater to `C:\Program Files\HvPortal\Updater`. From then on the
+portal can update the agent (from the host page or the list of outdated agents — `POST /api/v1/hosts/{id}/agent/update`,
+`/api/v1/agents/update-outdated`; `hosts.manage` at Global scope):
+
+1. the agent downloads the package of the gateway over port 8444 and checks its size and SHA-256;
+2. the task installs it only if the package's signed catalog and its `HvPortal.Agent.exe` are signed by the **same
+   certificate** as the installed agent, every file matches the catalog and the version is not older;
+3. the job succeeds when the agent reconnects with the new version (outcome in
+   `C:\ProgramData\HvPortal\Agent\update\last-result.json`, also shown in the portal).
+
+Requirements: a **signed** release (section 1) and the first 0.7.0 installation done by hand. Unsigned builds, agents
+older than 0.7.0 and agents installed with `-DisableRemoteUpdate` are updated by hand only. A gateway built as a
+**Docker image** publishes an agent package built inside the image, without signature and without signed catalog
+(Authenticode and `New-FileCatalog` are not available there, ADR-021): agents connected to it are always updated by
+hand.
+```powershell
+.\Install-Agent.ps1 -Source ..\agent -DisableRemoteUpdate     # removes the updater task
+```
+Changing the code-signing certificate (new thumbprint) means one more update by hand on every agent. The portal also
+sends a daily notification listing outdated agents when notifications are configured (Settings > Notifications).
+
 ## 5. Assign permissions
 
 Users & roles → *Assign role*. New users have no permissions. Prefer scoped roles (host or VM) over global ones.
@@ -211,6 +264,20 @@ Microsoft user in Users & roles (type *Microsoft*, exact UPN, role); require MFA
 break-glass administrator before setting *Local sign-in* to emergency accounts only. The gateway needs outbound HTTPS
 to `login.microsoftonline.com`.
 
+## 8. VM backups, notifications, VM moves (v0.7.0)
+
+- **Backups**: prerequisites and operator guide in [backup-restore.md](backup-restore.md) (Part A). In short: agents
+  0.7.0, a repository (host folder, domain share writable by the hosts' computer accounts, or NAS with credentials), a
+  backup staging folder on the hosts that use a NAS with credentials (Host > Settings), checkpoints enabled on the VMs.
+- **Notifications**: Settings > Notifications (SMTP with STARTTLS — implicit TLS on port 465 is not supported — and/or
+  HTTPS webhooks for Teams, Slack or a generic receiver), then *Send test*. **API tokens** for monitoring: Settings >
+  API tokens (shown once).
+- **VM moves between hosts** need live migration enabled and authenticated on both hosts by their administrators
+  (`Enable-VMMigration`, `Set-VMHost -VirtualMachineMigrationAuthenticationType`, migration networks, firewall); the
+  agent does not change those settings, and how the agent's identity is authorized by the destination is not validated
+  yet (real-host plan V54, V66): CredSSP cannot work because the move is started by a service; with Kerberos the
+  source host's computer account (`HOST$`) is expected to need the right to manage Hyper-V on the destination.
+
 ## Upgrade
 
 The portal has a step-by-step page with the commands for your installation: **Guide → Update the Windows services**
@@ -226,8 +293,19 @@ The portal has a step-by-step page with the commands for your installation: **Gu
 - **Agent**: extract the new package into a new folder on the host and run `.\Install-Agent.ps1 -Source ..\agent`
   without `-Gateway` or token: the enrollment (`C:\ProgramData\HvPortal\Agent`) is kept; binaries are backed up and
   restored automatically if the service does not start. Rollback: same command from the previous package folder.
+  From 0.7.0 on, agents of a signed release can also be updated from the portal (section 4d).
+- **Locked files (fixed in 0.7.0)**: earlier installers could fail with "Cannot remove clrjit.dll: access denied"
+  because `Stop-Service` returns before the service process has released its files. The installers now wait for the
+  service **process** to exit (and end it after 120 s), retry files that are still in use (10 attempts, 3 s apart) and,
+  if the files still cannot be replaced, put the previous binaries back from `<InstallPath>.bak-<timestamp>` and start
+  them ("Upgrade not applied"). If even that copy back fails, the message says to restore by hand from that folder;
+  check that the service runs before leaving the server. The upgrade from 0.6.x already uses the new scripts (they
+  come with the 0.7.0 package).
 - Order: gateway first, then agents. The gateway never sends command kinds an agent's protocol does not know; those
   functions show "update the agent".
+- **0.7.0** (agent protocol 9): the database migration adds the tables of backups, portal networks and API tokens and
+  the host columns for storage folders, backup staging and updater state; nothing to do by hand. Host health, VM move,
+  networks with VLAN, backups and new folders need agent 0.7.0 on the host.
 
 ## Uninstall
 
@@ -235,13 +313,19 @@ The portal has a step-by-step page with the commands for your installation: **Gu
 .\Uninstall-HvPortal.ps1 -Component Agent            # on a host (then revoke the host in the portal)
 .\Uninstall-HvPortal.ps1 -Component Gateway          # keeps data unless -RemoveData
 ```
+The agent uninstall also removes the updater task and `C:\Program Files\HvPortal\Updater` (0.7.0); it waits for the
+service process to exit before deleting the binaries. Restore points in repositories are never deleted by an
+uninstall.
 
 ## Ports
 
 | Port | Direction | Purpose |
 |---|---|---|
-| 8443/tcp | browsers → gateway | UI, REST API, SignalR |
-| 8444/tcp | agents → gateway | enrollment and agent channel (mTLS) |
+| 8443/tcp | browsers → gateway | UI, REST API, SignalR; also the public read-only API for monitoring with API tokens (v0.7.0) |
+| 8444/tcp | agents → gateway | enrollment and agent channel (mTLS); package download for agent updates (v0.7.0) |
+| 445/tcp | hosts → backup repositories (SMB shares) | only when a repository is a share (v0.7.0) |
+| SMTP (587 or the configured port) / 443 | gateway → mail server / webhook endpoints | only when notifications are configured (v0.7.0) |
+| live migration (Windows: rule *Hyper-V (MIG-TCP-In)*) and SMB between hosts | host ↔ host | only for VM moves between hosts (v0.7.0); configured by the host administrators, not by HvPortal |
 
 Internet access is not required. Entra ID sign-in (section 7) needs outbound HTTPS from the gateway to
-`login.microsoftonline.com` (or the national cloud endpoint).
+`login.microsoftonline.com` (or the national cloud endpoint); webhooks to Teams or Slack need outbound HTTPS to them.

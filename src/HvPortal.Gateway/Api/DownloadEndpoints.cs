@@ -22,7 +22,7 @@ public static class DownloadEndpoints
 
     private static readonly ConcurrentDictionary<string, (long Length, DateTime Modified, string Sha256)> HashCache = new();
 
-    public sealed record PackageManifest(string? Version, DateTimeOffset? BuiltAtUtc, bool Signed, string? Signer, bool SelfSigned = false);
+    public sealed record PackageManifest(string? Version, DateTimeOffset? BuiltAtUtc, bool Signed, string? Signer, bool SelfSigned = false, bool CatalogSigned = false);
 
     public static string PackagesDirectory(GatewayOptions options) =>
         options.PackagesDirectory is { Length: > 0 } d ? Path.GetFullPath(d) : Path.Combine(AppContext.BaseDirectory, "packages");
@@ -75,8 +75,9 @@ public static class DownloadEndpoints
         });
     }
 
+    /// <summary>CatalogSigned: the package carries a signed catalog of all its files (needed to update agents from the portal).</summary>
     public sealed record PackageInfo(string FileName, long SizeBytes, string Sha256, string? Version, DateTimeOffset? BuiltAtUtc, bool Signed, string? Signer,
-        bool SelfSigned);
+        bool SelfSigned, bool CatalogSigned = false);
 
     public static PackageInfo? Describe(GatewayOptions options)
     {
@@ -102,7 +103,7 @@ public static class DownloadEndpoints
             }
         }
         return new PackageInfo(AgentPackageFile, fi.Length, cached.Sha256, manifest?.Version, manifest?.BuiltAtUtc,
-            manifest?.Signed ?? false, manifest?.Signer, manifest is { Signed: true, SelfSigned: true });
+            manifest?.Signed ?? false, manifest?.Signer, manifest is { Signed: true, SelfSigned: true }, manifest is { Signed: true, CatalogSigned: true });
     }
 
     public sealed record SetupInfo(string FileName, long SizeBytes, string Sha256);

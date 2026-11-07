@@ -1,10 +1,12 @@
-import { ArrowUp, ChevronRight, Download, File as FileIcon, Folder, FolderOpen, HardDrive, RefreshCw, Upload, X } from 'lucide-react';
+import { ArrowUp, ChevronRight, Download, File as FileIcon, Folder, FolderOpen, FolderPlus, HardDrive, RefreshCw, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { ApiError, get, uploadFile } from '@/api/client';
-import type { FolderListing } from '@/api/ops-types';
+import { ApiError, get, post, uploadFile } from '@/api/client';
+import type { FolderEntry, FolderListing } from '@/api/ops-types';
 import type { Host } from '@/api/types';
 import { ErrorAlert, Notice } from '@/components/common';
+import { ActionDialog, Field } from '@/components/dialogs';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -38,6 +40,7 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [conflict, setConflict] = useState<{ file: File; folder: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [creating, setCreating] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -104,6 +107,7 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
         </nav>
         {data?.freeBytes != null && path && <span className="hidden text-xs text-muted-foreground sm:inline">{t('picker.freeShort', { free: formatBytes(data.freeBytes) })}</span>}
         <Button size="icon-sm" variant="ghost" aria-label={t('common.refresh')} onClick={() => setTick((x) => x + 1)}><RefreshCw className={cn(loading && 'animate-spin')} /></Button>
+        <Button size="sm" variant="outline" disabled={!canUpload} onClick={() => setCreating(true)}><FolderPlus />{t('nfold.action')}</Button>
         <Button size="sm" variant="outline" disabled={!canUpload} onClick={() => input.current?.click()}><Upload />{t('files.upload')}</Button>
         <input ref={input} type="file" multiple className="hidden" onChange={(e) => { pick(e.target.files); e.target.value = ''; }} />
       </div>
@@ -207,6 +211,30 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
           </DialogContent>
         </Dialog>
       )}
+      {creating && data?.path && (
+        <NewFolderDialog hostId={host.id} parent={data.path} groupId={groupId} onClose={() => setCreating(false)}
+          onCreated={(f) => { setCreating(false); toast.success(t('nfold.created', { name: f.name })); setPath(f.path); }} />
+      )}
     </div>
+  );
+}
+
+// Windows folder name: no reserved characters, no leading dot/dollar, no trailing dot or space (the agent checks again).
+const FOLDER_NAME = /^[^\\/:*?"<>|\x00-\x1f.$][^\\/:*?"<>|\x00-\x1f]{0,254}$/;
+const validFolderName = (n: string) => FOLDER_NAME.test(n) && !/[. ]$/.test(n);
+
+/** New sub-folder of the open folder (POST /hosts/{id}/files/folders; inside the allowed storage folders only). */
+function NewFolderDialog({ hostId, parent, groupId, onClose, onCreated }: { hostId: string; parent: string; groupId?: string; onClose: () => void; onCreated: (f: FolderEntry) => void }) {
+  const { t } = useI18n();
+  const [name, setName] = useState('');
+  const n = name.trim();
+  const ok = validFolderName(n);
+  return (
+    <ActionDialog title={t('nfold.title')} confirmLabel={t('common.create')} disabled={!ok} onClose={onClose}
+      onConfirm={async () => onCreated(await post<FolderEntry>(`/api/v1/hosts/${hostId}/files/folders`, { parent, name: n, groupId }))}>
+      <Field label={t('nfold.name')} htmlFor="nfold-name" hint={t('nfold.in', { path: parent })} error={n && !ok ? t('nfold.invalid') : undefined}>
+        <Input id="nfold-name" value={name} maxLength={255} autoFocus onChange={(e) => setName(e.target.value)} aria-invalid={!!n && !ok} />
+      </Field>
+    </ActionDialog>
   );
 }

@@ -17,13 +17,17 @@ public sealed class HostTarget : IDisposable
 
     private readonly SecureString? _password;
 
-    private HostTarget(string? computerName, string? userName, SecureString? password, bool useHttps)
+    private HostTarget(string? computerName, string? userName, SecureString? password, bool useHttps, IReadOnlyList<string>? storageFolders = null)
     {
         ComputerName = computerName;
         UserName = userName;
         _password = password;
         UseHttps = useHttps;
+        StorageFolders = storageFolders ?? [];
     }
+
+    /// <summary>Remote host: the folders the portal may use there (from the gateway). The local host uses LocalStorageFolders.</summary>
+    public IReadOnlyList<string> StorageFolders { get; }
 
     /// <summary>Null for the local machine.</summary>
     public string? ComputerName { get; }
@@ -51,7 +55,12 @@ public sealed class HostTarget : IDisposable
             secure.AppendChar(c);
         }
         secure.MakeReadOnly();
-        return new HostTarget(t.ComputerName, RemoteHosts.QualifiedUserName(t.ComputerName, t.UserName), secure, t.UseHttps);
+        var folders = (t.StorageFolders ?? []).Select(HostPaths.Normalize).ToList();
+        if (StorageFolderRules.Validate(folders) is { } badFolders)
+        {
+            throw new ArgumentException("Invalid remote target: " + badFolders);
+        }
+        return new HostTarget(t.ComputerName, RemoteHosts.QualifiedUserName(t.ComputerName, t.UserName), secure, t.UseHttps, folders);
     }
 
     /// <summary>WMI namespace path on the target, e.g. \\hv01\root\virtualization\v2.</summary>
@@ -99,7 +108,8 @@ public sealed class HostTarget : IDisposable
     {
         if (IsLocal || !string.Equals(ComputerName, t.ComputerName, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(UserName, RemoteHosts.QualifiedUserName(t.ComputerName, t.UserName), StringComparison.OrdinalIgnoreCase)
-            || UseHttps != t.UseHttps)
+            || UseHttps != t.UseHttps
+            || !StorageFolders.SequenceEqual((t.StorageFolders ?? []).Select(HostPaths.Normalize), StringComparer.OrdinalIgnoreCase))
         {
             return false;
         }

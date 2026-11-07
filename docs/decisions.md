@@ -98,6 +98,343 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-036 Host health: a read-only report never better than what was read (agent protocol 9)
+- **Context**: administrators want failing disks, degraded pools, full volumes and hardware errors of a host visible
+  in the portal, without RDP and without a separate monitoring product.
+- **Decision**: `GetHostHealth`, a read-only branch of the fixed script, `GET /hosts/{id}/health` (live, 120 s,
+  nothing stored), `inventory.read` on the **host** itself (serial numbers and hardware are host information, not
+  shown to someone who only reads some VMs of it).
+  - Sections, each read on its own: CIM `Win32_ComputerSystem`, `Win32_BIOS`, `Win32_PhysicalMemory`,
+    `Win32_Processor`; `Get-PhysicalDisk` + `Get-StorageReliabilityCounter`; `Get-Volume` (fixed volumes);
+    `Get-StoragePool -IsPrimordial $false` + `Get-VirtualDisk`; `Get-NetAdapter -Physical`; `Get-WinEvent` level
+    critical/error of the last 7 days from the System log (only disk, file system, storage controller, WHEA, power and
+    Hyper-V providers) and from `Microsoft-Windows-Hyper-V-VMMS-Admin` (at most 40 each); services `vmms`,
+    `vmcompute`, `HvHost`. A section that cannot be read is returned in `errors` with the reason, never guessed.
+  - Rules (agent): disk *Warning* with wear ≥ 90 %, uncorrected read/write errors or an operational status
+    predictive/degraded/error/failed/lost; volume *Warning* under 10 % free, *Critical* under 5 %; pool *Warning* when
+    one of its virtual disks is not healthy; adapter *Warning* when not Up or Disabled. Gateway (`Overall`): the worst
+    section; `vmms` not running = *Critical*; a critical event in the last 24 h = at least *Warning*; any unreadable
+    section = at least *Unknown*; nothing read = *Unknown*.
+- **Consequences**: which sections the agent account (*Hyper-V Administrators*, not an administrator) may read is not
+  known yet: the storage cmdlets and the reliability counters may need administrator rights; such sections appear as
+  errors and keep the status at *Unknown* (real-host plan V52). No history and no alerting on health. Windows sees only
+  what the drivers report: this does not replace the management controller of the server (iDRAC, iLO, ...).
+
+## ADR-035 Move a VM to another host or to another folder (agent protocol 9)
+- **Context**: hosts need maintenance and volumes fill up; on standalone hosts (no failover cluster) Hyper-V offers
+  `Move-VM` (live migration, also shared-nothing) and `Move-VMStorage`.
+- **Decision**: two typed operations of the fixed script, job type `vm.migrate` (target = the VM, per-VM lock, long
+  job of up to 12 h), `POST /vms/{id}/move`:
+  - `MoveVm` (`Operation=Host`): `Move-VM -DestinationHost <name>`; with `includeStorage` (default) also
+    `-IncludeStorage -DestinationStoragePath <folder>\<VM name>`. A running VM is live-migrated, a VM that is off is moved
+    with its configuration. Without storage the files stay where they are, which only works when they are on storage
+    both hosts reach (SMB share). The destination is a host of the portal (`destinationHostId`); its name is the DNS name
+    from its inventory (DNS host name + domain; for remote hosts the computer name), resolved by the gateway at request
+    time and again when the job runs (`MigrationRules.DestinationName`), never taken from the client.
+  - `MoveVmStorage` (`Operation=Storage`): `Move-VMStorage -DestinationStoragePath <folder>\<VM name>` on the same host
+    (configuration, disks, checkpoints, smart paging); the VM keeps running; refused when that folder exists and is not
+    empty. The new configuration path is recorded.
+  - Permissions: `vm.migrate` on the VM and, for a host move, `vm.create` on the destination host; both checked again
+    at execution (`HoldsExtraPermissionsAsync`). Limits of groups (ADR-024): `GroupPolicyService.CheckMoveAsync` refuses
+    a destination host that the VM's folders do not list and a destination folder outside their storage paths on that
+    host (checked when the move is requested and again when the job runs). Allowed storage folders (ADR-034): the
+    destination folder of a host move is checked by the gateway against the destination host's list at request and at
+    execution (the source agent cannot see the other host's file system); for a storage move the gateway checks it at
+    request and execution and the agent checks the folder itself.
+  - After success the portal record follows the VM (`MigrationRules.ApplyMoveAsync`, Hyper-V keeps the id): host
+    changed, groups, VM-level role assignments, history and restore points kept; a record that the destination's
+    inventory may have created meanwhile for the same Hyper-V id is removed; events `vm.moved_out` / `vm.moved_in`.
+- **Not done by the agent**: host migration settings. Live migration must be enabled and authenticated on both hosts
+  by their administrators (`Enable-VMMigration`, `Set-VMHost -VirtualMachineMigrationAuthenticationType`, migration
+  networks, firewall). `Move-VM` is started by the agent service on the source host, so CredSSP cannot work (it needs
+  an interactive sign-in on the source): only Kerberos authentication is practical. On the network a virtual service
+  account appears as the source's computer account (`HOST$`), so that account is expected to need the right to manage
+  Hyper-V on the destination (e.g. membership of its *Hyper-V Administrators*), possibly with constrained delegation.
+  All of this is **unverified** (real-host plan V54, V66). Hosts in a workgroup outside a cluster are not expected to
+  support live migration.
+- **Consequences**: a move whose result is lost ends `Unknown` and the portal record is **not** moved; the inventory has
+  no automatic re-homing, so the destination then reports the VM as a newly discovered one (without the groups and
+  assignments of the original) and the original record turns missing: to be fixed by hand. A move between hosts changes
+  which host-scoped role assignments apply to the VM (those of the source stop, those of the destination start, Deny
+  included); it is not routed through the access-change guard of ADR-015. Failover clusters
+  (`Move-ClusterVirtualMachineRole`) are not covered.
+- **Alternatives**: `Msvm_VirtualSystemMigrationService` through WMI (same reasons as ADR-012); a move started by the
+  gateway with stored host credentials (against ADR-002).
+- Not validated on a real host (real-host plan V54–V55, V66).
+
+## ADR-034 Allowed storage folders of a host (agent protocol 9)
+- **Context**: on some hosts the portal must reach only some folders (data volumes, a tenant's folder), and that limit
+  must hold even if the gateway is wrong or compromised.
+- **Decision**: the list is decided **on the host**. `Install-Agent.ps1 -StorageFolders 'D:\VMs','E:\ISO'` validates the
+  folders before the service is stopped (local folders of fixed drives, not system folders, no `..`, at most 16),
+  creates the missing ones and writes `storage.json` in the agent data folder (private ACL). Without the parameter an
+  upgrade keeps the list; `-StorageFolders ''` removes it. The graphical agent setup has a page for it (keep / every
+  drive / only these folders).
+  - The agent reads the file at start (`LocalStorageFolders`). A file that cannot be read or does not validate makes
+    every folder operation fail (fail closed), never "everything allowed".
+  - With a non-empty list `HostFileAccess.CheckAllowed` runs in `HostFolderBrowser.CheckFolder`, which every folder of a
+    request goes through: pickers, file explorer (list, download, upload, new folder), VM location, folder of a new
+    disk, template library, restore location and disk destination, repository and staging folders, storage-move
+    destination; also the folder of an ISO and the ISO library roots. The browser shows the allowed folders as the top
+    level, with no way up from them.
+  - The agent reports the list in `HostFacts.StorageFolders` (null for older agents); the gateway shows it (read-only
+    for hosts with their own agent) and uses it to refuse early (repositories, staging folder, restore folders, move
+    destinations).
+  - Remote hosts (management agents, ADR-022): there is no installer on the host, so the list is set in the portal
+    (`PUT /hosts/{id}/storage-folders`, `hosts.manage` global, audited), stored in `Hosts.StorageFoldersJson`, sent in
+    `RemoteTarget.StorageFolders` and enforced by the management agent.
+  - New folders: `NewFolder` (in-process `Directory.CreateDirectory`, `POST /hosts/{id}/files/folders`,
+    `host.files.write` on the host or through a group) only inside an allowed folder, never over an existing name.
+- **Consequences**: changing the list needs the installer (the agent reads it at start). A host administrator can edit
+  the file (trusted boundary B5); the agent service account has full control of its data folder. Drive roots are
+  accepted as allowed folders. Where the script falls back to a default folder of the host (VM creation without
+  location, a new disk without folder, a restore as new VM without location) the agent passes the list (and a load
+  error) with every request and the script refuses a default folder outside it (`location_not_allowed`); a new disk
+  goes next to the first disk of the VM on a restricted host; the creation wizard proposes the allowed folders. A
+  management agent older than 0.7.0 would ignore the list, so the portal refuses to set it for its remote hosts
+  (`agent_outdated`).
+- **Alternatives**: a list kept in the portal for every host (a compromised gateway could widen it); NTFS ACLs only
+  (still the real boundary for the agent account, but they do not hide folders in the portal).
+- Not validated on a real host (real-host plan V50–V51).
+
+## ADR-033 Notifications: e-mail and webhooks
+- **Decision**: `NotificationService`, configured in Settings > Notifications (`GET/PUT /settings/notifications`,
+  `POST /settings/notifications/test`, `settings.manage`, audited without secrets). Nothing is configured and nothing
+  is sent by default.
+  - E-mail: BCL `SmtpClient`, security `starttls` or `none` (implicit TLS on 465 is not supported by that client),
+    optional user and password; the password is sealed with the key ring (purpose `notification-smtp-password`), never
+    returned (`hasPassword`), kept when the field is omitted, removed with an empty value. At most 20 recipients.
+  - Webhooks: at most 10, `https://` only, no user info in the address, 20 s timeout; formats `generic`
+    (`{source, event, severity, title, text, data, timeUtc}`), `teams` and `slack` (`{text}`). Addresses usually
+    embed the secret of the webhook: they are **sealed** with the key ring (purpose `notification-webhook-url`) and
+    returned masked (scheme, host, first 12 characters of the path); a masked address sent back under the same name
+    keeps the stored one, under another name it is refused (`webhook_url_masked`). No redirects are followed; literal
+    `localhost`, loopback, link-local (cloud metadata), unspecified and multicast addresses are refused when saving, and
+    the connection is refused when the name resolves only to such addresses (checked after DNS resolution, in the
+    socket connect callback of the `notifications` HTTP client).
+  - SMTP credentials are never sent without TLS (`smtp_credentials_need_tls` with security `none` and a user).
+  - Changing the settings needs a recent re-authentication, like the other settings with secrets.
+  - Events: end of a backup run according to the job (`notifyOn`: never / failure / warning / always; "Back up now"
+    runs only on failure), failed restore tests, and once a day the agents older than the package of the gateway.
+  - Sending never blocks a backup: failures are logged and audited (`notifications.send`, outcome Failure).
+- **Not done (the Milestone 3 items stay open)**: no queue, retry or de-duplication; private (RFC 1918) destinations
+  are allowed on purpose (on-premises receivers), so whoever holds `settings.manage` can make the gateway POST a fixed
+  JSON body to an internal HTTPS address. Messages carry VM names and error texts out of the network.
+- **Alternatives**: MailKit (implicit TLS, OAuth; third-party dependency to license-check); syslog (planned for audit
+  forwarding).
+- Not validated against real mail servers and chat services yet (real-host plan V63).
+
+## ADR-032 Read-only API tokens for monitoring systems
+- **Context**: monitoring systems (PRTG, Zabbix, Nagios, ...) must read the backup status without a browser session,
+  MFA, cookies or anti-forgery tokens.
+- **Decision**: table `ApiTokens`. A token is `hvp_` + 40 characters drawn with `RandomNumberGenerator` from 57
+  unambiguous letters and digits, shown once at creation; the database keeps only its SHA-256 (hex) and its first 8
+  characters (to recognise it). Scopes are a closed list: only `backup.read`. Optional expiry (1–3650 days); at most 100
+  active tokens. Create (`settings.manage` **and** a recent re-authentication), list and revoke (`settings.manage`),
+  all audited.
+  - Tokens open only `/api/v1/public/*` (`Authorization: Bearer hvp_...`): anonymous for the cookie scheme, GET only,
+    rate limiter `api-token` (120 requests per minute per source address). Unknown, revoked, expired or out-of-scope
+    tokens are refused with 401 and audited (`api_tokens.use`, Denied). Last use (time, address) is recorded at most
+    once a minute.
+  - `GET /public/backup/status`: overall `ok` / `warning` / `critical` (critical = an enabled job whose last run failed;
+    warning = a last run with warnings, or a VM without a good restore point in the last 48 h), each job with its last
+    run, each VM with its newest point. Names only: no paths, hosts or credentials. `GET /public/backup/runs?since=`
+    (default the last 24 h, at most 500 runs).
+- **Consequences**: a token works only while the user who created it exists and is enabled (a disabled or deleted
+  creator stops its tokens; refused with reason `creator_disabled`); it keeps working when the creator loses
+  `settings.manage`, until it is revoked or expires; it sees every job and VM name, not filtered by RBAC. Refused uses
+  are audited at most once per token prefix and minute. No IP allow-list. No write scope exists.
+- **Alternatives**: service users with a password and no MFA (an interactive account with a weaker login); Entra client
+  credentials (ties monitoring to Entra); client certificates (heavy for monitoring tools).
+- Real monitoring products not tried yet (real-host plan V63).
+
+## ADR-031 VM backups: export of a checkpoint into a repository, verified restore points (agent protocol 9)
+- **Context**: customers need copies of their VMs restorable from the portal, also to a NAS outside the domain, without
+  a third-party backup product. Hyper-V's documented PowerShell surface offers checkpoints, export and import.
+- **Decision**: a **restore point** is a full export of a checkpoint of one VM in
+  `<repository>\<vm key>\<point id>` (`<vm key>` = safe VM name + first 8 hex digits of the Hyper-V id), plus a manifest
+  `hvportal-backup.json` (format 1) with the SHA-256 of every exported file, written **last**: a folder without
+  manifest is an incomplete point and is never used.
+  - **Backup** (`BackupVm`, fixed script, job `backup.vm`, target the VM): open the repository; refuse an existing
+    point folder; take a checkpoint of the requested type (the VM's checkpoint type is changed for that moment only and
+    put back; checkpoints disabled on the VM = failure); `Export-VMSnapshot` of that checkpoint; `Remove-VMSnapshot`
+    (merge); SHA-256 of every exported file; through a staging folder: copy to the repository and, with
+    `verifyAfterCopy`, read back and compare; manifest (VM name and id, host, times, checkpoint type requested and the
+    one Hyper-V reports, generation, configuration version, vCPU, memory, adapters with switch and VLAN, configuration
+    file, disks, files, size, agent version, warnings). On failure the folder created by that run is removed when it
+    has no manifest; the checkpoint is removed in any case the script reaches its end. The checkpoint is named
+    `HvPortal backup <point id> [<checkpoint type of the VM>]`: if the agent or the host stopped in the middle, the next
+    backup of that VM removes the leftover checkpoint and puts back the checkpoint type recorded in its name, with a
+    warning in the point.
+  - **Consistency wording**: `Production` (default) asks Hyper-V for a production checkpoint, which uses the backup
+    integration service of the guest (VSS in Windows guests, a file-system freeze in Linux guests) and falls back to a
+    standard checkpoint when the guest cannot take part; `ProductionOnly` fails instead of falling back; `Standard` is a
+    crash-consistent copy of the disks. The point records the checkpoint type Hyper-V reports
+    (`checkpointTypeUsed`). HvPortal does **not** verify or guarantee application consistency: applications inside the
+    guest (databases, mail) must be protected by their own means; a restore point is a VM copy, not an
+    application-consistent backup.
+  - **Repositories** (`backup.manage`): a local folder of one host (only that host's VMs; it follows that host's
+    allowed storage folders) or an SMB share usable by every host. A share without credentials is expected to be reached
+    with the **computer account** `HOST$` of each host (Hyper-V writes the export itself, and the agent's virtual account
+    appears on the network as the computer account), so share and NTFS rights are needed for every host — unverified
+    (real-host plan V67). A share outside the domain (NAS in a workgroup) takes a user name and password: AES-256-GCM with the key ring,
+    purpose bound to the repository id, write-only in the API, never stored in job parameters (the job runner stamps
+    target, folder and point from the records at execution), sent only inside the command over the agent channel and
+    used by the script as a PowerShell drive of that process (`New-PSDrive -Credential`). Hyper-V cannot use those
+    credentials, so exports and imports go through the **backup staging folder** of the host
+    (`Hosts.BackupStagingPath`, `hosts.manage` or `backup.manage`), which must hold a full copy of the largest VM. The
+    path of a repository cannot be changed (its points live there). `GetBackupReadiness` checks the Hyper-V module and
+    cmdlets, the checkpoint setting, backup integration service and heartbeat of the VMs, a write test and the free
+    space of the repository and the staging folder.
+  - **Jobs and schedule**: a backup job protects VMs and groups (with their sub-groups, resolved at every run) into one
+    repository, with a schedule (`daily`: days of the week and `HH:mm` times in a time zone, a time skipped by daylight
+    saving runs one hour later; `hourly`: every 1–24 h; `manual`), retention, checkpoint type, verify after copy,
+    restore test every N days and notification setting. The scheduler (`BackupScheduler`, every 20 s,
+    `Gateway:Backup`) starts due runs; a start missed while the gateway was down runs once when it is back; a start is
+    skipped while the previous run of the job is still running. A run creates one point and one persistent job per VM,
+    executed **as the user who last saved the backup job** and re-authorized per VM at execution (a VM added later to a
+    group that this user may not back up fails with `authorization_revoked`). "Back up now" on a VM is a run of its own.
+  - **Truthful states**: a point is `Ok` only when the agent returned a valid manifest of that point; a lost result is
+    `Unverified` (verify before relying on it); otherwise `Failed`. Deletion: `Deleting` → `Deleted`; a failed delete
+    after dispatch → `Unverified` (files may be partly gone). A run is Success, Warning (some failed or unverified) or
+    Failed (none good) from its points.
+  - **Verify** (`VerifyBackup`, `backup.run`): every file of the manifest present with the same size and SHA-256. It
+    detects damaged or incomplete copies; it does not prove authenticity (the manifest is not signed, see threat T15).
+  - **Retention** (after each run of a job): per VM the newest N good points are kept and, with a day limit, none older;
+    points marked *Keep* and the newest good point of a VM are never removed; failed and unverified points older than
+    the newest good one are removed. Removal (`RemoveBackup`, job `backup.remove`) deletes only a folder whose manifest
+    carries the same point id. Points of "Back up now" and of deleted jobs have no retention (delete them by hand).
+  - **Restore** (`RestoreBackup`, `Compare-VM` + `Import-VM -Copy`; network adapters that do not fit are disconnected
+    with a warning, any other incompatibility stops the restore):
+    - *New VM*: new id (`-GenerateNewId`), new name, `<location>\<name>` (or the host default folders), network as in
+      the point / disconnected / one switch, optionally started; the original VM is not touched; any host that can use
+      the repository; needs `vm.create` on that host. The new VM is not placed in a group.
+    - *Replace* (typed VM name): only the VM the point was taken from, without checkpoints. It is turned off and removed
+      from Hyper-V; its disk files are **renamed** `<file>.pre-restore-<yyyyMMddHHmmss>` (never deleted, they keep using
+      space); the point is imported with the original id, name and folders, disks copied into the folder of its first
+      disk. Before the original is touched, `Compare-VM -GenerateNewId` checks that the point can be imported on that
+      host (version, processor, memory...): an incompatibility stops the restore with the VM unchanged. If the import
+      still fails afterwards, the disks get their names back but the VM **stays removed from Hyper-V** (its
+      configuration is gone): recreate it from the disks or restore as a new VM. Replacing needs the typed VM name and a
+      recent re-authentication.
+    - *Test*: a new VM `hvp-test-<id>` (in `<staging folder>\restore-tests` when the host has one), adapters
+      disconnected, started; it passes when the guest heartbeat reports OK within 600 s (the contract accepts 60–3600 s,
+      the gateway always sends 600); then it is turned off, removed and its folder deleted. Scheduled every N days for
+      the newest good point of each VM of a job
+      (skipped on hosts without a staging folder); failures are notified. A heartbeat proves the guest booted and runs
+      the integration services, not that its applications work.
+  - **One disk** (`RestoreBackupDisk`): copied to a host folder as `<name>-restored-<stamp>.vhdx`, optionally attached to
+    a VM on its SCSI controller (`vm.config.storage` on that VM, otherwise `host.files.write` on the host): the way to
+    copy files back inside the guest with the guest's own accounts.
+  - **Files** (`MountBackupDisk`, only on hosts with their own agent): the disk is attached read-only to the host
+    (`Mount-VHD -ReadOnly`; from a share with credentials a staged copy first); only volumes that get a drive letter are
+    offered; the agent keeps its own list (at most 4 per host, detached after 2 h without use and at agent start) and
+    browses only those volumes, in-process, without following junctions; the guest's NTFS permissions apply to the agent
+    account (unreadable files are refused: restore the disk to a VM instead). Only the user who attached the disk
+    browses it; `backup.restore` is checked at every call; every download is audited with its SHA-256.
+  - **Rescan**: points found in a repository but unknown to the portal (portal reinstalled, older database restored)
+    are added as `Unverified` and attached to **no** portal VM (new VM id, so they are evaluated on Global): their
+    manifest is not signed and anyone who can write to the share could have written it, so only Global holders of the
+    backup permissions see them, they restore only as a new VM, never over an existing VM.
+  - **Files on another host**: attaching a disk on a host other than the VM's needs `host.files.write` on that host.
+  - Creating or changing a repository (credentials) needs a recent re-authentication.
+  - **Permissions** (`Permissions.cs`): `backup.run` (back up a VM, run jobs with Global scope, verify), `backup.restore`
+    (restore VMs, disks, files, restore tests), `backup.manage` (Global: repositories, jobs, staging folder, delete and
+    keep points). A point is evaluated on its VM while the VM exists, on Global afterwards. The built-in role *Backup
+    operator* holds `inventory.read`, the three backup permissions, `jobs.read.all` and `vm.create` (restores create VMs).
+  - **Long jobs**: backups, verifications, restores, moves, agent updates and template captures have their own
+    concurrency budget (`Gateway:Jobs:MaxConcurrentLongJobs`, default 4) besides `MaxConcurrentJobs` (8), so power and
+    configuration jobs do not wait behind them; the agent allows them up to 12 h. A backup holds the VM's lock: other
+    operations on that VM wait until it ends.
+- **Not provided**: no guarantee of application consistency; no incremental or differential copies (no RCT): every
+  point is a full copy; no deduplication or compression; no encryption of the repository by HvPortal (use the NAS or
+  BitLocker); no immutability/WORM and no second copy of points; no backup of VMs with checkpoints disabled; no
+  file-level search or item-level application restore; no cluster/CSV awareness; file browsing not on remote hosts;
+  no I/O throttling.
+- **Alternatives**: recovery snapshots of `Msvm_VirtualSystemSnapshotService` with resilient change tracking
+  (`GetVirtualDiskChanges`) for incremental chains — far more efficient, much more code, kept as research; Windows
+  Server Backup — host-level, not per VM from the portal; `Export-VM` of the VM itself — the export of a checkpoint
+  gives one point in time while the VM runs.
+- Not validated on a real host: everything that touches Hyper-V was exercised only against the test double of the
+  gateway tests; real-host plan V56–V62, V65 and V67.
+
+## ADR-030 Portal networks: a name for "virtual switch + access VLAN" (agent protocol 9)
+- **Context**: users think in networks ("DMZ", "Customer A"), as in vCenter port groups, not in a switch name plus a VLAN
+  number to type correctly on every adapter.
+- **Decision**: table `PortalNetworks` (host, name, switch, VLAN 1–4094 or null = untagged, description); names unique
+  per host, one network per (switch, VLAN). Create, change, delete: `network.manage` on the host, audited
+  (`network.portal.*`); list: whoever sees the host.
+  - Requests name the network (`vm.networkId` in the VM wizard, `networkAdapterChanges[].networkId`,
+    `addNetworkAdapterNetworkId`); the gateway replaces switch and VLAN with the network's values at request time and
+    again when the job runs (`NetworkRules.ResolveAsync`), so a VLAN changed in between is the one applied. For an added
+    adapter without a network the VLAN field is cleared.
+  - Protocol 9: `NewVmRequest.VlanId` and `VmConfigChange.AddNetworkAdapterVlanId`. `RequiredVersion` returns 9 when
+    they are set: an older agent would leave the adapter untagged, i.e. on another network. If the VLAN cannot be set the
+    agent disconnects the adapter (a new VM is then not started) instead of leaving it untagged.
+  - Changing the VLAN of a network can also re-tag the adapters that are on it now (same switch and old access VLAN,
+    read live, at most 50 VMs): one configuration job per VM as the requesting user, only for VMs where that user holds
+    `vm.config.network` (the others are returned as skipped).
+  - Deleting a network removes only the portal record; adapters keep their switch and VLAN in Hyper-V.
+- **Consequences**: a network is a label of the portal: nothing is created in Hyper-V and the physical switch ports must
+  carry the VLAN (network team). An adapter is "on" a network when its switch and access VLAN match it. Limits of groups
+  (ADR-024) restrict switches, not VLANs; a user with `vm.config.network` can still set any VLAN on an adapter
+  (unchanged since v0.3) and a VM creation request can still carry a VLAN without a network. An adapter added to a
+  running VM is connected untagged for the moment between `Add-VMNetworkAdapter` and `Set-VMNetworkAdapterVlan`. Trunk
+  and private VLAN modes are not managed. Not validated on a real host (real-host plan V53).
+
+## ADR-029 Agent update from the portal, signed packages only (agent protocol 9)
+- **Context**: every release needed an administrator on each host to run `Install-Agent.ps1`; that is the main cost of
+  keeping agents current. The agent service is deliberately not an administrator and cannot replace its own binaries.
+- **Decision**: a chain in which no single component can install code the publisher did not sign:
+  1. *Gateway*: job `agent.update` (target a host agent or a management agent; `hosts.manage` at Global scope and a
+     recent re-authentication at request, the permission again at execution). It offers the gateway's own package (`packages\HvPortal.Agent-win-x64.zip`) with version, size and
+     SHA-256 in an `UpdateAgent` command. Offered only when the agent is connected, speaks protocol 9, reported its
+     updater task in `AgentHello.UpdaterInstalled`, and the package manifest says `catalogSigned`.
+  2. *Agent* (`Channel/AgentUpdater`, service account): downloads `GET /agent/v1/package` from the **agent port** with its
+     own client certificate (same identity check as the channel: internal CA, recorded, not revoked or expired, active
+     host or management agent; audited `agent.package.download`) and validates the gateway against the pinned CA;
+     refuses more bytes than announced (and more than 1 GB); compares size and SHA-256 (fixed-time); stores
+     `<agent data>\update\package.zip` + `request.json`; starts the task with `schtasks /Run`.
+  3. *Task* `\HvPortal\HvPortal Agent Update`, registered by `Install-Agent.ps1`: runs as SYSTEM (highest, 1 h limit, no
+     parallel instance) `Update-HvPortalAgent.ps1` from `Program Files\HvPortal\Updater` (private ACL, read-only for
+     others). Its security descriptor is `D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;<service SIDs>)`: the agent account may
+     read and run it, not change it.
+  4. *Updater*: copies the package into a new folder only SYSTEM and Administrators can write and compares its SHA-256
+     with the request; before expanding it as SYSTEM, checks that every zip entry is a plain relative path inside the
+     extraction folder (no `..`, rooted or drive paths, no `:`), so a crafted zip cannot write elsewhere; expands it; requires the **installed** `HvPortal.Agent.exe` to be signed; requires
+     `HvPortal.Agent.cat`, a catalog of every file of the package, signed by the **same certificate thumbprint**;
+     `Test-FileCatalog` must report every file unchanged; the new `HvPortal.Agent.exe` must carry the same signer and a
+     file version not older than the installed one; then runs the package's own `Install-Agent.ps1` (identity, account,
+     storage folders and data kept; binaries restored if the new service does not start). Outcome in
+     `update\last-result.json`, reported in the next `AgentHello.LastUpdateResult`.
+  5. *Job outcome*: `Succeeded` only when the agent reconnects with at least the offered version within 10 minutes;
+     `Failed` when the agent refuses or the updater reported a failure; otherwise `Unknown`. Never success on the word of
+     the command alone.
+  - Packaging: `New-AgentPackage.ps1 -SigningCertificateThumbprint` creates `HvPortal.Agent.cat` (`New-FileCatalog`,
+    version 2.0, every file except itself), signs it with SHA-256 and checks it with `Test-FileCatalog`;
+    `Build-Release.ps1` passes its signing certificate. An unsigned build has no catalog and is never installed this way.
+    A gateway built as a Docker image (ADR-021) builds its agent package inside the image without a certificate: that
+    package is unsigned and has no catalog, so agents connected to a container gateway are always updated by hand.
+  - API: `GET /agents/updates`, `POST /agents/update-outdated`, `POST /hosts/{id}/agent/update`,
+    `POST /management-agents/{id}/update`; a daily notification lists outdated agents (ADR-033).
+  - Opt-out: `Install-Agent.ps1 -DisableRemoteUpdate` (or the checkbox of the graphical setup) removes the task. The
+    first 0.7.0 installation on a host is always done by hand.
+  - Prerequisite: the upgrade fix of `installer/Common.ps1` (0.7.0). `Stop-HvPortalService` waits for the service
+    **process** to exit (ends it after 120 s), `Clear-DirectoryContent` retries locked files, and a failed replacement
+    puts the previous binaries back and starts them: the first upgrades failed with "Cannot remove clrjit.dll: access
+    denied" because `Stop-Service` returns before the process has released its files.
+- **Trust**: the signer is pinned by thumbprint to the installed agent; a self-signed signer is accepted with the
+  untrusted-root status (`UnknownError`), which only means the signature is present and intact. This makes no build
+  "trusted" by Windows, SmartScreen or antivirus products. Whoever holds the signing private key can produce an update
+  that every agent installs; a new signing certificate (new thumbprint) stops portal updates until each agent has been
+  updated by hand once.
+- **Risks to verify** (real-host plan V49, V64): the package is expanded as SYSTEM before its catalog is checked
+  (`Expand-Archive` must not write outside the target folder); `Install-Agent.ps1` re-registers the task while the task
+  is running; that a non-administrator service SID can query and start a SYSTEM task with this descriptor.
+- **Alternatives**: the agent replacing its own files (needs write access to Program Files, against least privilege);
+  software distribution tools (WSUS/ConfigMgr/Intune — fine where available, the scripts still work with them); an MSI
+  with signed patches (tool chain, see ADR-026).
+
 ## ADR-028 VM templates: a copy of the disks of a prepared VM (agent protocol 8)
 - **Context**: administrators want the VMware workflow: prepare a VM once, keep it as a model, create new VMs from it
   choosing name and resources. Hyper-V has no template object.
@@ -270,6 +607,8 @@ Format: context → decision → consequences. Status of all records: **accepted
 - **Consequences**: existing behaviour is unchanged for groups without limits. Group users see only the names of
   the VMs they can read on a host (the creation wizard no longer lists every VM name to them). Limits are enforced by
   the portal only: changes made directly in Hyper-V are not prevented, they show up as usage.
+- (0.7.0) A VM move must keep the VM within the hosts and storage paths of its folders (`CheckMoveAsync`, ADR-035).
+  Restores as a new VM are not placed in a group and do not count against its quotas (ADR-031).
 
 ## ADR-023 Automatic local copies of the database
 - **Context**: SQLite is a single file; a damaged file (disk fault, interrupted write on a non-journaled volume)
@@ -320,6 +659,9 @@ Format: context → decision → consequences. Status of all records: **accepted
   `LocalAccountTokenFilterPolicy = 1` and WinRM over HTTP needs the host in the management server's `TrustedHosts`.
   Outcome reporting is unchanged: a broken WinRM session is reported as a failure with "outcome unknown" text, never as
   success. Not validated on real hosts yet (real-host test plan V29–V34).
+- (0.7.0) The allowed storage folders of a remote host are set in the portal and sent in `RemoteTarget.StorageFolders`
+  (ADR-034); the management agent itself can be updated from the portal (ADR-029). Browsing the files of a restore
+  point needs the agent on the host (ADR-031).
 
 ## ADR-021 Gateway also as a Linux container
 - The gateway targets `net10.0` (was `net10.0-windows`) and runs either as a Windows service or in a Linux container
@@ -379,6 +721,8 @@ Format: context → decision → consequences. Status of all records: **accepted
   included in the platform and infrastructure administrator roles. Every download and upload is audited with path,
   size and SHA-256. The agent writes with its own identity (virtual service account): folders it cannot write in
   return `access_denied`.
+- (0.7.0) A host can restrict these folders to an allowed list decided on the host, and new folders can be created
+  inside them: ADR-034.
 
 ## ADR-017 Portal groups mirrored as native Hyper-V VM groups (agent protocol 4)
 - Requirement: groups created in the portal must be visible with `Get-VMGroup` on the hosts. The portal stays the
@@ -419,6 +763,7 @@ Format: context → decision → consequences. Status of all records: **accepted
   `AgentProtocol.RequiredVersion(command)` is checked before sending; agents 0.3.1+ answer `Rejected` to unknown
   commands so a future gateway cannot break their channel.
 - (Superseded by ADR-017: portal groups are now mirrored as native Hyper-V VM groups.)
+- (0.7.0) Every folder accepted by `CheckFolder` must also be inside the allowed storage folders of the host: ADR-034.
 
 ## ADR-015 Nested logical groups and access-change guard
 - Groups are folders: `LogicalGroup.ParentId`, max depth 16, sibling names unique, cycles refused. Role assignments

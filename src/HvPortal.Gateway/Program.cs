@@ -117,6 +117,15 @@ namespace HvPortal.Gateway
             builder.Services.AddScoped<EnrollmentService>();
             builder.Services.AddScoped<InventoryIngestor>();
             builder.Services.AddScoped<JobService>();
+            // Backups (ADR-031), notifications (ADR-033).
+            builder.Services.AddHttpClient();
+            // Webhooks: no redirects, never to loopback / link-local / unspecified addresses (checked after DNS resolution).
+            builder.Services.AddHttpClient("notifications").ConfigurePrimaryHttpMessageHandler(HvPortal.Gateway.VmBackup.NotificationService.CreateHandler);
+            builder.Services.AddSingleton<HvPortal.Gateway.VmBackup.NotificationService>();
+            builder.Services.AddSingleton<HvPortal.Gateway.VmBackup.ApiTokenAuditThrottle>();
+            builder.Services.AddScoped<HvPortal.Gateway.VmBackup.BackupService>();
+            builder.Services.AddSingleton<HvPortal.Gateway.VmBackup.BackupScheduler>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<HvPortal.Gateway.VmBackup.BackupScheduler>());
 
             if (!string.Equals(options.Database.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase))
             {
@@ -179,6 +188,9 @@ namespace HvPortal.Gateway
                     _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
                 o.AddPolicy("enroll", ctx => RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "?",
                     _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+                // Read-only API with tokens (monitoring systems): generous but bounded, per source address.
+                o.AddPolicy("api-token", ctx => RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "?",
+                    _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             });
 
             builder.Services.AddSignalR(o =>
@@ -266,6 +278,14 @@ namespace HvPortal.Gateway
             HvPortal.Gateway.Backup.ConfigBackup.Map(app);
             HvPortal.Gateway.Backup.DatabaseBackupService.Map(app);
             HvPortal.Gateway.Security.Entra.EntraEndpoints.Map(app);
+            // v0.7.0: networks with VLAN, host health, VM move, agent updates, backups, notifications, API tokens.
+            NetworkEndpoints.Map(app);
+            HostOperationsEndpoints.Map(app);
+            AgentUpdateEndpoints.Map(app);
+            HvPortal.Gateway.VmBackup.BackupEndpoints.Map(app);
+            HvPortal.Gateway.VmBackup.BackupFileEndpoints.Map(app);
+            HvPortal.Gateway.VmBackup.NotificationEndpoints.Map(app);
+            HvPortal.Gateway.VmBackup.ApiTokenEndpoints.Map(app);
 
             app.MapGet("/api/v1/system/info", async (HttpContext http, AccessEvaluator access, AgentConnectionManager agents, GatewayPaths paths) =>
             {

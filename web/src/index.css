@@ -194,3 +194,491 @@
 .page-tabs [data-slot="tabs-trigger"]::after {
   bottom: 0;
 }
+
+/* ---------------------------------------------------------------- sign-in page ----
+ * Pages shown before the portal (components/auth/AuthShell.tsx): sign-in, initial setup, account recovery, forced
+ * password change and MFA enrollment.
+ * - Static CSS only: the CSP (style-src 'self' + nonce) forbids inline style attributes, so every visual state is a class.
+ * - Animations move transform/opacity only (the button sheen shifts a background, on hover); the colour fields are
+ *   radial gradients, not blurred elements. Everything stops with prefers-reduced-motion (end of this section).
+ * - Unlayered on purpose: these rules must win over the utility classes of the shared components (Input, Button).
+ */
+.signin {
+  --signin-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --signin-blob-1: oklch(0.8 0.11 250 / 0.6);
+  --signin-blob-2: oklch(0.8 0.12 295 / 0.45);
+  --signin-blob-3: oklch(0.86 0.09 210 / 0.55);
+  --signin-grid-line: color-mix(in oklch, var(--foreground) 6%, transparent);
+  --signin-glass: color-mix(in oklch, var(--card) 74%, transparent);
+  --signin-glass-border: color-mix(in oklch, var(--foreground) 9%, transparent);
+  --signin-shadow: 0 1px 2px oklch(0.2 0.02 255 / 0.05), 0 28px 64px -30px oklch(0.35 0.12 262 / 0.4);
+  --signin-field: color-mix(in oklch, var(--card) 70%, transparent);
+  --signin-hero: linear-gradient(155deg, oklch(0.53 0.17 254) 0%, oklch(0.44 0.19 268) 50%, oklch(0.34 0.18 288) 100%);
+  --signin-button: linear-gradient(120deg, oklch(0.55 0.17 252), oklch(0.49 0.2 282));
+  --signin-glow: oklch(0.5 0.2 268 / 0.7);
+}
+.dark .signin {
+  --signin-blob-1: oklch(0.5 0.16 255 / 0.42);
+  --signin-blob-2: oklch(0.45 0.17 295 / 0.32);
+  --signin-blob-3: oklch(0.55 0.11 215 / 0.24);
+  --signin-grid-line: oklch(1 0 0 / 4.5%);
+  --signin-glass: color-mix(in oklch, var(--card) 64%, transparent);
+  --signin-glass-border: oklch(1 0 0 / 10%);
+  --signin-shadow: inset 0 1px 0 oklch(1 0 0 / 5%), 0 30px 70px -30px oklch(0 0 0 / 0.8);
+  --signin-field: color-mix(in oklch, var(--input) 32%, transparent);
+  --signin-hero: linear-gradient(155deg, oklch(0.34 0.11 256) 0%, oklch(0.27 0.12 270) 50%, oklch(0.21 0.1 290) 100%);
+  --signin-glow: oklch(0.45 0.2 268 / 0.8);
+}
+
+/* Backdrop: three slowly drifting colour fields and a faint grid, behind everything. */
+.signin-backdrop {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.signin-blob {
+  position: absolute;
+  width: 64vmax;
+  height: 64vmax;
+  border-radius: 9999px;
+  will-change: transform;
+}
+.signin-blob-1 {
+  top: -28vmax;
+  right: -16vmax;
+  background: radial-gradient(closest-side, var(--signin-blob-1), transparent);
+  animation: signin-drift-a 26s ease-in-out infinite alternate;
+}
+.signin-blob-2 {
+  bottom: -34vmax;
+  right: 6vmax;
+  background: radial-gradient(closest-side, var(--signin-blob-2), transparent);
+  animation: signin-drift-b 32s ease-in-out infinite alternate;
+}
+.signin-blob-3 {
+  top: 12vh;
+  left: -30vmax;
+  background: radial-gradient(closest-side, var(--signin-blob-3), transparent);
+  animation: signin-drift-c 22s ease-in-out infinite alternate;
+}
+.signin-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, var(--signin-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--signin-grid-line) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 45%, #000 15%, transparent 75%);
+  mask-image: radial-gradient(ellipse 70% 55% at 50% 45%, #000 15%, transparent 75%);
+}
+@media (min-width: 64rem) {
+  .signin-grid {
+    -webkit-mask-image: radial-gradient(ellipse 40% 60% at 75% 45%, #000 10%, transparent 75%);
+    mask-image: radial-gradient(ellipse 40% 60% at 75% 45%, #000 10%, transparent 75%);
+  }
+}
+
+/* Language/theme switches. */
+.signin-controls {
+  background-color: var(--signin-glass);
+  border-color: var(--signin-glass-border);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.signin-swap {
+  animation: signin-swap 0.45s var(--signin-ease) backwards;
+}
+
+/* Glass card with a light running along its top edge. */
+.signin-card {
+  color: var(--card-foreground);
+  background-color: var(--signin-glass);
+  border-color: var(--signin-glass-border);
+  box-shadow: var(--signin-shadow);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+  animation: signin-card-in 0.7s var(--signin-ease) backwards;
+}
+.signin-card-edge {
+  position: absolute;
+  top: -1px;
+  left: 12%;
+  right: 12%;
+  height: 1px;
+  overflow: hidden;
+  background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--primary) 55%, transparent), transparent);
+}
+.signin-card-edge::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--primary) 70%, white), transparent);
+  transform: translateX(-100%);
+  animation: signin-glint 7s ease-in-out 1.2s infinite;
+}
+.signin-icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 0.875rem;
+  color: #fff;
+  background: var(--signin-button);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.25), 0 10px 22px -12px var(--signin-glow);
+}
+.signin-icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+/* Fields: taller, translucent, with a soft glow when focused. */
+.signin-card [data-slot="input"] {
+  height: 2.5rem;
+  background-color: var(--signin-field);
+  transition: color 0.2s, background-color 0.2s, border-color 0.2s, box-shadow 0.25s var(--signin-ease);
+}
+.signin-card [data-slot="input"]:focus-visible,
+.signin-card .otp-box:focus-visible {
+  background-color: var(--card);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 38%, transparent), 0 10px 24px -14px var(--signin-glow);
+}
+.signin-card .otp-box {
+  transition: background-color 0.2s, border-color 0.2s, box-shadow 0.25s var(--signin-ease), transform 0.25s var(--signin-ease);
+}
+.signin-card .otp-box:focus-visible {
+  transform: translateY(-2px);
+}
+.signin-input-icon {
+  color: var(--muted-foreground);
+  transition: color 0.2s;
+}
+.signin-input-icon svg {
+  width: 1rem;
+  height: 1rem;
+}
+.signin-input:focus-within .signin-input-icon {
+  color: var(--primary);
+}
+
+/* Segmented switch (local account / Microsoft Entra ID) with a sliding thumb. */
+.signin-tabs {
+  background-color: color-mix(in oklch, var(--muted) 85%, transparent);
+  box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.04);
+}
+.signin-tabs-thumb {
+  position: absolute;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  left: 0.25rem;
+  width: calc(50% - 0.25rem);
+  border-radius: calc(var(--radius) * 1.2);
+  background-color: var(--card);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.08), 0 4px 12px -6px oklch(0.3 0.06 260 / 0.3);
+  transition: transform 0.35s var(--signin-ease);
+}
+.dark .signin-tabs-thumb {
+  background-color: var(--accent);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 6%), 0 4px 12px -6px oklch(0 0 0 / 0.6);
+}
+.signin-tabs[data-active="entra"] .signin-tabs-thumb {
+  transform: translateX(100%);
+}
+
+/* Primary buttons of the card: brand gradient, a sheen crossing on hover, lift. */
+.signin-card [data-slot="button"][data-variant="default"] {
+  color: #fff;
+  background-color: oklch(0.52 0.18 266);
+  background-image: linear-gradient(105deg, transparent 38%, oklch(1 0 0 / 0.28) 50%, transparent 62%), var(--signin-button);
+  background-size: 250% 100%, 100% 100%;
+  background-position: 120% 0, 0 0;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.2), 0 10px 22px -12px var(--signin-glow);
+  transition: background-position 0.9s var(--signin-ease), transform 0.2s var(--signin-ease), box-shadow 0.2s, opacity 0.2s;
+}
+.signin-card [data-slot="button"][data-variant="default"]:hover:not(:disabled) {
+  background-position: -20% 0, 0 0;
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.2), 0 16px 28px -12px var(--signin-glow);
+}
+.signin-card [data-slot="button"][data-variant="default"]:active:not(:disabled) {
+  transform: translateY(0);
+}
+.signin-card [data-slot="button"][data-variant="default"]:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 50%, transparent), 0 10px 22px -12px var(--signin-glow);
+}
+.signin-arrow {
+  transition: transform 0.25s var(--signin-ease);
+}
+.signin [data-slot="button"]:hover:not(:disabled) .signin-arrow {
+  transform: translateX(3px);
+}
+.signin-ms {
+  transition: transform 0.2s var(--signin-ease), box-shadow 0.2s, background-color 0.2s;
+}
+.signin-ms:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px -16px oklch(0.3 0.05 260 / 0.45);
+}
+
+/* Entrance: the card rises, then its content appears one block after the other. */
+.signin-enter,
+.signin-stagger > * {
+  animation: signin-rise 0.55s var(--signin-ease) backwards;
+}
+.signin-stagger > .signin-stagger {
+  animation: none;
+}
+.signin-stagger > :nth-child(1) { animation-delay: 80ms; }
+.signin-stagger > :nth-child(2) { animation-delay: 140ms; }
+.signin-stagger > :nth-child(3) { animation-delay: 200ms; }
+.signin-stagger > :nth-child(4) { animation-delay: 260ms; }
+.signin-stagger > :nth-child(5) { animation-delay: 320ms; }
+.signin-stagger > :nth-child(n + 6) { animation-delay: 380ms; }
+.signin-stagger .signin-stagger > :nth-child(1) { animation-delay: 200ms; }
+.signin-stagger .signin-stagger > :nth-child(2) { animation-delay: 250ms; }
+.signin-stagger .signin-stagger > :nth-child(3) { animation-delay: 300ms; }
+.signin-stagger .signin-stagger > :nth-child(4) { animation-delay: 350ms; }
+.signin-stagger .signin-stagger > :nth-child(5) { animation-delay: 400ms; }
+.signin-stagger .signin-stagger > :nth-child(6) { animation-delay: 450ms; }
+.signin-stagger .signin-stagger > :nth-child(n + 7) { animation-delay: 500ms; }
+/* An error that appears shakes once (it is mounted again for every new error). */
+.signin-stagger > .signin-alert,
+.signin-stagger .signin-stagger > .signin-alert {
+  animation: signin-shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) backwards;
+  animation-delay: 0ms;
+}
+
+/* Brand panel (large screens). */
+.signin-hero {
+  isolation: isolate;
+  background: var(--signin-hero);
+  box-shadow: 0 30px 80px -40px oklch(0.3 0.15 270 / 0.6);
+  animation: signin-hero-in 0.9s var(--signin-ease) backwards;
+}
+.dark .signin-hero {
+  box-shadow: inset 0 0 0 1px oklch(1 0 0 / 7%), 0 30px 80px -40px oklch(0 0 0 / 0.8);
+}
+.signin-hero-grid {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(to right, oklch(1 0 0 / 7%) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(1 0 0 / 7%) 1px, transparent 1px);
+  background-size: 36px 36px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 50% at 50% 38%, #000 10%, transparent 75%);
+  mask-image: radial-gradient(ellipse 75% 50% at 50% 38%, #000 10%, transparent 75%);
+}
+.signin-hero-glow {
+  position: absolute;
+  z-index: -1;
+  width: 75%;
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  will-change: transform;
+}
+.signin-hero-glow-1 {
+  top: -25%;
+  right: -25%;
+  background: radial-gradient(closest-side, oklch(0.8 0.12 220 / 0.45), transparent);
+  animation: signin-drift-b 20s ease-in-out infinite alternate;
+}
+.signin-hero-glow-2 {
+  bottom: -35%;
+  left: -25%;
+  background: radial-gradient(closest-side, oklch(0.62 0.2 300 / 0.5), transparent);
+  animation: signin-drift-a 24s ease-in-out infinite alternate;
+}
+.signin-hero-title {
+  color: #fff;
+  background-image: linear-gradient(95deg, #fff 30%, oklch(0.88 0.07 225));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.signin-feature-icon {
+  color: #fff;
+  background-color: oklch(1 0 0 / 11%);
+  border: 1px solid oklch(1 0 0 / 18%);
+}
+.signin-feature-icon svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+@media (max-height: 34rem) {
+  .signin-hero-features {
+    display: none;
+  }
+}
+
+/*
+ * The picture takes the height left by the texts (size container) and hides itself when too little is left.
+ * Rings, chips and core are proportional to --orbit.
+ */
+.signin-hero-visual {
+  container-type: size;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.signin-orbit {
+  --orbit: min(19rem, 100cqh, 100cqw);
+  position: relative;
+  flex-shrink: 0;
+  width: var(--orbit);
+  height: var(--orbit);
+}
+@container (max-height: 8.5rem) {
+  .signin-orbit {
+    display: none;
+  }
+}
+.signin-ring {
+  position: absolute;
+  border-radius: 9999px;
+  border: 1px solid oklch(1 0 0 / 16%);
+  animation: signin-spin var(--spin) linear infinite;
+}
+.signin-ring-1 {
+  --spin: 50s;
+  inset: 0;
+}
+.signin-ring-2 {
+  --spin: 36s;
+  inset: 17%;
+  border-style: dashed;
+  border-color: oklch(1 0 0 / 24%);
+  animation-direction: reverse;
+}
+.signin-ring-3 {
+  --spin: 22s;
+  inset: 31%;
+  border-color: oklch(1 0 0 / 12%);
+}
+.signin-node {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+.signin-node-n { top: 0; left: 50%; }
+.signin-node-s { top: 100%; left: 50%; }
+.signin-node-e { top: 50%; left: 100%; }
+.signin-node-w { top: 50%; left: 0; }
+/* Chips turn the other way round at the same speed, so they stay upright while they orbit. */
+.signin-chip {
+  --chip: calc(var(--orbit) * 0.15);
+  position: absolute;
+  top: calc(var(--chip) / -2);
+  left: calc(var(--chip) / -2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--chip);
+  height: var(--chip);
+  border-radius: calc(var(--chip) * 0.32);
+  color: #fff;
+  background-color: oklch(1 0 0 / 13%);
+  border: 1px solid oklch(1 0 0 / 24%);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 20%), 0 10px 24px -10px oklch(0.15 0.05 270 / 0.55);
+  animation: signin-spin var(--spin) linear infinite reverse;
+}
+.signin-ring-2 .signin-chip {
+  animation-direction: normal;
+}
+.signin-chip svg {
+  width: 45%;
+  height: 45%;
+}
+.signin-packet {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 9999px;
+  background-color: #fff;
+  box-shadow: 0 0 0 3px oklch(1 0 0 / 15%), 0 0 14px 3px oklch(0.8 0.12 230 / 0.8);
+}
+.signin-core {
+  position: absolute;
+  inset: 35%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 28%;
+  background: linear-gradient(160deg, oklch(1 0 0 / 22%), oklch(1 0 0 / 6%));
+  border: 1px solid oklch(1 0 0 / 28%);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 30%), 0 0 60px oklch(0.75 0.14 240 / 0.45);
+  animation: signin-breathe 6s ease-in-out infinite;
+}
+.signin-core img {
+  width: 58%;
+  height: auto;
+}
+.signin-ping {
+  position: absolute;
+  inset: 35%;
+  border-radius: 28%;
+  border: 1.5px solid oklch(1 0 0 / 45%);
+  animation: signin-ping 4.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes signin-rise {
+  from { opacity: 0; transform: translateY(10px); }
+}
+@keyframes signin-card-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.98); }
+}
+@keyframes signin-hero-in {
+  from { opacity: 0; transform: translateX(-16px) scale(0.985); }
+}
+@keyframes signin-swap {
+  from { opacity: 0; transform: rotate(-90deg) scale(0.6); }
+}
+@keyframes signin-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-6px); }
+  30% { transform: translateX(5px); }
+  45% { transform: translateX(-4px); }
+  60% { transform: translateX(3px); }
+  75% { transform: translateX(-1px); }
+}
+@keyframes signin-glint {
+  0% { transform: translateX(-100%); }
+  45%, 100% { transform: translateX(290%); }
+}
+@keyframes signin-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes signin-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.045); }
+}
+@keyframes signin-ping {
+  0% { transform: scale(1); opacity: 0.7; }
+  80%, 100% { transform: scale(2.3); opacity: 0; }
+}
+@keyframes signin-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(-10%, 8%, 0) scale(1.12); }
+}
+@keyframes signin-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.05); }
+  to { transform: translate3d(8%, -10%, 0) scale(0.95); }
+}
+@keyframes signin-drift-c {
+  from { transform: translate3d(0, 0, 0) scale(0.95); }
+  to { transform: translate3d(12%, -6%, 0) scale(1.1); }
+}
+
+/* Reduced motion: no animation at all (spinners of busy buttons excepted), instant transitions. */
+@media (prefers-reduced-motion: reduce) {
+  .signin *:not(.animate-spin),
+  .signin *::before,
+  .signin *::after {
+    animation: none !important;
+    transition-duration: 1ms !important;
+  }
+}

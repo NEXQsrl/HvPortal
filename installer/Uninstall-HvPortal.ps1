@@ -23,11 +23,12 @@ foreach ($c in $Component) {
     if (-not $PSCmdlet.ShouldProcess($service, 'Uninstall')) { continue }
     if (Get-Service $service -ErrorAction SilentlyContinue) {
         $startName = Get-ServiceStartName $service
-        Stop-Service $service -Force -ErrorAction SilentlyContinue
+        Stop-HvPortalService -ServiceName $service
         if ($c -eq 'Agent') {
             & net.exe localgroup ((New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-578').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]) "NT SERVICE\$service" /delete 2>$null | Out-Null
         }
         Invoke-Sc @('delete', $service)
+        if ($c -eq 'Agent') { Unregister-AgentUpdater }
         # Dedicated local account created by Install-Agent -ServiceAccount: remove its rights, profile and the user.
         if ($c -eq 'Agent' -and $startName -and $startName -notlike 'NT SERVICE\*' -and $startName -ne 'LocalSystem') {
             $name = $startName.Split('\')[-1]
@@ -42,7 +43,10 @@ foreach ($c in $Component) {
         }
     }
     Get-NetFirewallRule -DisplayName "HvPortal $c*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-    if (Test-Path $install) { Remove-Item $install -Recurse -Force }
+    if (Test-Path $install) {
+        Clear-DirectoryContent -Path $install
+        Remove-Item $install -Recurse -Force
+    }
     if ($RemoveData -and (Test-Path $data)) {
         Remove-Item $data -Recurse -Force
         Write-Host "Removed data directory $data."

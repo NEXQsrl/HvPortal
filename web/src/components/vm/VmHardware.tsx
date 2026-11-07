@@ -9,7 +9,7 @@ import { formatBytes, percent } from '@/lib/format';
 import { useLoad } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 
-type DetailsResponse = { details: VmDetails | null; stale: boolean; collectedAt: string | null; error?: string };
+export type DetailsResponse = { details: VmDetails | null; stale: boolean; collectedAt: string | null; error?: string };
 
 /** Live disks, controllers, network adapters and guest IP addresses (cached copy when the host is offline). */
 export function VmHardware({ vm }: { vm: Vm }) {

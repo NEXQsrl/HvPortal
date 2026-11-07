@@ -5,6 +5,7 @@ import { del, get, post, put } from '@/api/client';
 import type { Assignment, Role, SecuritySettings, UserRow } from '@/api/types';
 import { CopyButton, ErrorAlert, KeyValue, Loading, Notice, PageHeader, Section, StatusBadge } from '@/components/common';
 import { AutoBackupSection, BackupSection } from '@/components/admin/BackupSection';
+import { ApiTokensSection, NotificationSettingsSection } from '@/components/backup/BackupSettings';
 import { AddUserDialog, CreatedUserNotice, EntraSettingsSection, type CreatedUser } from '@/components/admin/UserAdmin';
 import { ActionDialog, ConfirmTypedDialog, Field, HelpTip } from '@/components/dialogs';
 import { MicrosoftMark } from '@/components/MicrosoftMark';
@@ -173,7 +174,7 @@ function AssignDialog({ onClose, users, roles }: { onClose: () => void; users: U
   );
 }
 
-const SETTINGS_TABS = ['security', 'entra', 'backup', 'system'] as const;
+export const SETTINGS_TABS = ['security', 'entra', 'backup', 'notifications', 'apiTokens', 'system'] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 /** Settings in tabs: each area has its own page width and save button. */
@@ -191,6 +192,8 @@ export function SettingsPage() {
       <TabsContent value="security" className="min-h-0 overflow-auto p-4">{tab === 'security' && <div className="max-w-4xl"><SecuritySettingsSection /></div>}</TabsContent>
       <TabsContent value="entra" className="min-h-0 overflow-auto p-4">{tab === 'entra' && <div className="max-w-4xl"><EntraSettingsSection /></div>}</TabsContent>
       <TabsContent value="backup" className="min-h-0 overflow-auto p-4">{tab === 'backup' && <div className="max-w-4xl space-y-4"><BackupSection /><AutoBackupSection /></div>}</TabsContent>
+      <TabsContent value="notifications" className="min-h-0 overflow-auto p-4">{tab === 'notifications' && <div className="max-w-4xl"><NotificationSettingsSection /></div>}</TabsContent>
+      <TabsContent value="apiTokens" className="min-h-0 overflow-auto p-4">{tab === 'apiTokens' && <div className="max-w-4xl"><ApiTokensSection /></div>}</TabsContent>
       <TabsContent value="system" className="min-h-0 overflow-auto p-4">{tab === 'system' && <div className="max-w-4xl"><SystemInfoSection /></div>}</TabsContent>
     </Tabs>
   );

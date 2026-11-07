@@ -21,8 +21,26 @@ public static class AgentProtocol
     ///     turns off a running VM first, VmSummary.MemoryMaximumMb.
     /// 8 = v0.6.0: VM templates (NewTemplate, RemoveTemplate, NewVm.TemplateDisks: the disks of a template are copied
     ///     into the new VM); long copies may run for hours (see CommandExecutor).
+    /// 9 = v0.7.0: host health, VM move (host / storage), new folders, allowed storage folders of the host, VLAN of new
+    ///     and added network adapters, backups and restores, update of the agent sent by the gateway (UpdateAgent).
     /// </summary>
-    public const int Version = 8;
+    public const int Version = 9;
+
+    /// <summary>Agent port: the agent package, for agents updating themselves (mutual TLS, same checks as the channel).</summary>
+    public const string PackagePath = "/agent/v1/package";
+
+    /// <summary>Agent version shipped with each protocol (messages for agents that are too old).</summary>
+    public static string MinimumAgentFor(int protocol) => protocol switch
+    {
+        >= 9 => "0.7.0",
+        8 => "0.6.0",
+        7 => "0.5.0",
+        6 => "0.4.0",
+        5 => "0.3.3",
+        4 => "0.3.2",
+        3 => "0.3.1",
+        _ => "0.3",
+    };
 
     /// <summary>
     /// Lowest agent protocol able to execute the command as intended. The gateway never sends a command to an older
@@ -30,6 +48,25 @@ public static class AgentProtocol
     /// </summary>
     public static int RequiredVersion(AgentCommand command)
     {
+        if (command.Kind is AgentCommandKind.UpdateAgent)
+        {
+            return 9;
+        }
+        if (command.Operation is >= HvOperation.GetHostHealth)
+        {
+            return 9;
+        }
+        // Older agents would ignore the VLAN and leave the adapter untagged (on the wrong network).
+        if (command.Operation is HvOperation.NewVm && command.OperationArgs is { ValueKind: JsonValueKind.Object } vlanArgs
+            && vlanArgs.TryGetProperty("vlanId", out var vlan) && vlan.ValueKind == JsonValueKind.Number)
+        {
+            return 9;
+        }
+        if (command.Operation is HvOperation.SetVmConfig && command.OperationArgs is { ValueKind: JsonValueKind.Object } addArgs
+            && addArgs.TryGetProperty("addNetworkAdapterVlanId", out var addVlan) && addVlan.ValueKind == JsonValueKind.Number)
+        {
+            return 9;
+        }
         if (command.TargetHostId is not null)
         {
             return 6;
@@ -143,6 +180,10 @@ public sealed record AgentHello
     public string? OsVersion { get; init; }
     /// <summary>Informative (protocol 6+): the gateway relies on its own enrollment records, not on this value.</summary>
     public AgentRole Role { get; init; } = AgentRole.Host;
+    /// <summary>Protocol 9: the scheduled task that installs updates sent by the gateway is registered on the machine.</summary>
+    public bool? UpdaterInstalled { get; init; }
+    /// <summary>Protocol 9: outcome of the last update run by that task ("&lt;time&gt; ok 0.7.1: ..." or the error), when there is one.</summary>
+    public string? LastUpdateResult { get; init; }
 }
 
 public enum AgentCommandKind
@@ -160,6 +201,19 @@ public enum AgentCommandKind
     ConsoleFrame,
     /// <summary>Console: keyboard (Msvm_Keyboard) / mouse (Msvm_SyntheticMouse) input.</summary>
     ConsoleInput,
+    /// <summary>
+    /// Protocol 9. Download the agent package from the gateway (agent port, mutual TLS), check its SHA-256 and hand it to
+    /// the updater task of the machine, which checks the publisher signature of the package before installing it.
+    /// </summary>
+    UpdateAgent,
+}
+
+/// <summary>Package the agent must download (AgentProtocol.PackagePath) and verify before handing it to the updater.</summary>
+public sealed record AgentUpdateRequest
+{
+    public required string Version { get; init; }
+    public required string Sha256 { get; init; }
+    public required long SizeBytes { get; init; }
 }
 
 public sealed record AgentCommand
@@ -176,6 +230,8 @@ public sealed record AgentCommand
     public JsonElement? OperationArgs { get; init; }
     public ConsoleFrameRequest? FrameRequest { get; init; }
     public ConsoleInput? Input { get; init; }
+    /// <summary>UpdateAgent only.</summary>
+    public AgentUpdateRequest? Update { get; init; }
     /// <summary>
     /// Management agents only (protocol 6): the remote host the command is for. Set by the gateway, never by callers;
     /// a host agent rejects commands that carry it, a management agent rejects commands without it.
@@ -260,6 +316,8 @@ public sealed class RemoteTarget
     public required string Password { get; init; }
     /// <summary>WinRM over HTTPS (5986) instead of HTTP (5985, NTLM message encryption; needs TrustedHosts in a workgroup).</summary>
     public bool UseHttps { get; init; }
+    /// <summary>Protocol 9. Folders of the remote host the portal may use (set in the portal; empty = not restricted).</summary>
+    public IReadOnlyList<string> StorageFolders { get; init; } = [];
 
     public override string ToString() => $"RemoteTarget {HostId:D} {ComputerName}";
 }

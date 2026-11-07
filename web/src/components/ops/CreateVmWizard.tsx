@@ -14,6 +14,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { parseVlan } from '@/components/infra/PortalNetworks';
 import { useI18n, type TKey } from '@/i18n';
 import { formatBytes, VM_NAME } from '@/lib/format';
 import { useLoad } from '@/lib/hooks';
@@ -97,6 +98,7 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
   const [busy, setBusy] = useState(false);
   const [key] = useState(newIdempotencyKey);
   const set = (p: Partial<NewVmSpec>) => setSpec((s) => ({ ...s, ...p }));
+  const [vlanText, setVlanText] = useState('');
 
   useEffect(() => {
     if (!hostId) return;
@@ -107,7 +109,7 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
       if (cancelled) return;
       setDefaults(d);
       // A group that restricts storage: the VM goes into one of its folders (the first one by default).
-      setSpec((s) => ({ ...s, switchName: d.switches.includes(s.switchName ?? '') ? s.switchName : d.switches[0] ?? '', location: d.storageRoots?.[0] ?? '' }));
+      setSpec((s) => ({ ...s, networkId: undefined, switchName: d.switches.includes(s.switchName ?? '') ? s.switchName : d.switches[0] ?? '', location: d.storageRoots?.[0] ?? '' }));
     }).catch((e) => { if (!cancelled) setLoadError(e); });
     setSpec((s) => ({ ...s, location: '', isoPath: '' }));
     setLocationFree(null);
@@ -127,11 +129,17 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
   const diskError = tpl
     ? (!Number.isInteger(spec.diskSizeGb) || spec.diskSizeGb < tpl.bootDiskGb || spec.diskSizeGb > 65536 ? t('tpl.wiz.diskMin', { gb: tpl.bootDiskGb }) : null)
     : spec.diskSizeGb !== 0 && (!Number.isInteger(spec.diskSizeGb) || spec.diskSizeGb < 1 || spec.diskSizeGb > 65536) ? t('wiz.diskInvalid') : null;
+  const networks = defaults?.networks ?? [];
+  const selectedNetwork = spec.networkId ? networks.find((x) => x.id === spec.networkId) : undefined;
+  const vlan = parseVlan(vlanText);
+  const vlanError = !spec.networkId && spec.switchName && vlan === undefined ? t('pnet.vlanInvalid') : null;
+  // One entry per STEPS item (name, compute, storage, network, media, options, summary).
   const stepValid = [
     !!hostId && !!name && !nameError && !!defaults,
     spec.processorCount >= 1 && spec.processorCount <= 1024 && !memoryError,
     !diskError && !locationError,
-    true, true, true, true,
+    !vlanError,
+    true, true, true,
   ];
   const canFinish = stepValid.every(Boolean);
   const host = inv.hostById.get(hostId);
@@ -155,6 +163,9 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
     ...spec,
     name,
     switchName: spec.switchName || undefined,
+    // A network of the portal decides switch and VLAN on the server; otherwise the VLAN typed here (agent 0.7.0+).
+    networkId: spec.networkId || undefined,
+    vlanId: !spec.networkId && spec.switchName && defaults?.vlanSupported && vlan ? vlan : undefined,
     isoPath: spec.isoPath || undefined,
     notes: spec.notes || undefined,
     location: location || undefined,
@@ -162,7 +173,7 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
     enableTpm: spec.generation === 2 && spec.enableTpm,
     memoryMinimumMb: spec.dynamicMemory ? spec.memoryMinimumMb : undefined,
     memoryMaximumMb: spec.dynamicMemory ? spec.memoryMaximumMb : undefined,
-  }), [spec, name, location]);
+  }), [spec, name, location, vlan, defaults?.vlanSupported]);
 
   const create = async () => {
     setBusy(true);
@@ -331,12 +342,36 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
       </div>
     ),
     network: (
-      <Field label={t('wiz.switch')} htmlFor="wiz-switch">
-        <NativeSelect id="wiz-switch" value={spec.switchName} onChange={(e) => set({ switchName: e.target.value })}>
-          <option value="">{t('cfg.notConnected')}</option>
-          {(defaults?.switches ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
-        </NativeSelect>
-      </Field>
+      <div className="space-y-4">
+        {networks.length > 0 && (
+          <Field label={t('pnet.network')} htmlFor="wiz-net" hint={t('pnet.wizHint')}>
+            <NativeSelect id="wiz-net" value={spec.networkId ?? ''} onChange={(e) => {
+              const net = networks.find((x) => x.id === e.target.value);
+              set(net ? { networkId: net.id, switchName: net.switchName } : { networkId: undefined });
+              if (net) setVlanText('');
+            }}>
+              <option value="">{t('pnet.custom')}</option>
+              {networks.map((x) => <option key={x.id} value={x.id} disabled={!!x.vlanId && !defaults?.vlanSupported}>{x.name} — {x.switchName}{x.vlanId ? ` · VLAN ${x.vlanId}` : ''}</option>)}
+            </NativeSelect>
+          </Field>
+        )}
+        {!spec.networkId && (
+          <div className="grid gap-4 sm:grid-cols-[2fr_1fr]">
+            <Field label={t('wiz.switch')} htmlFor="wiz-switch">
+              <NativeSelect id="wiz-switch" value={spec.switchName} onChange={(e) => set({ switchName: e.target.value })}>
+                <option value="">{t('cfg.notConnected')}</option>
+                {(defaults?.switches ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
+              </NativeSelect>
+            </Field>
+            {defaults?.vlanSupported && spec.switchName && (
+              <Field label={t('pnet.vlan')} htmlFor="wiz-vlan" hint={t('pnet.vlanHint')} error={vlanError ?? undefined}>
+                <Input id="wiz-vlan" inputMode="numeric" className="tabular" value={vlanText} placeholder={t('pnet.untagged')} onChange={(e) => setVlanText(e.target.value)} aria-invalid={!!vlanError} />
+              </Field>
+            )}
+          </div>
+        )}
+        {defaults && !defaults.vlanSupported && <p className="text-xs text-muted-foreground">{t('pnet.vlanOldAgent')}</p>}
+      </div>
     ),
     media: (
       <div className="space-y-4">
@@ -389,7 +424,9 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
         [t('cfg.memory'), `${formatBytes(spec.memoryStartupMb * 1048576)}${spec.dynamicMemory ? ` (${t('cfg.dynamic')}: ${spec.memoryMinimumMb}–${spec.memoryMaximumMb} MB)` : ''}`],
         [t('wiz.location'), <span key="l" className="font-mono text-xs [overflow-wrap:anywhere]">{location || t('wiz.locationDefault', { path: defaults?.defaults.virtualMachinePath ?? '—' })}</span>],
         [t('wiz.disk'), spec.diskSizeGb > 0 ? `${spec.diskSizeGb} GB ${spec.diskFixed ? t('cfg.fixed') : t('wiz.diskDynamic')}` : t('wiz.noDisk')],
-        [t('wiz.switch'), spec.switchName || t('cfg.notConnected')],
+        [t('wiz.switch'), selectedNetwork
+          ? `${selectedNetwork.name} (${selectedNetwork.switchName}${selectedNetwork.vlanId ? ` · VLAN ${selectedNetwork.vlanId}` : ''})`
+          : `${spec.switchName || t('cfg.notConnected')}${spec.switchName && vlan ? ` · VLAN ${vlan}` : ''}`],
         [t('wiz.iso'), spec.isoPath || t('wiz.noIso')],
         [t('cfg.firmware'), spec.generation === 2 ? `${t(('opt.sb.' + spec.secureBootTemplate) as TKey)}${spec.enableTpm ? ' · TPM' : ''}` : 'BIOS'],
         [t('cfg.checkpointType'), t(('opt.cp.' + spec.checkpointType) as TKey)],

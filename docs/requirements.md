@@ -8,7 +8,7 @@
 | Least-privilege agent | **Feasible**: built-in group *Hyper-V Administrators* (S-1-5-32-578) grants full Hyper-V management without local admin. Cluster operations (M3) will require additional Failover Cluster permissions. |
 | Workgroup hosts | **Feasible**: agent-initiated mTLS with a private CA removes the need for Kerberos/WinRM trust between gateway and hosts. |
 | Browser console equivalent to VMConnect | **Research**: VMConnect uses RDP to the host on port 2179 with a VM-specific pre-connection blob; no supported browser implementation exists. See [console-study.md](console-study.md). |
-| Native application-consistent backup | **Research / later**: requires VSS + Hyper-V WMI backup APIs (RCT, reference points). M3 starts with an external provider interface. |
+| Native application-consistent backup | **Research / later**: requires VSS + Hyper-V WMI backup APIs (RCT, reference points). v0.7.0 provides full-copy VM backups through the export of a (production or standard) checkpoint, which record the checkpoint type Hyper-V reports and make no application-consistency claim (ADR-031); incremental chains and an external provider interface remain later work. |
 | Windows Server 2025 Standard vs Datacenter | **Feasible**: differences (S2D, SDN, shielded VMs, unlimited VMs licensing) are detected from `OperatingSystemSKU` and surfaced as capabilities. |
 | Windows Server 2022 | **Under evaluation**: same WMI v2 surface; not declared supported until tested (see compatibility matrix). |
 

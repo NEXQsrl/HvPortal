@@ -48,6 +48,12 @@ public sealed record HostFacts
     public IReadOnlyList<HostVolume> Volumes { get; init; } = [];
     public IReadOnlyList<NetworkAdapterInfo> NetworkAdapters { get; init; } = [];
     public IReadOnlyList<string> VirtualSwitches { get; init; } = [];
+    /// <summary>
+    /// Agent 0.7.0+. Folders of the host the portal may use (file explorer, folder pickers, VM locations, ISO and
+    /// template libraries, backup folders), set when the agent is installed (Install-Agent -StorageFolders) and enforced
+    /// by the agent. Empty = not restricted (every local fixed drive, system folders excluded). Null with older agents.
+    /// </summary>
+    public IReadOnlyList<string>? StorageFolders { get; init; }
 }
 
 /// <summary>Local fixed volume of the host (Win32_LogicalDisk, DriveType = 3).</summary>

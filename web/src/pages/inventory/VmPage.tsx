@@ -1,4 +1,4 @@
-import { ChevronDown, Clock, Cpu, Info, MemoryStick, Monitor, Play, Power, RotateCcw, Server } from 'lucide-react';
+import { ChevronDown, Clock, Cpu, HardDrive, MemoryStick, Monitor, Play, Power, RotateCcw, Server } from 'lucide-react';
 import { useCallback } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { get } from '@/api/client';
@@ -14,14 +14,15 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { VmCheckpoints } from '@/components/vm/VmCheckpoints';
-import { VmHardware } from '@/components/vm/VmHardware';
+import { VmBackups } from '@/components/backup/VmBackups';
+import { VmHardware, type DetailsResponse } from '@/components/vm/VmHardware';
 import { VmSettings } from '@/components/vm/VmSettings';
 import { vmMemory } from '@/components/vm/VmTable';
 import { useI18n, type TKey } from '@/i18n';
-import { formatBytes, formatDuration } from '@/lib/format';
+import { formatBytes, formatDuration, percent } from '@/lib/format';
 import { useLive, useLoad } from '@/lib/hooks';
 
-const TABS = ['summary', 'console', 'settings', 'hardware', 'checkpoints', 'events'] as const;
+const TABS = ['summary', 'console', 'settings', 'hardware', 'checkpoints', 'backups', 'events'] as const;
 
 /** Msvm_SummaryInformation.ReplicationHealth: 0 Not applicable, 1 Ok, 2 Warning, 3 Critical. */
 function ReplicationHealth({ value }: { value: number | null | undefined }) {
@@ -31,6 +32,35 @@ function ReplicationHealth({ value }: { value: number | null | undefined }) {
   return <StatusBadge tone={tone}>{t(('repl.health.' + Math.min(value, 4)) as TKey)}</StatusBadge>;
 }
 type Tab = (typeof TABS)[number];
+
+/**
+ * Summary card of the virtual disks: provisioned capacity and space used on the host (live from the agent, or the last
+ * known values when the host is offline). Mounted only with the Summary tab, so other tabs make no extra agent call.
+ */
+function VmDisksCard({ vm, onOpen }: { vm: Vm; onOpen: () => void }) {
+  const { t, fmtDate } = useI18n();
+  const details = useLoad(() => get<DetailsResponse>(`/api/v1/vms/${vm.id}/details`), [vm.id]);
+  const d = details.data?.details;
+  const vhds = d?.disks.filter((k) => k.kind === 'VirtualHardDisk') ?? [];
+  const isos = d?.disks.filter((k) => k.kind === 'DvdIso' && k.path) ?? [];
+  const known = (xs: (number | null)[]) => (xs.some((x) => x == null) ? null : xs.reduce<number>((a, b) => a + (b ?? 0), 0));
+  const capacity = known(vhds.map((k) => k.maxSizeBytes));
+  const used = known(vhds.map((k) => k.fileSizeBytes));
+  const loading = details.loading && !details.data;
+  return (
+    <button type="button" onClick={onOpen} className="rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60" aria-label={`${t('vm.disksCard')}: ${t('vm.tab.hardware')}`}>
+      <StatCard className="h-full transition-colors hover:bg-accent/40" icon={<HardDrive className="size-3.5" />} label={t('vm.disksCard')}
+        value={loading ? '…' : !d ? '—' : vhds.length === 0 ? '0' : formatBytes(capacity)}
+        meter={capacity && used != null ? percent(used, capacity) : null}
+        sub={loading ? undefined : !d ? <span className="block">{details.data?.error ?? t('vm.disksUnavailable')}</span> : <>
+          <span className="block">{vhds.length === 0 ? t('vm.disksNone') : vhds.length === 1 ? t('vm.disksCountOne') : t('vm.disksCount', { n: vhds.length })}
+            {used != null && vhds.length > 0 ? ` · ${t('vm.disksUsed', { v: formatBytes(used) })}` : ''}</span>
+          {isos.length > 0 && <span className="block truncate" title={isos.map((k) => k.path).join('\n')}>{t('vm.disksDvd', { v: isos.map((k) => (k.path ?? '').split('\\').pop()).join(', ') })}</span>}
+          {details.data?.stale && <span className="block text-warning">{t('vm.disksCached', { at: fmtDate(details.data.collectedAt) })}</span>}
+        </>} />
+    </button>
+  );
+}
 
 export function VmPage() {
   const { id } = useParams();
@@ -80,7 +110,7 @@ export function VmPage() {
           <ActionsButton items={ops.vmActions(vm, { page: true })} label={vm.name}>{t('common.actions')}<ChevronDown /></ActionsButton>
         </>}>
         <TabsList variant="line" className="page-tabs -mb-px h-9 w-full justify-start rounded-none bg-transparent p-0">
-          {TABS.filter((x) => (x !== 'console' || vm.canConsole)).map((x) => (
+          {TABS.filter((x) => (x !== 'console' || vm.canConsole) && (x !== 'backups' || vm.canBackup || vm.canRestore)).map((x) => (
             <TabsTrigger key={x} value={x} className="flex-none px-3">{t(('vm.tab.' + x) as TKey)}</TabsTrigger>
           ))}
         </TabsList>
@@ -99,10 +129,12 @@ export function VmPage() {
               {vm.memoryDemandMb != null && <span className="block">{t('vm.memoryDemand')}: {formatBytes(vm.memoryDemandMb * 1048576)}{vm.memoryBufferPercent != null ? ` · ${t('vm.memoryBuffer')}: ${vm.memoryBufferPercent}%` : ''}</span>}
               {t('vm.startup')}: {vm.memoryStartupMb != null ? formatBytes(vm.memoryStartupMb * 1048576) : '—'} · {t('vm.dynamicMemory')}: {vm.dynamicMemoryEnabled == null ? '—' : vm.dynamicMemoryEnabled ? t('common.yes') : t('common.no')}
             </>} />
-          <StatCard icon={<Clock className="size-3.5" />} label={t('vm.uptime')} value={vm.powerState === 'Running' ? formatDuration(vm.uptimeMs) : '—'}
-            sub={<>{t('vm.shutdownService')}: {vm.shutdownServiceAvailable == null ? '—' : vm.shutdownServiceAvailable ? 'OK' : t('common.no')}</>} />
-          <StatCard icon={<Info className="size-3.5" />} label={t('vm.configuration')} value={`Gen ${vm.generation ?? '—'}`}
-            sub={<>{t('vm.version')}: {vm.configurationVersion ?? '—'} · {t('vm.checkpoints')}: <CheckpointIcon count={vm.checkpointCount} /></>} />
+          <VmDisksCard vm={vm} onOpen={() => setTab('hardware')} />
+          <StatCard icon={<Clock className="size-3.5" />} label={t('vm.uptime')} value={vm.powerState === 'Running' && vm.uptimeMs != null ? formatDuration(vm.uptimeMs) : '—'}
+            sub={<>
+              <span className="block">{vm.powerState === 'Running' && vm.uptimeMs != null ? t('vm.uptimeSince', { at: fmtDate(new Date(Date.parse(vm.lastSeenAt) - vm.uptimeMs).toISOString()) }) : t('vm.uptimeOff')}</span>
+              {t('vm.shutdownService')}: {vm.shutdownServiceAvailable == null ? '—' : vm.shutdownServiceAvailable ? 'OK' : t('common.no')}
+            </>} />
         </div>
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <Section title={t('vm.guest')} bodyClassName="p-3">
@@ -119,6 +151,9 @@ export function VmPage() {
               [t('vm.host'), host ? <Link className="text-primary hover:underline" to={`/hosts/${host.id}`}>{host.displayName}</Link> : vm.hostName],
               [t('vm.groups'), groups.length === 0 ? <span className="text-muted-foreground">{t('vm.noGroups')}</span>
                 : <div className="flex flex-wrap gap-1">{groups.map((g) => <Link key={g.id} to={`/groups/${g.id}`}><StatusBadge tone="muted"><GroupIcon className="size-3" />{g.name}</StatusBadge></Link>)}</div>],
+              [t('vm.generation'), vm.generation != null ? `Gen ${vm.generation}` : '—'],
+              [t('vm.version'), vm.configurationVersion ?? '—'],
+              [t('vm.checkpoints'), <CheckpointIcon key="c" count={vm.checkpointCount} />],
               ['Hyper-V ID', <span key="i" className="font-mono text-xs">{vm.hyperVId}</span>],
             ]} />
           </Section>
@@ -154,6 +189,7 @@ export function VmPage() {
       <TabsContent value="settings" className="min-h-0">{tab === 'settings' && <VmSettings vm={vm} />}</TabsContent>
       <TabsContent value="hardware" className="min-h-0">{tab === 'hardware' && <VmHardware vm={vm} />}</TabsContent>
       <TabsContent value="checkpoints" className="min-h-0">{tab === 'checkpoints' && <VmCheckpoints vm={vm} />}</TabsContent>
+      <TabsContent value="backups" className="min-h-0">{tab === 'backups' && <VmBackups vm={vm} />}</TabsContent>
       <TabsContent value="events" className="min-h-0 overflow-auto p-4">
         <Section title={t('vm.history')}><EventsTable events={events.data ?? []} /></Section>
       </TabsContent>

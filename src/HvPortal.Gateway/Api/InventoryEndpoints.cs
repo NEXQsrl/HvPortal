@@ -92,6 +92,14 @@ public static class InventoryEndpoints
             canBrowseFiles = connected && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 3),
             vmGroupsSyncedAt = h.VmGroupsSyncedAt,
             vmGroupsSyncError = h.VmGroupsSyncError,
+            // Agent 0.7.0+ (protocol 9): host health, VM move, backups, new folders.
+            agent7 = connected && h.Access == HyperVAccessStatus.Ok && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 7),
+            // Folders the portal may use on the host (empty = not restricted; null = unknown, older agent).
+            storageFolders = StorageFoldersOf(h, facts),
+            storageFoldersEditable = h.ConnectionMode == HostConnectionMode.Remote,
+            backupStagingPath = h.BackupStagingPath,
+            updaterInstalled = h.AgentUpdaterInstalled,
+            lastUpdateResult = h.AgentLastUpdateResult,
             connectionMode = h.ConnectionMode.ToString(),
             managementAgentId = h.ManagementAgentId,
             managementAgentName,
@@ -100,6 +108,20 @@ public static class InventoryEndpoints
                 ? new { computerName = h.RemoteComputerName, userName = h.RemoteUserName, useHttps = h.RemoteUseHttps, credentialUpdatedAt = h.RemoteCredentialUpdatedAt }
                 : null,
         };
+    }
+
+    /// <summary>
+    /// Allowed storage folders: what the agent reports (decided on the host) or, for remote hosts, what the portal set.
+    /// Null when unknown (agent older than 0.7.0). Empty = not restricted.
+    /// </summary>
+    internal static IReadOnlyList<string>? StorageFoldersOf(ManagedHost h, HostFacts? facts = null)
+    {
+        if (h.ConnectionMode == HostConnectionMode.Remote)
+        {
+            return h.StorageFoldersJson is null ? [] : JsonSerializer.Deserialize<List<string>>(h.StorageFoldersJson) ?? [];
+        }
+        facts ??= h.HostFactsJson is null ? null : JsonSerializer.Deserialize<HostFacts>(h.HostFactsJson);
+        return facts?.StorageFolders;
     }
 
     private static async Task<Dictionary<Guid, string>> ManagementAgentNamesAsync(PortalDbContext db, CancellationToken ct) =>
@@ -318,6 +340,10 @@ public static class InventoryEndpoints
         // Templates are a matter of the host: created by who manages them there (agent 0.6.0+).
         var canTemplate = await access.HasAsync(uid, Permissions.TemplatesManage, ResourceRef.Host(v.HostId), ct);
         var canApplyCheckpoint = await access.HasAsync(uid, Permissions.VmCheckpointApply, r, ct);
+        var agent7 = connected && HostCapabilities.AgentAtLeast(host?.AgentVersion, 0, 7);
+        var canMigrate = await access.HasAsync(uid, Permissions.VmMigrate, r, ct);
+        var canBackup = await access.HasAsync(uid, Permissions.BackupRun, r, ct);
+        var canRestore = await access.HasAsync(uid, Permissions.BackupRestore, r, ct);
         var allowed = Enum.GetValues<VmPowerOperation>()
             .Where(op => VmPowerRules.IsAllowed(op, v.PowerState) && (VmPowerRules.IsDestructive(op) ? canForce : canPower))
             .Where(op => op is not (VmPowerOperation.Shutdown or VmPowerOperation.Restart) || v.ShutdownServiceAvailable == true)
@@ -371,6 +397,11 @@ public static class InventoryEndpoints
             canCheckpoint = canCheckpoint && !v.IsMissing,
             canTemplate = canTemplate && connected && !v.IsMissing && HostCapabilities.AgentAtLeast(host?.AgentVersion, 0, 6),
             canApplyCheckpoint = canApplyCheckpoint && !v.IsMissing,
+            // Agent 0.7.0+ on the VM's host.
+            canMigrate = canMigrate && agent7 && !v.IsMissing,
+            canBackup = canBackup && agent7 && !v.IsMissing,
+            // Restore points are kept by the portal: they can be listed (and restored) even when the VM is gone.
+            canRestore,
             destructiveOperations = Enum.GetValues<VmPowerOperation>().Where(VmPowerRules.IsDestructive).Select(o => o.ToString()),
         };
     }

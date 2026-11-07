@@ -360,6 +360,8 @@ public sealed class WmiHyperVHost : IHyperVHost
             Volumes = volumes.OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase).ToList(),
             NetworkAdapters = adapters,
             VirtualSwitches = switches.Order(StringComparer.OrdinalIgnoreCase).ToList(),
+            // Protocol 9: what the portal may use on this host (decided on the host, or in the portal for remote hosts).
+            StorageFolders = _target.IsLocal ? LocalStorageFolders.Folders : _target.StorageFolders,
         };
     }
 

@@ -79,6 +79,51 @@ public sealed class PowerShellOperationRunner
                 };
             }
         }
+        if (operation is HvOperation.NewFolder or HvOperation.ListBackupFiles or HvOperation.ReadBackupFile)
+        {
+            // Plain file-system work in-process: a new folder in the explorer, read-only browsing of an attached backup disk.
+            try
+            {
+                if (operation != HvOperation.NewFolder && !_target.IsLocal)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "not_supported: browsing backup files needs the agent installed on the host. Restore the disk to a VM instead." };
+                }
+                object result = operation switch
+                {
+                    HvOperation.NewFolder => HostFileService.NewFolder(HvOperations.FromElement<NewFolderRequest>(args)!, _files),
+                    HvOperation.ListBackupFiles => BackupFileService.List(HvOperations.FromElement<BackupFileListRequest>(args)!),
+                    _ => BackupFileService.Read(HvOperations.FromElement<BackupFileReadRequest>(args)!),
+                };
+                return new HvOperationOutcome { Ok = true, Result = HvOperations.ToElement(result) };
+            }
+            catch (Exception ex) when (ex is HostPathException or IOException or UnauthorizedAccessException
+                                           or System.Management.ManagementException or System.Runtime.InteropServices.COMException)
+            {
+                return new HvOperationOutcome
+                {
+                    Ok = false,
+                    Error = ex is UnauthorizedAccessException ? "access_denied: access denied for the agent service account." : ex.Message,
+                };
+            }
+        }
+        if (operation == HvOperation.MountBackupDisk && !_target.IsLocal)
+        {
+            return new HvOperationOutcome { Ok = false, Error = "not_supported: browsing backup files needs the agent installed on the host. Restore the disk to a VM instead." };
+        }
+        if (operation == HvOperation.MountBackupDisk && BackupMounts.Count >= BackupMounts.MaxMounts)
+        {
+            return new HvOperationOutcome { Ok = false, Error = $"too_many_mounts: {BackupMounts.MaxMounts} backup disks are already attached to this host. Close one first." };
+        }
+        if (operation == HvOperation.DismountBackupDisk)
+        {
+            // The disk to detach comes from the agent's own list, never from the request.
+            var reference = HvOperations.FromElement<BackupMountRef>(args)!;
+            if (BackupMounts.Remove(reference.MountId) is not { } mounted)
+            {
+                return new HvOperationOutcome { Ok = true, Result = HvOperations.ToElement(new { detached = false }) };
+            }
+            return await DismountAsync(mounted, ct);
+        }
         if (operation == HvOperation.BrowseFolders)
         {
             // Plain file-system listing: done in-process (no PowerShell, nothing modified).
@@ -99,12 +144,52 @@ public sealed class PowerShellOperationRunner
                 };
             }
         }
+        var outcome = await RunScriptAsync(operation, args, timeout, ct);
+        if (operation == HvOperation.MountBackupDisk && outcome is { Ok: true, Result: { } mountResult })
+        {
+            return RegisterMount(mountResult);
+        }
+        return outcome;
+    }
+
+    /// <summary>The script attached the disk: keep it in the agent's list (only its volumes can be browsed) and return the mount.</summary>
+    private static HvOperationOutcome RegisterMount(JsonElement result)
+    {
+        var path = result.TryGetProperty("diskPath", out var p) ? p.GetString() : null;
+        var staged = result.TryGetProperty("staged", out var s) && s.ValueKind == JsonValueKind.True;
+        var volumes = result.TryGetProperty("volumes", out var v) && v.ValueKind == JsonValueKind.Array
+            ? v.Deserialize<List<MountedVolume>>(AgentProtocol.Json) ?? [] : [];
+        // Only drive roots ("F:\") of fixed volumes are accepted as browsable roots.
+        volumes = volumes.Where(x => x.Root is { Length: 3 } r && char.IsAsciiLetter(r[0]) && r[1] == ':' && r[2] == '\\').ToList();
+        if (path is null)
+        {
+            return new HvOperationOutcome { Ok = false, Error = "Invalid output from the operations script (no disk path)." };
+        }
+        var entry = BackupMounts.Register(path, staged, volumes);
+        return new HvOperationOutcome
+        {
+            Ok = true,
+            Result = HvOperations.ToElement(new BackupMount(entry.MountId, volumes, entry.LastUsedUtc + BackupMounts.IdleLimit, staged)),
+            Applied = ["mounted"],
+        };
+    }
+
+    /// <summary>Detaches a disk attached by MountBackupDisk (and deletes the staged copy, when the agent made one).</summary>
+    internal async Task<HvOperationOutcome> DismountAsync(BackupMounts.Entry mounted, CancellationToken ct) =>
+        await RunScriptAsync(HvOperation.DismountBackupDisk, HvOperations.ToElement(new { diskPath = mounted.DiskPath, deleteFile = mounted.Staged }),
+            TimeSpan.FromMinutes(5), ct);
+
+    private async Task<HvOperationOutcome> RunScriptAsync(HvOperation operation, JsonElement? args, TimeSpan? timeout, CancellationToken ct)
+    {
         if (!File.Exists(_scriptPath) || (!_target.IsLocal && !File.Exists(_remoteLauncherPath)))
         {
             return new HvOperationOutcome { Ok = false, Error = "Operations script missing from the agent installation." };
         }
 
-        var request = JsonSerializer.Serialize(new { op = operation.ToString(), args }, AgentProtocol.Json);
+        // The allowed storage folders travel with every request (never from the gateway's arguments): the script checks
+        // them where it falls back to a default folder of the host (VM without location, new disk, restore).
+        var request = JsonSerializer.Serialize(new { op = operation.ToString(), args, storageFolders = _files.StorageFolders, storageError = _files.StorageError },
+            AgentProtocol.Json);
         if (!_target.IsLocal)
         {
             // The launcher receives the target (with the password) and the unchanged request on stdin: nothing on the command line.
@@ -202,7 +287,103 @@ public sealed class PowerShellOperationRunner
                 case HvOperation.ListHostDisks:
                 case HvOperation.ListVmGroups:
                 case HvOperation.ListNetAdapters:
+                case HvOperation.GetHostHealth:
                     return null;
+                case HvOperation.NewFolder:
+                    return HvOperations.FromElement<NewFolderRequest>(args) is { } nf ? OperationValidation.Validate(nf) : "invalid_arguments";
+                case HvOperation.MoveVm:
+                    // The destination folder is on the other host: the gateway checks it against that host's allowed folders.
+                    return HvOperations.FromElement<MoveVmRequest>(args) is { } mv ? OperationValidation.Validate(mv) : "invalid_arguments";
+                case HvOperation.MoveVmStorage:
+                    if (HvOperations.FromElement<MoveVmStorageRequest>(args) is not { } ms)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(ms) is { } invalidMove)
+                    {
+                        return invalidMove;
+                    }
+                    HostFolderBrowser.CheckFolder(ms.DestinationPath, mustExist: false, files);
+                    return null;
+                case HvOperation.GetBackupReadiness:
+                    if (HvOperations.FromElement<BackupReadinessRequest>(args) is not { } ready)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(ready) is { } invalidReady)
+                    {
+                        return invalidReady;
+                    }
+                    CheckBackupTarget(ready.Target, files);
+                    return null;
+                case HvOperation.BackupVm:
+                    if (HvOperations.FromElement<BackupVmRequest>(args) is not { } bk)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(bk) is { } invalidBackup)
+                    {
+                        return invalidBackup;
+                    }
+                    CheckBackupTarget(bk.Target, files);
+                    return null;
+                case HvOperation.VerifyBackup:
+                case HvOperation.RemoveBackup:
+                case HvOperation.ListBackups:
+                    if (HvOperations.FromElement<BackupPointRequest>(args) is not { } point)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(point, folderRequired: operation != HvOperation.ListBackups) is { } invalidPoint)
+                    {
+                        return invalidPoint;
+                    }
+                    CheckBackupTarget(point.Target, files);
+                    return null;
+                case HvOperation.RestoreBackup:
+                    if (HvOperations.FromElement<RestoreBackupRequest>(args) is not { } restore)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(restore) is { } invalidRestore)
+                    {
+                        return invalidRestore;
+                    }
+                    CheckBackupTarget(restore.Source, files);
+                    if (restore.Location is { } restoreLocation)
+                    {
+                        HostFolderBrowser.CheckFolder(restoreLocation, mustExist: false, files);
+                    }
+                    return null;
+                case HvOperation.RestoreBackupDisk:
+                    if (HvOperations.FromElement<RestoreDiskRequest>(args) is not { } disk)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(disk) is { } invalidDisk)
+                    {
+                        return invalidDisk;
+                    }
+                    CheckBackupTarget(disk.Source, files);
+                    HostFolderBrowser.CheckFolder(disk.DestinationFolder, mustExist: false, files);
+                    return null;
+                case HvOperation.MountBackupDisk:
+                    if (HvOperations.FromElement<MountBackupDiskRequest>(args) is not { } mount)
+                    {
+                        return "invalid_arguments";
+                    }
+                    if (OperationValidation.Validate(mount) is { } invalidMount)
+                    {
+                        return invalidMount;
+                    }
+                    CheckBackupTarget(mount.Source, files);
+                    return null;
+                case HvOperation.DismountBackupDisk:
+                    return HvOperations.FromElement<BackupMountRef>(args) is { MountId: var mid } && mid != Guid.Empty ? null : "invalid_mount";
+                case HvOperation.ListBackupFiles:
+                    return HvOperations.FromElement<BackupFileListRequest>(args) is { } lb ? OperationValidation.Validate(lb) : "invalid_arguments";
+                case HvOperation.ReadBackupFile:
+                    return HvOperations.FromElement<BackupFileReadRequest>(args) is { } rb ? OperationValidation.Validate(rb) : "invalid_arguments";
                 case HvOperation.NewSwitch:
                     return HvOperations.FromElement<NewSwitchRequest>(args) is { } ns ? OperationValidation.Validate(ns) : "invalid_arguments";
                 case HvOperation.RemoveSwitch:
@@ -224,6 +405,10 @@ public sealed class PowerShellOperationRunner
                     {
                         HostFolderBrowser.CheckFolder(diskFolder, mustExist: false, files);
                     }
+                    if (c.DvdIsoPath is { Length: > 0 } dvd)
+                    {
+                        (files ?? HostFileAccess.Local).CheckAllowed(Path.GetDirectoryName(dvd) ?? dvd);
+                    }
                     return null;
                 case HvOperation.NewVm:
                     if (HvOperations.FromElement<NewVmRequest>(args) is not { } n)
@@ -237,6 +422,10 @@ public sealed class PowerShellOperationRunner
                     if (n.Location is { } location)
                     {
                         HostFolderBrowser.CheckFolder(location, mustExist: false, files);
+                    }
+                    if (n.IsoPath is { Length: > 0 } iso)
+                    {
+                        (files ?? HostFileAccess.Local).CheckAllowed(Path.GetDirectoryName(iso) ?? iso);
                     }
                     foreach (var root in n.TemplateRoots)
                     {
@@ -290,7 +479,15 @@ public sealed class PowerShellOperationRunner
                 case HvOperation.WriteFileAbort:
                     return HvOperations.FromElement<FileWriteAbortRequest>(args) is { UploadId: var ua } && ua != Guid.Empty ? null : "invalid_arguments";
                 case HvOperation.ListIsos:
-                    return HvOperations.FromElement<IsoListRequest>(args) is { } i && i.Roots.Count <= 16 && i.Roots.All(r => r.Length <= 260) ? null : "invalid_iso_roots";
+                    if (HvOperations.FromElement<IsoListRequest>(args) is not { } i || i.Roots.Count > 16 || i.Roots.Any(r => r.Length > 260))
+                    {
+                        return "invalid_iso_roots";
+                    }
+                    foreach (var root in i.Roots.Where(HostPaths.IsValidLocalFolder))
+                    {
+                        (files ?? HostFileAccess.Local).CheckAllowed(root);
+                    }
+                    return null;
                 case HvOperation.ListCheckpoints:
                     return HvOperations.FromElement<CheckpointRequest>(args) is { VmId: var v } && v != Guid.Empty ? null : "invalid_vm";
                 case HvOperation.NewCheckpoint:
@@ -309,6 +506,23 @@ public sealed class PowerShellOperationRunner
         catch (HostPathException ex)
         {
             return "invalid_location (" + ex.Message + ")";
+        }
+    }
+
+    /// <summary>A repository on a host folder (and the staging folder) follows the folder rules of the host; shares are not host folders.</summary>
+    private static void CheckBackupTarget(BackupTarget? target, HostFileAccess? files)
+    {
+        if (target is null)
+        {
+            return;
+        }
+        if (!target.IsShare)
+        {
+            HostFolderBrowser.CheckFolder(target.Path, mustExist: false, files);
+        }
+        if (target.StagingPath is { } staging)
+        {
+            HostFolderBrowser.CheckFolder(staging, mustExist: false, files);
         }
     }
 

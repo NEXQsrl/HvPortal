@@ -98,6 +98,7 @@ public static partial class OperationValidation
             if (n.VlanId is < 0 or > 4094) return "invalid_vlan";
         }
         if (c.AddNetworkAdapterSwitch is { Length: > 0 } add && !IsValidSwitchName(add)) return "invalid_switch_name";
+        if (!IsValidVlanId(c.AddNetworkAdapterVlanId) || (c.AddNetworkAdapterVlanId is not null && c.AddNetworkAdapterSwitch is not { Length: > 0 })) return "invalid_vlan";
         if (c.NewDisk is { } nd && (nd.SizeGb < 1 || nd.SizeGb > MaxDiskGb)) return "invalid_disk_size";
         if (c.NewDisk?.Folder is { } folder && HostPaths.ValidateLocation(folder) is { } badFolder) return badFolder;
         if (c.ExpandDisk is { } ed && (string.IsNullOrWhiteSpace(ed.Path) || ed.Path.Length > 1024 || ed.NewSizeGb < 1 || ed.NewSizeGb > MaxDiskGb)) return "invalid_disk_size";
@@ -115,6 +116,7 @@ public static partial class OperationValidation
         if (r.DynamicMemory && r.MemoryMaximumMb is { } max && max < r.MemoryStartupMb) return "memory_maximum_below_startup";
         if (r.DiskSizeGb is < 0 or > MaxDiskGb) return "invalid_disk_size";
         if (r.SwitchName is { Length: > 0 } sw && !IsValidSwitchName(sw)) return "invalid_switch_name";
+        if (!IsValidVlanId(r.VlanId) || (r.VlanId is not null && r.SwitchName is not { Length: > 0 })) return "invalid_vlan";
         if (r.IsoPath is { Length: > 0 } iso && !IsValidIsoPath(iso)) return "invalid_iso_path";
         if (r.SecureBootTemplate is { } t && t != "Off" && !SecureBootTemplates.Contains(t)) return "invalid_secure_boot_template";
         if (r.Generation == 1 && (r.EnableTpm || (r.SecureBootTemplate is { } t1 && t1 != "Off"))) return "gen1_no_secure_boot";

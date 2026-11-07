@@ -30,6 +30,12 @@ public interface IAgentDispatcher
     Task ReconfigureManagementAgentAsync(Guid agentId, CancellationToken ct);
 
     void DisconnectManagementAgent(Guid agentId, string reason);
+
+    /// <summary>Protocol 9: a command for a management agent itself (UpdateAgent).</summary>
+    Task<AgentCommandResult> SendToManagementAgentAsync(Guid agentId, AgentCommand command, TimeSpan timeout, CancellationToken ct);
+
+    /// <summary>Protocol and version announced by the connected agent of a host, or by a connected management agent; null when not connected.</summary>
+    (int Protocol, string? Version)? AgentOf(Guid hostOrAgentId);
 }
 
 public sealed class HostNotConnectedException(Guid hostId) : Exception($"Host {hostId} is not connected.")

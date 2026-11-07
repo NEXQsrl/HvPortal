@@ -35,16 +35,81 @@ function Set-PrivateAcl([string]$Path, [string[]]$ExtraAccounts, [switch]$ReadOn
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
+function Stop-HvPortalService([string]$ServiceName, [int]$Seconds = 120) {
+    # Stop-Service returns as soon as the service controller reports "Stopped", but the process can still be running
+    # its last shutdown steps and keep its files open (e.g. clrjit.dll): replacing the binaries at that moment fails
+    # with "Access denied". Wait for the process itself to end (and end it if it hangs) before touching the files.
+    $svc = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
+    if (-not $svc) { return }
+    $processId = [int]$svc.ProcessId
+    $exeName = if ($svc.PathName) { [IO.Path]::GetFileNameWithoutExtension(($svc.PathName -replace '"', '').Trim()) } else { $null }
+    if ($svc.State -ne 'Stopped') {
+        Write-Host "Stopping $ServiceName..."
+        Stop-Service -Name $ServiceName -Force -WarningAction SilentlyContinue
+    }
+    if ($processId -le 0) { return }
+    $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    # Never wait for (or end) a different program that reused the process id.
+    if (-not $proc -or ($exeName -and $proc.ProcessName -ne $exeName)) { return }
+    if (-not $proc.WaitForExit($Seconds * 1000)) {
+        Write-Warning "$ServiceName (PID $processId) did not exit within $Seconds s after stopping: ending it."
+        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+        $proc.WaitForExit(15000) | Out-Null
+    }
+}
+
+function Clear-DirectoryContent([string]$Path, [int]$Attempts = 10) {
+    # Files of a process that has just exited can stay locked for a few seconds (antivirus scan, image unmapping):
+    # retry instead of failing the first time.
+    for ($attempt = 1; ; $attempt++) {
+        try {
+            Get-ChildItem -LiteralPath $Path -Force | Remove-Item -Recurse -Force -ErrorAction Stop
+            return
+        } catch {
+            if ($attempt -ge $Attempts) { throw }
+            Write-Warning "Files in $Path are still in use (attempt $attempt/$Attempts): $($_.Exception.Message) Retrying in 3 s..."
+            Start-Sleep -Seconds 3
+        }
+    }
+}
+
 function Install-ServiceBinaries([string]$Source, [string]$InstallPath, [string]$ServiceName) {
     $backup = $null
     if (Test-Path -LiteralPath $InstallPath) {
         $backup = "$InstallPath.bak-$(Get-Date -Format yyyyMMddHHmmss)"
-        Copy-Item -LiteralPath $InstallPath -Destination $backup -Recurse
+        try {
+            Copy-Item -LiteralPath $InstallPath -Destination $backup -Recurse -ErrorAction Stop
+        } catch {
+            # Nothing has been replaced yet: start the current version again instead of leaving the service stopped.
+            $err = $_
+            Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            throw "Upgrade not applied: the current files could not be backed up to ${backup}: $($err.Exception.Message) The current version is unchanged."
+        }
         Write-Host "Previous version backed up to $backup (rollback: Restore-HvPortalBackup)."
-        Get-ChildItem -LiteralPath $InstallPath -Force | Remove-Item -Recurse -Force
-    } else {
-        New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
+        try {
+            Clear-DirectoryContent -Path $InstallPath
+            Copy-Item -Path (Join-Path $Source '*') -Destination $InstallPath -Recurse -Force -ErrorAction Stop
+        } catch {
+            # Never leave a half-replaced installation behind: put the previous version back and start it again.
+            $err = $_
+            Write-Warning "Could not replace the files in ${InstallPath}: $($err.Exception.Message) Restoring the previous version."
+            $restored = $false
+            try {
+                Clear-DirectoryContent -Path $InstallPath
+                Copy-Item -Path (Join-Path $backup '*') -Destination $InstallPath -Recurse -Force -ErrorAction Stop
+                $restored = $true
+                Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            } catch {
+                Write-Warning "Automatic restore failed: $($_.Exception.Message)"
+            }
+            if ($restored) {
+                throw "Upgrade not applied: $($err.Exception.Message) The previous version was put back (copy in $backup)."
+            }
+            throw "Upgrade not applied and the previous version could NOT be put back: $($err.Exception.Message) Restore it manually from $backup (Restore-HvPortalBackup), then start $ServiceName."
+        }
+        return $backup
     }
+    New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
     Copy-Item -Path (Join-Path $Source '*') -Destination $InstallPath -Recurse -Force
     return $backup
 }
@@ -184,6 +249,75 @@ function Register-EventSource([string]$Source) {
     }
 }
 
+# Top-level folders never usable by the portal (same list as HostPaths.BlockedRootFolders in the agent).
+$script:HvPortalBlockedRootFolders = @('Windows', 'Users', 'User', 'inetpub', 'VBRCatalog', 'ovhupd', 'Packages', 'PerfLogs', 'Program Files',
+    'Program Files (x86)', 'ProgramData', 'Recovery', 'Boot', 'System Volume Information', 'Documents and Settings', 'Config.Msi', 'MSOCache',
+    'OneDriveTemp', 'Intel', 'AMD', 'NVIDIA')
+
+function Test-StorageFolders([string[]]$Folders) {
+    # Returns the normalized list ('' or nothing = no restriction). Local folders of fixed drives only, no system folders.
+    $list = New-Object System.Collections.Generic.List[string]
+    foreach ($raw in @($Folders | ForEach-Object { if ($_) { $_.Split(',;') } } | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+        if ($raw -notmatch '^[A-Za-z]:\\' -or $raw -match '[*?"<>|]' -or $raw.Contains('..') -or $raw.Length -gt 200) {
+            throw "Invalid storage folder '$raw': use local folders such as D:\VMs."
+        }
+        $f = $raw.Substring(0, 1).ToUpperInvariant() + $raw.Substring(1)
+        if ($f.Length -gt 3) { $f = $f.TrimEnd('\') }
+        $segments = $f.Split('\') | Where-Object { $_ }
+        if ($segments.Count -gt 1 -and ($HvPortalBlockedRootFolders -contains $segments[1] -or $segments[1].StartsWith('$'))) {
+            throw "Storage folder '$f' is (inside) a system folder."
+        }
+        $drive = New-Object System.IO.DriveInfo $f.Substring(0, 3)
+        if ($drive.DriveType -ne 'Fixed') { throw "Storage folder '$f' is not on a local fixed drive." }
+        if ($list -contains $f) { continue }
+        $list.Add($f)
+    }
+    if ($list.Count -gt 16) { throw 'At most 16 storage folders.' }
+    return , $list.ToArray()
+}
+
+function Set-StorageFolders([string]$DataPath, [string[]]$Folders) {
+    $file = Join-Path $DataPath 'storage.json'
+    if (-not $Folders -or $Folders.Count -eq 0) {
+        if (Test-Path $file) { Remove-Item $file -Force }
+        return
+    }
+    foreach ($f in $Folders) {
+        if (-not (Test-Path -LiteralPath $f)) { New-Item -ItemType Directory -Path $f -Force | Out-Null; Write-Host "Created storage folder $f." }
+    }
+    @{ folders = @($Folders) } | ConvertTo-Json | Set-Content -LiteralPath $file -Encoding UTF8
+}
+
+$script:HvPortalUpdaterTask = 'HvPortal Agent Update'
+
+function Register-AgentUpdater([string]$SourceDirectory, [string[]]$ServiceSids) {
+    # SYSTEM task running the fixed updater script from Program Files; the agent service account may only run it.
+    $script = Join-Path $SourceDirectory 'Update-HvPortalAgent.ps1'
+    if (-not (Test-Path $script)) { Write-Warning 'Update-HvPortalAgent.ps1 not in this package: updates from the portal are not available.'; return }
+    $dir = Join-Path $env:ProgramFiles 'HvPortal\Updater'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    Copy-Item $script $dir -Force
+    Copy-Item (Join-Path $SourceDirectory 'Common.ps1') $dir -Force
+    Set-PrivateAcl -Path $dir -ExtraAccounts @() -ReadOnlyForExtra
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $action = New-ScheduledTaskAction -Execute $ps -Argument "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$(Join-Path $dir 'Update-HvPortalAgent.ps1')`""
+    $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $HvPortalUpdaterTask -TaskPath '\HvPortal\' -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+    # Read + execute (start) for the service account; full control only for SYSTEM and Administrators.
+    $sddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)' + (($ServiceSids | ForEach-Object { "(A;;GRGX;;;$_)" }) -join '')
+    $scheduler = New-Object -ComObject 'Schedule.Service'
+    $scheduler.Connect()
+    $scheduler.GetFolder('\HvPortal').GetTask($HvPortalUpdaterTask).SetSecurityDescriptor($sddl, 0)
+    Write-Host 'Updater task registered: signed agent updates can be installed from the portal.'
+}
+
+function Unregister-AgentUpdater {
+    Get-ScheduledTask -TaskName $HvPortalUpdaterTask -TaskPath '\HvPortal\' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
+    $dir = Join-Path $env:ProgramFiles 'HvPortal\Updater'
+    if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+}
+
 function Wait-ServiceRunning([string]$ServiceName, [int]$Seconds = 60) {
     $svc = Get-Service -Name $ServiceName
     $svc.Start()
@@ -193,8 +327,8 @@ function Wait-ServiceRunning([string]$ServiceName, [int]$Seconds = 60) {
 }
 
 function Restore-HvPortalBackup([string]$ServiceName, [string]$InstallPath, [string]$Backup) {
-    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-    Get-ChildItem -LiteralPath $InstallPath -Force | Remove-Item -Recurse -Force
+    Stop-HvPortalService -ServiceName $ServiceName
+    Clear-DirectoryContent -Path $InstallPath
     Copy-Item -Path (Join-Path $Backup '*') -Destination $InstallPath -Recurse -Force
     Start-Service -Name $ServiceName
     Write-Host "Restored $InstallPath from $Backup."

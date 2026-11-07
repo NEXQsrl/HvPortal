@@ -33,11 +33,12 @@ public sealed class GatewayChannelService : BackgroundService
     private readonly ILogger<GatewayChannelService> _logger;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly RemoteTargetRegistry _targets;
+    private readonly AgentUpdater _updater;
     private AgentRole _role = AgentRole.Host;
 
     public GatewayChannelService(AgentIdentityStore store, CommandExecutor executor, IHyperVHost host,
         Microsoft.Extensions.Options.IOptions<AgentRuntimeOptions> options, ILogger<GatewayChannelService> logger,
-        IHostApplicationLifetime lifetime, RemoteTargetRegistry targets)
+        IHostApplicationLifetime lifetime, RemoteTargetRegistry targets, AgentUpdater updater)
     {
         _store = store;
         _executor = executor;
@@ -46,6 +47,7 @@ public sealed class GatewayChannelService : BackgroundService
         _logger = logger;
         _lifetime = lifetime;
         _targets = targets;
+        _updater = updater;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -127,6 +129,8 @@ public sealed class GatewayChannelService : BackgroundService
             MachineName = Environment.MachineName,
             OsVersion = Environment.OSVersion.VersionString,
             Role = _role,
+            UpdaterInstalled = AgentUpdater.UpdaterInstalled(),
+            LastUpdateResult = AgentUpdater.LastResult(_store.DataDirectory),
         }), sessionCts.Token);
 
         var inventoryLoop = InventoryLoopAsync(sender, sessionCts.Token);
@@ -353,6 +357,18 @@ public sealed class GatewayChannelService : BackgroundService
                             Message = $"Command not supported by agent protocol {AgentProtocol.Version}. Update the agent.",
                         }), ct);
                     }
+                    break;
+                }
+                if (cmd.Kind == AgentCommandKind.UpdateAgent)
+                {
+                    // About this agent itself (host or management agent): never routed to a remote host.
+                    _ = Task.Run(async () =>
+                    {
+                        var result = cmd.TargetHostId is null
+                            ? await _updater.RunAsync(cmd, ct)
+                            : new AgentCommandResult { CommandId = cmd.CommandId, Status = AgentCommandStatus.Rejected, Message = "An agent update is not for a remote host." };
+                        await sender.SendAsync(AgentEnvelope.Create(AgentMessageType.CommandResult, env.CorrelationId, result), ct);
+                    }, ct);
                     break;
                 }
                 var (executor, host, target, refusal) = Route(_role, cmd, _executor, _host, _targets);

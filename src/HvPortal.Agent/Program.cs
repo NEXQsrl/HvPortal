@@ -9,6 +9,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 HvPortal.Shared.SecureFileSystem.ServiceName = "HvPortalAgent";
 var verb = args.Length > 0 ? args[0].ToLowerInvariant() : "run";
 var store = new AgentIdentityStore(AgentIdentityStore.DefaultDataDirectory());
+// Allowed storage folders of this host (Install-Agent -StorageFolders) and the list of attached backup disks.
+LocalStorageFolders.Load(store.DataDirectory);
+BackupMounts.Configure(store.DataDirectory);
 
 switch (verb)
 {
@@ -30,6 +33,8 @@ switch (verb)
             Console.WriteLine($"Enrolled:     {st.EnrolledAtUtc:u}");
             Console.WriteLine($"Certificate:  {c?.Thumbprint} valid until {c?.NotAfter.ToUniversalTime():u}");
         }
+        Console.WriteLine($"Storage:      {(LocalStorageFolders.LoadError ?? (LocalStorageFolders.Folders.Count == 0 ? "all local fixed drives (system folders excluded)" : string.Join(", ", LocalStorageFolders.Folders)))}");
+        Console.WriteLine($"Updates:      {(AgentUpdater.UpdaterInstalled() ? "updater task registered (updates from the portal possible for signed builds)" : "updater task not registered")}");
         return 0;
 
     case "inventory":
@@ -61,7 +66,9 @@ builder.Services.AddSingleton<PowerShellOperationRunner>();
 builder.Services.AddSingleton<ConsoleService>();
 builder.Services.AddSingleton<CommandExecutor>();
 builder.Services.AddSingleton<RemoteTargetRegistry>();
+builder.Services.AddSingleton<AgentUpdater>();
 builder.Services.AddHostedService<GatewayChannelService>();
+builder.Services.AddHostedService<BackupMountJanitor>();
 var app = builder.Build();
 await app.RunAsync();
 return 0;

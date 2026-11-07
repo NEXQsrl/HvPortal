@@ -5,6 +5,7 @@ import { get } from '@/api/client';
 import type { Job } from '@/api/types';
 import { rowLink } from '@/components/actions';
 import { Empty, ErrorAlert, HostIcon, Loading, Meter, PageHeader, Section, StatCard, VmIcon } from '@/components/common';
+import { OutdatedAgentsNotice } from '@/components/infra/AgentUpdates';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { useOps } from '@/components/ops/OperationsProvider';
 import { JobTable } from '@/components/tables';
@@ -47,6 +48,7 @@ export function DashboardPage() {
         </>} />
       <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
         <ErrorAlert error={inv.error} />
+        <OutdatedAgentsNotice />
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard icon={<Server className="size-3.5" />} label={`${t('dash.hosts')} ${t('dash.connected')}`} value={`${h.filter((x) => x.connected).length}/${h.length}`} />
           <StatCard icon={<Monitor className="size-3.5" />} label={`${t('dash.vms')} ${t('dash.running')}`} value={`${v.filter((x) => x.powerState === 'Running').length}/${v.length}`} />

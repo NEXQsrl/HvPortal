@@ -54,7 +54,7 @@ public static class VmOperationsEndpoints
 
     // ------------------------------------------------------------------ helpers
 
-    private static async Task<(JsonElement? Result, IResult? Error)> QueryAsync(IAgentDispatcher agents, Guid hostId, HvOperation op, object args,
+    internal static async Task<(JsonElement? Result, IResult? Error)> QueryAsync(IAgentDispatcher agents, Guid hostId, HvOperation op, object args,
         Guid? hyperVId, CancellationToken ct, int timeoutSeconds = 60)
     {
         if (!agents.IsConnected(hostId))
@@ -99,7 +99,7 @@ public static class VmOperationsEndpoints
             ? vm
             : null;
 
-    private static bool IsFresh(ManagedHost host, IAgentDispatcher agents, TimeProvider time) =>
+    internal static bool IsFresh(ManagedHost host, IAgentDispatcher agents, TimeProvider time) =>
         agents.IsConnected(host.Id) && host.LastInventoryAt is { } at && time.GetUtcNow() - at <= InventoryEndpoints.StaleAfter;
 
     internal static string? IdempotencyKey(HttpContext http, string? fromBody)
@@ -108,7 +108,7 @@ public static class VmOperationsEndpoints
         return key is not null && !ApiSupport.IdempotencyKeyRegex().IsMatch(key) ? "!" : key;
     }
 
-    private static List<string> SwitchNames(ManagedHost host)
+    internal static List<string> SwitchNames(ManagedHost host)
     {
         if (host.HostFactsJson is null)
         {
@@ -118,7 +118,7 @@ public static class VmOperationsEndpoints
         return facts?.VirtualSwitches.Where(n => n.Length > 0).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList() ?? [];
     }
 
-    private static async Task<IResult> QueueAsync(HttpContext http, JobService jobs, JobService.OperationJobSpec spec, string? idempotencyKey,
+    internal static async Task<IResult> QueueAsync(HttpContext http, JobService jobs, JobService.OperationJobSpec spec, string? idempotencyKey,
         string auditAction, object auditDetails)
     {
         try
@@ -167,6 +167,10 @@ public static class VmOperationsEndpoints
             },
             requiresOff = RequiresOffFields,
             switches = SwitchNames(host),
+            // Networks of the portal on this host (switch + VLAN): choosing one sets both on the adapter (agent 0.7.0+ for a new adapter).
+            networks = await db.PortalNetworks.AsNoTracking().Where(n => n.HostId == host.Id).OrderBy(n => n.Name)
+                .Select(n => new { n.Id, n.Name, n.SwitchName, n.VlanId }).ToListAsync(http.RequestAborted),
+            vlanOnAdd = agents.ProtocolVersionOf(host.Id) >= 9,
             isoLibrary = OperationPolicy.IsoRoots(host),
             options = new
             {
@@ -197,6 +201,17 @@ public static class VmOperationsEndpoints
             NewName = string.IsNullOrWhiteSpace(req.NewName) || req.NewName == vm.Name ? null : req.NewName.Trim(),
             NewDisk = req.NewDisk is null ? null : req.NewDisk with { Folder = null },
         };
+        // Networks of the portal: their switch and VLAN replace what the client sent for those adapters (ADR-030).
+        var (networkError, withNetworks) = await Networks.NetworkRules.ResolveAsync(db, host.Id, change, http.RequestAborted);
+        if (networkError is { } ne)
+        {
+            return ApiSupport.BadRequest(ne.Code, ne.Message);
+        }
+        change = withNetworks;
+        if (change.AddNetworkAdapterVlanId is not null && agents.IsConnected(host.Id) && agents.ProtocolVersionOf(host.Id) < 9)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Adding an adapter on a network with a VLAN needs agent 0.7.0 or later on this host. Update the agent.");
+        }
         var permissions = OperationPolicy.PermissionsFor(change);
         if (permissions.Count == 0)
         {
@@ -427,13 +442,24 @@ public static class VmOperationsEndpoints
         var onHost = await access.HasAsync(http.User.UserId(), Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted);
         var seen = onHost ? null : await access.FilterVmsAsync(http.User.UserId(), Permissions.InventoryRead, hostVms.Select(v => v.Id), http.RequestAborted);
         var existingNames = hostVms.Where(v => seen is null || seen.Contains(v.Id)).Select(v => v.Name).ToList();
+        var allowedSwitches = folder?.Switches ?? SwitchNames(host);
+        // Storage folders of the host (agent 0.7.0+): the VM must go inside them, so the wizard proposes them; the
+        // locations of a folder's limits count only where they are inside them (the agent refuses the others).
+        var hostFolders = InventoryEndpoints.StorageFoldersOf(host) ?? [];
+        var storageRoots = folder?.StorageRoots is { Count: > 0 } folderRoots
+            ? folderRoots.Where(r => hostFolders.Count == 0 || StorageFolderRules.IsInside(r, hostFolders)).ToList()
+            : hostFolders.ToList();
         return Results.Ok(new
         {
             defaults,
+            // Networks of the portal (switch + VLAN) on the switches the user may use.
+            networks = (await db.PortalNetworks.AsNoTracking().Where(n => n.HostId == id).OrderBy(n => n.Name).ToListAsync(http.RequestAborted))
+                .Where(n => allowedSwitches.Contains(n.SwitchName, StringComparer.Ordinal)).Select(n => new { n.Id, n.Name, n.SwitchName, n.VlanId }),
+            vlanSupported = agents.ProtocolVersionOf(id) >= 9,
             // In a folder: only the networks and the storage paths its limits allow (storageRoots empty = no restriction).
             switches = folder?.Switches ?? SwitchNames(host),
             networksRestricted = folder?.NetworksRestricted ?? false,
-            storageRoots = folder?.StorageRoots ?? [],
+            storageRoots,
             isoLibrary = OperationPolicy.IsoRoots(host),
             existingNames,
             options = new
@@ -798,6 +824,17 @@ public static class VmOperationsEndpoints
         {
             spec = Templates.TemplateRules.WithoutTemplate(spec);
         }
+        // The network of the wizard (switch + VLAN, ADR-030); checked by the folder limits below like any switch.
+        var (networkError, withNetwork) = await Networks.NetworkRules.ResolveAsync(db, id, spec, http.RequestAborted);
+        if (networkError is { } ne)
+        {
+            return ApiSupport.BadRequest(ne.Code, ne.Message);
+        }
+        spec = withNetwork;
+        if (spec.VlanId is not null && agents.IsConnected(id) && agents.ProtocolVersionOf(id) < 9)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Creating a VM on a network with a VLAN needs agent 0.7.0 or later on this host. Update the agent.");
+        }
         var extra = new List<string>();
         if (req.GroupId is { } groupId)
         {
@@ -855,7 +892,7 @@ public static class VmOperationsEndpoints
         var summary = new
         {
             spec.Name, template = template?.Name, spec.Generation, spec.ProcessorCount, spec.MemoryStartupMb, spec.DynamicMemory, spec.DiskSizeGb, spec.DiskFixed,
-            spec.SwitchName, spec.IsoPath, spec.SecureBootTemplate, spec.EnableTpm, spec.StartAfterCreate, spec.Location, req.GroupId,
+            spec.SwitchName, spec.VlanId, spec.NetworkId, spec.IsoPath, spec.SecureBootTemplate, spec.EnableTpm, spec.StartAfterCreate, spec.Location, req.GroupId,
         };
         return await QueueAsync(http, jobs, new JobService.OperationJobSpec(JobService.CreateJobType, template is null ? "New" : "FromTemplate", ScopeType.Host, id,
             spec.Name, id, Permissions.VmCreate, new JobService.OperationParameters(HvOperations.ToElement(spec), req.GroupId, extra), timeout,

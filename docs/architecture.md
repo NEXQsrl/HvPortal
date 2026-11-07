@@ -6,8 +6,10 @@
 ┌────────────── Management server (or a Hyper-V host, or a management VM) ─────────────┐
 │  HvPortal.Gateway  — Windows service, NT SERVICE\HvPortalGateway (virtual account)      │
 │   ├─ Kestrel :8443  browser UI + REST API (/api/v1) + SignalR (/hubs/events)            │
-│   ├─ Kestrel :8444  agent endpoints only (/agent/v1: ca, enroll, channel) — mTLS        │
+│   ├─ Kestrel :8444  agent endpoints only (/agent/v1: ca, enroll, channel, package) — mTLS │
 │   ├─ Modules: Auth/MFA · Sessions · RBAC · Groups · Inventory · Jobs · Console · Audit · PKI │
+│   ├─ v0.7: Networks · VmBackup (repositories, jobs, scheduler, file restore) ·          │
+│   │        notifications (SMTP, webhooks) · API tokens (/api/v1/public) · agent updates  │
 │   ├─ SQLite (EF Core migrations)  ·  key ring (DPAPI-wrapped, exportable)  ·  ASP.NET DP │
 │   └─ Admin CLI (same exe): recovery tokens, key export/import/rotation, audit verify     │
 └────────────────────────────────────────────────────────────────────────────────────────┘
@@ -18,13 +20,19 @@
 │   ├─ CommandExecutor: closed set of typed commands, per-VM serialization, dedup by id   │
 │   ├─ WmiHyperVHost: root\virtualization\v2 + root\cimv2 (System.Management)            │
 │   ├─ ConsoleService: screen capture + keyboard/mouse injection (WMI, per-VM session)    │
-│   └─ PowerShellOperationRunner → Ops\HvPortal.Ops.ps1 (Hyper-V module, fixed script)   │
+│   ├─ PowerShellOperationRunner → Ops\HvPortal.Ops.ps1 (Hyper-V module, fixed script)   │
+│   ├─ LocalStorageFolders (storage.json) · BackupMounts + BackupMountJanitor (v0.7)      │
+│   └─ AgentUpdater (v0.7) → schtasks /Run "\HvPortal\HvPortal Agent Update"              │
+│  Scheduled task (SYSTEM) → Program Files\HvPortal\Updater\Update-HvPortalAgent.ps1:     │
+│   checks the signed catalog of the package against the installed agent's signer        │
 └────────────────────────────────────────────────────────────────────────────────────────┘
+            │ SMB (v0.7): restore points in a host folder, a domain share or a NAS share
 ```
 
 The control plane is a **modular monolith**: one process, modules separated by namespace and by DI boundaries
-(`Agents`, `Api`, `Audit`, `Authorization`, `Bootstrap`, `Crypto`, `Data`, `Hosting`, `Jobs`, `Pki`, `Realtime`, `Security`,
-`VmConsole`).
+(`Agents`, `Api`, `Audit`, `Authorization`, `Backup` (portal backup), `Bootstrap`, `Configuration`, `Crypto`, `Data`,
+`Hosting`, `Jobs`, `Networks`, `Pki`, `Quotas`, `Realtime`, `Security`, `Templates`, `VmBackup` (VM backups,
+notifications, API tokens), `VmConsole`, `VmGroups`).
 Privileged work happens only in the agent. Same-server installations still run two services and two identities.
 
 **Management agents (ADR-022, optional).** The same agent installed with `-Management` on a server without Hyper-V
@@ -69,12 +77,39 @@ one `WmiHyperVHost`/console/operations runner per target (WMI/DCOM with credenti
 Creation (`POST /hosts/{id}/vms`) and checkpoints follow the same path; creation is serialized per host and, when a
 group was requested, the created VM is placed after it appears in inventory.
 
+## Request flow: scheduled VM backup (v0.7.0, ADR-031)
+
+1. `BackupScheduler` (every 20 s) finds a due backup job, resolves its VMs (VMs + groups with sub-groups) and creates a
+   run: one `BackupPoint` (`Creating`, folder `<vm key>\<point id>`) and one persistent job `backup.vm` per VM, as the
+   user who last saved the backup job. The job parameters carry no credentials.
+2. `JobRunner` claims the job within the long-job budget (`MaxConcurrentLongJobs`), takes the VM lock, re-checks
+   `backup.run` on the VM, stamps the VM id and — from the repository record — path, credentials (decrypted now with
+   the key ring) and the host's staging folder, then sends `HyperVOperation/BackupVm`.
+3. The agent validates the request (folders against the allowed storage folders) and runs the fixed script:
+   checkpoint, `Export-VMSnapshot` (directly into the repository, or into staging and then copied to a share opened
+   with the credentials), checkpoint removed, SHA-256 of every file, manifest written last.
+4. The result marks the point `Ok` only with a valid manifest of that point (`BackupJobOutcome`); a lost result makes
+   it `Unverified`; the scheduler closes the run, applies retention (deletion jobs `backup.remove`) and sends
+   notifications.
+
+## Request flow: agent update (v0.7.0, ADR-029)
+
+1. `POST /hosts/{id}/agent/update` (`hosts.manage`) creates job `agent.update`; the runner sends `UpdateAgent` with the
+   version, size and SHA-256 of the gateway's package.
+2. The agent downloads `GET /agent/v1/package` on port 8444 with its client certificate, checks size and SHA-256 and
+   starts the SYSTEM task; the task checks the signed catalog against the installed agent's signer and runs the
+   package's `Install-Agent.ps1`.
+3. The job succeeds when the agent reconnects with the new version (`AgentHello`), fails when the updater reports a
+   failure, and is `Unknown` after 10 minutes without either.
+
 ## Data model (main tables)
 
 `Users`, `Sessions`, `MfaChallenges`, `RecoveryCodes`, `LoginThrottles`, `OneTimeTokens` · `Roles`,
 `RolePermissions`, `RoleAssignments`, `LogicalGroups` (`ParentId`: folders), `LogicalGroupMembers` · `Hosts`, `AgentCertificates`,
 `EnrollmentTokens`, `VirtualMachines`, `InventoryEvents` · `Jobs` (`ParametersJson`, `ResultJson`), `JobEvents`, `ResourceLocks` · `AuditEntries`,
-`Settings`.
+`Settings` · (v0.7.0) `PortalNetworks` · `BackupRepositories`, `BackupJobs`, `BackupJobTargets`, `BackupRuns`,
+`BackupPoints` · `ApiTokens`; host columns `StorageFoldersJson`, `BackupStagingPath`, `AgentUpdaterInstalled`,
+`AgentLastUpdateResult` (migration `BackupsNetworksAgentUpdates`). Notification settings are a `Settings` row.
 
 VM identity: portal id (GUID) + unique `(HostId, HyperVId)`. Hyper-V ids are not globally unique (`Import-VM -Copy`
 can keep the id). In clusters (M3) a VM moving between nodes will be re-homed by Hyper-V id within the cluster.
@@ -94,4 +129,5 @@ EF Core 10, SignalR, built-in OpenAPI, React 19 + TypeScript + Vite, `System.Man
 (PBKDF2, AES-GCM, HKDF, ECDSA, `CertificateRequest`, DPAPI), Windows ACLs, `sc.exe` and NetSecurity cmdlets for
 installation, the Hyper-V PowerShell module on hosts for configuration operations. Third-party runtime dependencies:
 QRCoder (MIT) in the gateway; React, React Router, SignalR client, Radix UI/shadcn, Tailwind, lucide, cmdk in the
-browser (see [licensing](licensing.md)).
+browser (see [licensing](licensing.md)). v0.7.0 adds none: e-mail uses the BCL `SmtpClient`, webhooks `HttpClient`,
+package signing and checks the built-in `New-FileCatalog` / `Test-FileCatalog` / Authenticode cmdlets.

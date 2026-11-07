@@ -166,6 +166,7 @@ namespace HvPortal.Setup
                 _pages.Add(ModePage());
                 _pages.Add(EnrollPage());
                 _pages.Add(AccountPage());
+                _pages.Add(StoragePage());
             }
             _pages.Add(SummaryPage());
             _pages.Add(RunPage());
@@ -580,6 +581,43 @@ namespace HvPortal.Setup
             return page;
         }
 
+        private WizardPage StoragePage()
+        {
+            RadioButton? keep = null;
+            RadioButton all = null!, restrict = null!;
+            TextBox folders = null!;
+            CheckBox updates = null!;
+            var page = Page("storage.title", "storage.sub", c =>
+            {
+                if (_upgrade)
+                {
+                    keep = c.Radio(Strings.T("storage.keep"), true);
+                }
+                all = c.Radio(Strings.T("storage.all"), !_upgrade);
+                restrict = c.Radio(Strings.T("storage.restrict"), false);
+                folders = c.Add(new TextBox { Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Text = "D:\\VMs" + Environment.NewLine + "D:\\ISO" }, 70, 22);
+                c.Gap(4);
+                c.Text(Strings.T("storage.help"), muted: true, indent: 22);
+                c.Gap(14);
+                updates = c.Check(Strings.T("storage.updates"), true);
+                c.Text(Strings.T("storage.updatesHelp"), muted: true, indent: 22);
+                folders.Enter += (_, __) => restrict.Checked = true;
+            });
+            page.Leave = () =>
+            {
+                _agent.StorageFolders = keep != null && keep.Checked ? null
+                    : restrict.Checked ? SetupRules.SplitFolders(folders.Text)
+                    : _upgrade ? new List<string>() : null;
+                _agent.DisableRemoteUpdate = !updates.Checked;
+                if (restrict.Checked && (_agent.StorageFolders == null || _agent.StorageFolders.Count == 0))
+                {
+                    return Strings.T("err.storage");
+                }
+                return _agent.Validate().Contains("err.storage") ? Strings.T("err.storage") : null;
+            };
+            return page;
+        }
+
         // ------------------------------------------------------------------ summary and run
 
         private WizardPage SummaryPage()
@@ -606,6 +644,10 @@ namespace HvPortal.Setup
                 yield return Strings.T("summary.mode") + ":  " + Strings.T(_agent.Management ? "mode.management" : "mode.host");
                 yield return Strings.T("summary.gateway") + ":  " + (_agent.Enroll ? SetupRules.NormalizeGatewayUrl(_agent.Gateway) : Strings.T("summary.keepEnroll"));
                 yield return Strings.T("summary.account") + ":  " + (_agent.ServiceAccount ?? Strings.T(_keepAccount ? "summary.accountKeep" : "summary.accountVirtual"));
+                yield return Strings.T("summary.storage") + ":  " + (_agent.StorageFolders == null
+                    ? Strings.T(_upgrade ? "summary.storageKeep" : "summary.storageAll")
+                    : _agent.StorageFolders.Count == 0 ? Strings.T("summary.storageAll") : string.Join(", ", _agent.StorageFolders));
+                yield return Strings.T("summary.updates") + ":  " + Strings.T(_agent.DisableRemoteUpdate ? "summary.updatesOff" : "summary.updatesOn");
             }
             yield return SetupEngine.InstallPath;
         }

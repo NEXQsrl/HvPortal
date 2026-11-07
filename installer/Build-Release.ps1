@@ -85,7 +85,10 @@ if ($SigningCertificateThumbprint) {
 }
 
 # Downloadable agent package served by the gateway portal (built from the possibly signed agent).
-& (Join-Path $PSScriptRoot 'New-AgentPackage.ps1') -AgentDirectory (Join-Path $out 'agent') -InstallerDirectory (Join-Path $out 'installer') -OutputDirectory (Join-Path $out 'gateway\packages')
+$packageArgs = @{ AgentDirectory = (Join-Path $out 'agent'); InstallerDirectory = (Join-Path $out 'installer'); OutputDirectory = (Join-Path $out 'gateway\packages') }
+# With a certificate the package also gets a signed catalog: agents can then be updated from the portal.
+if ($cert) { $packageArgs.SigningCertificateThumbprint = $cert.Thumbprint; if ($TimestampServer) { $packageArgs.TimestampServer = $TimestampServer } }
+& (Join-Path $PSScriptRoot 'New-AgentPackage.ps1') @packageArgs
 
 # Graphical setups: a small .NET Framework 4.7.2 program (part of Windows Server 2019+) with the payload embedded.
 # The payload is what was just built and signed, so the wizard installs exactly the files of this release.

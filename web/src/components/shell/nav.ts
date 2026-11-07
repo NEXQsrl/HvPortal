@@ -11,7 +11,12 @@ export interface NavItem {
   end?: boolean;
   /** Also active on these routes (e.g. Inventory for hosts, VMs and groups). */
   match?: RegExp;
+  /** Reached from the tree of Settings, not from the icon row (still listed in the command palette). */
+  inSettings?: boolean;
 }
+
+/** Global permissions that open some page of the Settings area (settings, users and roles, audit). */
+export const SETTINGS_AREA_PERMISSIONS = ['settings.manage', 'users.manage', 'roles.manage', 'audit.read'];
 
 export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'nav.dashboard', icon: LayoutDashboard, section: 'main', end: true },
@@ -19,11 +24,19 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/inventory', label: 'nav.inventory', icon: Layers, section: 'main', match: /^\/(inventory|vms|hosts|groups)(\/|$)/ },
   { to: '/networks', label: 'nav.networks', icon: Network, section: 'main' },
   { to: '/storage', label: 'nav.storage', icon: HardDrive, section: 'main' },
-  { to: '/jobs', label: 'nav.jobs', icon: ListChecks, section: 'ops' },
-  { to: '/guide', label: 'nav.guide', icon: BookOpen, section: 'ops', permission: ['hosts.manage'] },
-  { to: '/backup', label: 'nav.backup', icon: Archive, section: 'ops', planned: true },
   { to: '/templates', label: 'nav.templates', icon: LayoutTemplate, section: 'main' },
-  { to: '/users', label: 'nav.users', icon: Users, section: 'admin', permission: ['users.manage', 'roles.manage'] },
-  { to: '/audit', label: 'nav.audit', icon: ScrollText, section: 'admin', permission: ['audit.read'] },
-  { to: '/settings', label: 'nav.settings', icon: Settings, section: 'admin', permission: ['settings.manage'] },
+  { to: '/backup', label: 'nav.backup', icon: Archive, section: 'ops', match: /^\/backup(\/|$)/ },
+  { to: '/jobs', label: 'nav.jobs', icon: ListChecks, section: 'ops' },
+  // Open to everyone: topic guides for all users; the administration pages inside check hosts.manage.
+  { to: '/guide', label: 'nav.guide', icon: BookOpen, section: 'ops' },
+  { to: '/users', label: 'nav.users', icon: Users, section: 'admin', permission: ['users.manage', 'roles.manage'], inSettings: true },
+  { to: '/audit', label: 'nav.audit', icon: ScrollText, section: 'admin', permission: ['audit.read'], inSettings: true },
+  { to: '/settings', label: 'nav.settings', icon: Settings, section: 'admin', permission: SETTINGS_AREA_PERMISSIONS, match: /^\/(settings|users|audit)(\/|$)/ },
 ];
+
+/** First page of the Settings area the user can open (Settings itself needs settings.manage). */
+export function settingsHome(can: (p: string) => boolean): string {
+  if (can('settings.manage')) return '/settings';
+  if (can('users.manage') || can('roles.manage')) return '/users';
+  return '/audit';
+}

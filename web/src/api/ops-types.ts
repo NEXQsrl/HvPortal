@@ -57,9 +57,15 @@ export interface ConfigResponse {
   can: { compute: boolean; storage: boolean; network: boolean; annotate?: boolean };
   requiresOff: string[];
   switches: string[];
+  /** Networks of the portal on the host (switch + VLAN); choosing one sets both on the adapter. */
+  networks?: PortalNetworkRef[];
+  /** The agent can set the VLAN of an added adapter (protocol 9). */
+  vlanOnAdd?: boolean;
   isoLibrary: string[];
   options: ConfigOptions;
 }
+
+export interface PortalNetworkRef { id: string; name: string; switchName: string; vlanId: number | null }
 
 /** PATCH /vms/{id}/config body: only changed fields are sent. */
 export interface ConfigChange {
@@ -82,8 +88,11 @@ export interface ConfigChange {
   secureBootEnabled?: boolean;
   secureBootTemplate?: string;
   dvdIsoPath?: string;
-  networkAdapterChanges?: { adapterId: string; switchName?: string | null; vlanId?: number | null }[];
+  /** networkId: a network of the portal; the gateway replaces switch and VLAN with its values. */
+  networkAdapterChanges?: { adapterId: string; switchName?: string | null; vlanId?: number | null; networkId?: string }[];
   addNetworkAdapterSwitch?: string;
+  addNetworkAdapterVlanId?: number;
+  addNetworkAdapterNetworkId?: string;
   newDisk?: { sizeGb: number; fixed: boolean };
   expandDisk?: { path: string; newSizeGb: number };
 }
@@ -132,6 +141,10 @@ export interface FolderListing { path: string | null; parent: string | null; dri
 export interface HostDefaultsResponse {
   defaults: { virtualHardDiskPath: string | null; virtualMachinePath: string | null; logicalProcessorCount: number; memoryCapacityBytes: number; supportedVersions: string[]; defaultVersion: string | null };
   switches: string[];
+  /** Networks of the portal (switch + VLAN) on the switches the user may use. */
+  networks?: PortalNetworkRef[];
+  /** The agent of the host can set a VLAN on the new VM (protocol 9). */
+  vlanSupported?: boolean;
   /** In a group: the networks are limited to those of the group; storageRoots (non-empty) are the only allowed locations. */
   networksRestricted?: boolean;
   storageRoots?: string[];
@@ -153,6 +166,10 @@ export interface NewVmSpec {
   diskSizeGb: number;
   diskFixed: boolean;
   switchName?: string;
+  /** Access VLAN of the adapter (1-4094; absent = untagged). Agent 0.7.0+. */
+  vlanId?: number;
+  /** Network of the portal: the gateway sets switch and VLAN from it. */
+  networkId?: string;
   isoPath?: string;
   secureBootTemplate?: string;
   enableTpm: boolean;

@@ -1,8 +1,9 @@
-import { HardDrive, Network, Plus } from 'lucide-react';
+import { FolderLock, HardDrive, Network, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Empty, HostIcon, Meter, Notice, PageHeader, Section } from '@/components/common';
 import { HelpTip } from '@/components/dialogs';
+import { PortalNetworksSection } from '@/components/infra/PortalNetworks';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { NewSwitchDialog } from '@/components/ops/NetworkDialogs';
 import { useOps } from '@/components/ops/OperationsProvider';
@@ -35,6 +36,7 @@ export function NetworkPage() {
           <div key={h.id} className="space-y-1.5">
             <Link to={`/hosts/${h.id}?tab=network`} className="flex items-center gap-2 text-sm font-semibold hover:underline"><HostIcon connected={h.connected} access={h.access} />{h.displayName}</Link>
             <HostSwitches hostId={h.id} highlight={h.id === selectedHost ? params.get('switch') ?? undefined : undefined} />
+            <PortalNetworksSection host={h} />
           </div>
         ))}
       </div>
@@ -108,6 +110,9 @@ export function StoragePage() {
               )}
               <HelpTip>{t('files.help')}</HelpTip>
             </div>
+            {fileHost?.storageFolders && fileHost.storageFolders.length > 0 && (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><FolderLock className="size-3.5" />{t('sfold.restricted', { list: fileHost.storageFolders.join(', ') })}</p>
+            )}
             {fileHost ? <HostFileExplorer key={fileHost.id} host={fileHost} /> : <Notice kind="warn">{t('files.noHosts')}</Notice>}
           </>
         )}

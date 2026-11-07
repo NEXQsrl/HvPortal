@@ -34,7 +34,11 @@ try {
     if ([string]::IsNullOrWhiteSpace($user) -or $user.Length -gt 256) { throw 'Invalid user name.' }
     $request = [string]$in.request
     if ([string]::IsNullOrEmpty($request) -or $request.Length -gt 65536) { throw 'Invalid request.' }
-    $secure = ConvertTo-SecureString -String ([string]$t.password) -AsPlainText -Force
+    # Built character by character: ConvertTo-SecureString -AsPlainText would put the password in the parameter
+    # binding record of PowerShell module logging (event 4103) when that logging is enabled on this machine.
+    $secure = New-Object System.Security.SecureString
+    foreach ($ch in ([string]$t.password).ToCharArray()) { $secure.AppendChar($ch) }
+    $secure.MakeReadOnly()
     $credential = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $secure
     $opsScript = Join-Path -Path $PSScriptRoot -ChildPath 'HvPortal.Ops.ps1'
 

@@ -87,6 +87,31 @@ namespace HvPortal.Setup
             return IsHostName(host) ? scheme + host.ToLowerInvariant() + ":" + port.ToString(CultureInfo.InvariantCulture) : null;
         }
 
+        private static readonly string[] BlockedRootFolders =
+        {
+            "Windows", "Users", "User", "inetpub", "VBRCatalog", "ovhupd", "Packages", "PerfLogs", "Program Files", "Program Files (x86)", "ProgramData",
+            "Recovery", "Boot", "System Volume Information", "Documents and Settings", "Config.Msi", "MSOCache", "OneDriveTemp", "Intel", "AMD", "NVIDIA",
+        };
+
+        private static readonly Regex LocalFolder = new Regex(@"^[A-Za-z]:\\[^\x00-\x1f""*?<>|:/]{0,197}$", RegexOptions.CultureInvariant);
+
+        /// <summary>A storage folder for Install-Agent -StorageFolders: local path, not a system folder, no traversal.</summary>
+        public static bool IsStorageFolder(string? s)
+        {
+            if (s == null || !LocalFolder.IsMatch(s) || s.Contains("..") || s.Contains("\\\\"))
+            {
+                return false;
+            }
+            var segments = s.Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries);
+            return segments.Length < 2 || !(segments[1].StartsWith("$", StringComparison.Ordinal)
+                                            || BlockedRootFolders.Contains(segments[1], StringComparer.OrdinalIgnoreCase));
+        }
+
+        /// <summary>Folders typed one per line (or separated by ';'): spaces are part of folder names.</summary>
+        public static List<string> SplitFolders(string? text) =>
+            (text ?? "").Split(new[] { ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0)
+                .Select(x => x.Length > 3 ? x.TrimEnd('\\') : x).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
         /// <summary>Splits a list typed with commas, semicolons, spaces or new lines.</summary>
         public static List<string> SplitList(string? text) =>
             (text ?? "").Split(new[] { ',', ';', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0)
@@ -215,10 +240,21 @@ namespace HvPortal.Setup
         public bool ForceReenroll { get; set; }
         /// <summary>Null = virtual service account (or the account already in use on upgrade).</summary>
         public string? ServiceAccount { get; set; }
+        /// <summary>
+        /// Folders the portal may use on this host (Install-Agent -StorageFolders). Null = not passed (new install: no
+        /// restriction; upgrade: keep the current list); empty = remove the restriction.
+        /// </summary>
+        public List<string>? StorageFolders { get; set; }
+        /// <summary>No updater task: the agent can only be updated by hand (Install-Agent -DisableRemoteUpdate).</summary>
+        public bool DisableRemoteUpdate { get; set; }
 
         public List<string> Validate()
         {
             var errors = new List<string>();
+            if (StorageFolders != null && (StorageFolders.Count > 16 || StorageFolders.Any(f => !SetupRules.IsStorageFolder(f))))
+            {
+                errors.Add("err.storage");
+            }
             if (Enroll)
             {
                 if (SetupRules.NormalizeGatewayUrl(Gateway) == null)
@@ -260,6 +296,15 @@ namespace HvPortal.Setup
             if (ServiceAccount != null)
             {
                 p["ServiceAccount"] = ServiceAccount;
+            }
+            if (StorageFolders != null)
+            {
+                // An empty value removes the restriction (the script ignores empty entries).
+                p["StorageFolders"] = StorageFolders.Count == 0 ? new[] { "" } : StorageFolders.ToArray();
+            }
+            if (DisableRemoteUpdate)
+            {
+                p["DisableRemoteUpdate"] = true;
             }
             return p;
         }

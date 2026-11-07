@@ -33,6 +33,14 @@ public sealed class GatewayOptions
     public SecurityOptions Security { get; set; } = new();
     public JobOptions Jobs { get; set; } = new();
     public VmGroupOptions VmGroups { get; set; } = new();
+    public BackupOptions Backup { get; set; } = new();
+}
+
+public sealed class BackupOptions
+{
+    /// <summary>Starts scheduled backup runs, closes runs, applies retention, sends notifications. Disabled only in tests that drive it explicitly.</summary>
+    public bool SchedulerEnabled { get; set; } = true;
+    public int IntervalSeconds { get; set; } = 20;
 }
 
 public sealed class DatabaseOptions
@@ -61,6 +69,8 @@ public sealed class JobOptions
     /// <summary>Disable only in tests that drive the runner explicitly.</summary>
     public bool RunnerEnabled { get; set; } = true;
     public int MaxConcurrentJobs { get; set; } = 8;
+    /// <summary>Jobs that may run for hours (backups, restores, VM moves, agent updates): separate budget.</summary>
+    public int MaxConcurrentLongJobs { get; set; } = 4;
     public int PollIntervalMilliseconds { get; set; } = 1000;
     public int HostUnreachableRetries { get; set; } = 3;
     public int ReconciliationGiveUpMinutes { get; set; } = 15;

@@ -11,13 +11,15 @@ import { AppShell } from './components/shell/AppShell';
 import { TooltipProvider } from './components/ui/tooltip';
 import { I18nProvider } from './i18n';
 import { Toaster } from './lib/toast';
-import { AccountPage, PlannedPage, SettingsPage, UsersPage } from './pages/AdminPages';
+import { AccountPage, SettingsPage, UsersPage } from './pages/AdminPages';
+import { BackupPage } from './pages/BackupPage';
 import { AuditPage } from './pages/AuditPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { ForcedMfaPage, ForcedPasswordChangePage, LoginPage, SetupPage } from './pages/AuthPages';
 import { ConsolePage } from './pages/ConsolePage';
 import { DashboardPage } from './pages/DashboardPage';
 import { GuideConnect, GuideEntra, GuideHome, GuideLayout, GuideRemove, GuideTroubleshooting, GuideUpdate } from './pages/guide/GuidePages';
+import { TopicGuidePage } from './pages/guide/TopicGuides';
 import { GroupPage, InventoryHome } from './pages/inventory/GroupPage';
 import { HostPage } from './pages/inventory/HostPage';
 import { VmPage } from './pages/inventory/VmPage';
@@ -69,13 +71,15 @@ function Gate() {
             <Route path="/account" element={<AccountPage />} />
             <Route path="/guide" element={<GuideLayout />}>
               <Route index element={<GuideHome />} />
+              {/* Topic guides for every user: one route, the pages come from TOPIC_GUIDES. */}
+              <Route path="topics/:topic" element={<TopicGuidePage />} />
               <Route path="connect" element={<GuideConnect />} />
               <Route path="update" element={<GuideUpdate />} />
               <Route path="remove" element={<GuideRemove />} />
               <Route path="entra" element={<GuideEntra />} />
               <Route path="troubleshooting" element={<GuideTroubleshooting />} />
             </Route>
-            <Route path="/backup" element={<PlannedPage titleKey="nav.backup" milestone="Milestone 3" />} />
+            <Route path="/backup" element={<BackupPage />} />
             <Route path="/templates" element={<TemplatesPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

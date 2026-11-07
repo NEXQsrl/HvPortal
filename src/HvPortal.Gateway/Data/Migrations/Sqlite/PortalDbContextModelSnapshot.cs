@@ -62,6 +62,59 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.ToTable("AgentCertificates");
                 });
 
+            modelBuilder.Entity("HvPortal.Gateway.Data.ApiToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("ExpiresAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LastUsedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LastUsedIp")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Prefix")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("RevokedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Scopes")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("ApiTokens");
+                });
+
             modelBuilder.Entity("HvPortal.Gateway.Data.AuditEntry", b =>
                 {
                     b.Property<long>("Id")
@@ -134,6 +187,328 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.HasIndex("ActorUserId", "TimestampUtc");
 
                     b.ToTable("AuditEntries");
+                });
+
+            modelBuilder.Entity("HvPortal.Gateway.Data.BackupJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CheckpointType")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DaysMask")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("IntervalHours")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LastRestoreTestAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LastRunAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("NextRunAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("NotifyOn")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RepositoryId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RestoreTestDays")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("RetentionDays")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RetentionPoints")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ScheduleKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimesJson")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("VerifyAfterCopy")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.HasIndex("NextRunAt");
+
+                    b.ToTable("BackupJobs");
+                });
+
+            modelBuilder.Entity("HvPortal.Gateway.Data.BackupJobTarget", b =>
+                {
+                    b.Property<Guid>("BackupJobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .HasMaxLength(8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("BackupJobId", "Kind", "TargetId");
+
+                    b.ToTable("BackupJobTargets");
+                });
+
+            modelBuilder.Entity("HvPortal.Gateway.Data.BackupPoint", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("BackupJobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CheckpointType")
+                        .HasMaxLength(24)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CheckpointTypeUsed")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Folder")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("HostId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Keep")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ManifestJson")
+                        .HasMaxLength(64000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("RepositoryId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("RunId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TestDetail")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool?>("TestPassed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("TestedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("VerifiedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("VerifyDetail")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool?>("VerifyOk")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("VmHyperVId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("VmId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("VmName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId");
+
+                    b.HasIndex("RunId");
+
+                    b.HasIndex("RepositoryId", "Status");
+
+                    b.HasIndex("VmId", "CreatedAt");
+
+                    b.ToTable("BackupPoints");
+                });
+
+            modelBuilder.Entity("HvPortal.Gateway.Data.BackupRepository", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("CredentialUpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("HostId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("LastCheckHostId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastCheckJson")
+                        .HasMaxLength(16000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LastCheckedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("PasswordEncrypted")
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("BackupRepositories");
+                });
+
+            modelBuilder.Entity("HvPortal.Gateway.Data.BackupRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("BackupJobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Failed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Notified")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("RequestedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Succeeded")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Total")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Trigger")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Warnings")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StartedAt");
+
+                    b.HasIndex("BackupJobId", "StartedAt");
+
+                    b.ToTable("BackupRuns");
                 });
 
             modelBuilder.Entity("HvPortal.Gateway.Data.EnrollmentToken", b =>
@@ -518,8 +893,19 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("AgentLastUpdateResult")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool?>("AgentUpdaterInstalled")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("AgentVersion")
                         .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackupStagingPath")
+                        .HasMaxLength(260)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ConnectionMode")
@@ -596,6 +982,10 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(16)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("StorageFoldersJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("TemplateLibraryPath")
                         .HasMaxLength(260)
                         .HasColumnType("TEXT");
@@ -652,6 +1042,10 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.Property<long?>("LastSeenAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("LastUpdateResult")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("MachineName")
                         .HasMaxLength(63)
                         .HasColumnType("TEXT");
@@ -660,6 +1054,9 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool?>("UpdaterInstalled")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -738,6 +1135,49 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .IsUnique();
 
                     b.ToTable("OneTimeTokens");
+                });
+
+            modelBuilder.Entity("HvPortal.Gateway.Data.PortalNetwork", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("HostId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SwitchName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("VlanId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HostId", "Name")
+                        .IsUnique();
+
+                    b.HasIndex("HostId", "SwitchName", "VlanId")
+                        .IsUnique();
+
+                    b.ToTable("PortalNetworks");
                 });
 
             modelBuilder.Entity("HvPortal.Gateway.Data.RecoveryCode", b =>

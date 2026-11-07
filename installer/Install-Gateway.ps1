@@ -57,7 +57,8 @@ if ($UiCertificateThumbprint) {
 
 $upgrade = [bool](Get-Service $service -ErrorAction SilentlyContinue)
 if ($upgrade) {
-    Stop-Service $service -Force
+    # Waits for the process to exit, not only for the service state (its files stay locked until then).
+    Stop-HvPortalService -ServiceName $service
     # Consistent copy of the SQLite database (main file + WAL + shared memory) while the service is stopped.
     $dbDir = Join-Path $DataPath 'db'
     if (Test-Path (Join-Path $dbDir 'hvportal.db')) {

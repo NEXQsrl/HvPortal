@@ -130,7 +130,7 @@ public sealed class TemplateOperationTests
         };
         var folder = $@"{Library}\{Guid.NewGuid():D}";
         var fromTemplate = new NewVmRequest { Name = "web01", TemplateDisks = [$@"{folder}\disk0.vhdx"], TemplateRoots = [Library] };
-        Assert.Equal(8, AgentProtocol.Version);
+        Assert.Equal(9, AgentProtocol.Version);
         Assert.Equal(8, AgentProtocol.RequiredVersion(Op(HvOperation.NewTemplate)));
         Assert.Equal(8, AgentProtocol.RequiredVersion(Op(HvOperation.RemoveTemplate)));
         // An older agent would ignore the template disks and create an empty VM.
@@ -142,7 +142,7 @@ public sealed class TemplateOperationTests
         // Copying disks may take hours; everything else keeps the 30 minute ceiling.
         Assert.Equal(TimeSpan.FromHours(4), CommandExecutor.TimeoutFor(Op(HvOperation.NewTemplate), HvOperation.NewTemplate));
         Assert.Equal(TimeSpan.FromHours(4), CommandExecutor.TimeoutFor(Op(HvOperation.NewVm, fromTemplate), HvOperation.NewVm));
-        Assert.Equal(TimeSpan.FromHours(8), CommandExecutor.TimeoutFor(Op(HvOperation.NewTemplate, timeout: 100 * 3600), HvOperation.NewTemplate));
+        Assert.Equal(TimeSpan.FromHours(12), CommandExecutor.TimeoutFor(Op(HvOperation.NewTemplate, timeout: 100 * 3600), HvOperation.NewTemplate));
         Assert.Equal(TimeSpan.FromMinutes(30), CommandExecutor.TimeoutFor(Op(HvOperation.NewVm, new NewVmRequest { Name = "plain" }), HvOperation.NewVm));
         Assert.Equal(TimeSpan.FromMinutes(30), CommandExecutor.TimeoutFor(Op(HvOperation.RemoveTemplate), HvOperation.RemoveTemplate));
     }

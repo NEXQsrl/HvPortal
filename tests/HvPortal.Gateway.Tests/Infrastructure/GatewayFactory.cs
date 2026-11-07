@@ -40,6 +40,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         builder.UseSetting("Gateway:Security:Pbkdf2Iterations", "10000");
         builder.UseSetting("Gateway:Jobs:RunnerEnabled", "false");
         builder.UseSetting("Gateway:VmGroups:SyncEnabled", "false");
+        builder.UseSetting("Gateway:Backup:SchedulerEnabled", "false");
         builder.UseSetting("Gateway:PackagesDirectory", PackagesDirectory);
         foreach (var (key, value) in ExtraSettings)
         {
@@ -70,6 +71,8 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     }
 
     public JobRunner Runner => Services.GetRequiredService<JobRunner>();
+
+    public HvPortal.Gateway.VmBackup.BackupScheduler Scheduler => Services.GetRequiredService<HvPortal.Gateway.VmBackup.BackupScheduler>();
 
     public async Task<T> WithDbAsync<T>(Func<PortalDbContext, Task<T>> action)
     {

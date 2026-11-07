@@ -1,7 +1,8 @@
-import { KeyRound, Languages, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react';
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { KeyRound, LifeBuoy, LockKeyhole, LogIn, LogOut, ShieldCheck, UserRound } from 'lucide-react';
+import { useState, type FormEvent } from 'react';
 import { ApiError, post, resetCsrf } from '@/api/client';
-import { BrandLogo, CopyButton, ErrorAlert, Notice } from '@/components/common';
+import { AuthShell as AuthFrame, IconInput, SubmitButton } from '@/components/auth/AuthShell';
+import { CopyButton, ErrorAlert, Notice } from '@/components/common';
 import { Field } from '@/components/dialogs';
 import { MicrosoftMark } from '@/components/MicrosoftMark';
 import { OtpInput } from '@/components/OtpInput';
@@ -10,37 +11,8 @@ import { Input } from '@/components/ui/input';
 import { useI18n, type TKey } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/session';
-import { useTheme } from '@/theme';
 
-/** Language and theme switches for the sign-in pages (no account menu there). */
-export function TopControls() {
-  const { t, lang, setLang } = useI18n();
-  const [, setTheme, dark] = useTheme();
-  return (
-    <div className="flex items-center gap-1">
-      <Button type="button" variant="ghost" size="sm" onClick={() => setLang(lang === 'it' ? 'en' : 'it')}><Languages />{t('lang.toggle')}</Button>
-      <Button type="button" variant="ghost" size="icon-sm" onClick={() => setTheme(dark ? 'light' : 'dark')} aria-label={t('theme.toggle')} title={t('theme.toggle')}>{dark ? <Sun /> : <Moon />}</Button>
-    </div>
-  );
-}
-
-function AuthFrame({ title, children, icon }: { title: string; children: ReactNode; icon?: ReactNode }) {
-  return (
-    <div className="auth-page flex h-dvh flex-col overflow-auto bg-background">
-      <div className="flex items-center justify-end px-4 py-3">
-        <TopControls />
-      </div>
-      <div className="flex flex-1 flex-col items-center justify-start gap-6 px-4 pt-[6vh] pb-10">
-        <BrandLogo className="h-11" />
-        <div className="auth-card w-full max-w-md rounded-xl border bg-card p-6 shadow-sm">
-          <h1 className="mb-4 flex items-center gap-2 text-lg font-semibold">{icon}{title}</h1>
-          {children}
-        </div>
-      </div>
-      <div className="pb-4 text-center text-[11px] text-muted-foreground">© NEXQ S.r.l. · <a className="hover:underline" href="https://www.nexq.it" target="_blank" rel="noopener noreferrer">www.nexq.it</a></div>
-    </div>
-  );
-}
+export { TopControls } from '@/components/auth/AuthShell';
 
 function PasswordFields({ value, onChange, confirm, onConfirm, minLength, label }: {
   value: string; onChange: (v: string) => void; confirm: string; onConfirm: (v: string) => void; minLength: number; label: string;
@@ -84,15 +56,15 @@ export function SetupPage() {
   };
 
   return (
-    <AuthFrame title={t('setup.title')} icon={<KeyRound className="size-5 text-primary" />}>
+    <AuthFrame title={t('setup.title')} icon={<KeyRound />}>
       <p className="mb-4 text-sm text-muted-foreground">{t('setup.help')}</p>
-      <ErrorAlert error={error} />
-      <form onSubmit={submit} className="space-y-3">
+      <ErrorAlert error={error} className="signin-alert" />
+      <form onSubmit={submit} className="signin-stagger space-y-3">
         <Field label={t('setup.token')} htmlFor="setup-token"><Input id="setup-token" autoComplete="off" spellCheck={false} value={token} onChange={(e) => setToken(e.target.value)} className="font-mono" /></Field>
         <Field label={t('login.user')} htmlFor="setup-user"><Input id="setup-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} /></Field>
         <Field label={t('setup.displayName')} htmlFor="setup-dn"><Input id="setup-dn" value={displayName} onChange={(e) => setDisplayName(e.target.value)} /></Field>
         <PasswordFields value={password} onChange={setPassword} confirm={confirm} onConfirm={setConfirm} minLength={15} label={t('login.password')} />
-        <Button type="submit" className="w-full" disabled={busy || !token || !userName || password.length < 15 || password !== confirm}>{t('setup.submit')}</Button>
+        <SubmitButton className="mt-1" busy={busy} disabled={busy || !token || !userName || password.length < 15 || password !== confirm}>{t('setup.submit')}</SubmitButton>
       </form>
     </AuthFrame>
   );
@@ -170,39 +142,40 @@ export function LoginPage() {
   if (mode === 'recover') return <RecoverPage onDone={() => setMode('login')} />;
 
   return (
-    <AuthFrame title={challenge ? t('login.mfaTitle') : t('login.title')} icon={challenge ? <ShieldCheck className="size-5 text-primary" /> : undefined}>
+    <AuthFrame title={challenge ? t('login.mfaTitle') : t('login.title')} subtitle={challenge ? undefined : t('login2.welcome')} icon={challenge ? <ShieldCheck /> : <LogIn />}>
       {!challenge && (
-        <div className="mb-4 grid grid-cols-2 rounded-lg bg-muted p-1 text-sm" role="tablist">
+        <div className="signin-tabs relative mb-5 grid grid-cols-2 rounded-xl p-1 text-sm" role="tablist" data-active={tab}>
+          <span className="signin-tabs-thumb" aria-hidden="true" />
           <button type="button" role="tab" aria-selected={tab === 'local'} onClick={() => setTab('local')}
-            className={cn('rounded-md py-1.5', tab === 'local' ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground')}>{t('login.local')}</button>
+            className={cn('relative rounded-lg py-1.5 transition-colors', tab === 'local' ? 'font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')}>{t('login.local')}</button>
           <button type="button" role="tab" aria-selected={tab === 'entra'} disabled={!entra} title={entra ? undefined : t('login.entraOff')} onClick={() => setTab('entra')}
-            className={cn('rounded-md py-1.5', tab === 'entra' ? 'bg-card font-medium shadow-sm' : 'text-muted-foreground', !entra && 'opacity-60')}>{t('login.entra')}</button>
+            className={cn('relative rounded-lg py-1.5 transition-colors', tab === 'entra' ? 'font-medium text-foreground' : 'text-muted-foreground enabled:hover:text-foreground', !entra && 'opacity-60')}>{t('login.entra')}</button>
         </div>
       )}
-      {(error ?? entraError) && <Notice kind="danger" className="mb-3">{error ?? entraError}</Notice>}
+      {(error ?? entraError) && <Notice kind="danger" className="signin-alert mb-4">{error ?? entraError}</Notice>}
       {!challenge && tab === 'entra' ? (
         <div className="space-y-3">
-          <Button type="button" className="w-full" onClick={signInWithMicrosoft}><MicrosoftMark />{t('login.withMicrosoft')}</Button>
+          <Button type="button" variant="outline" className="signin-ms h-10 w-full" onClick={signInWithMicrosoft}><MicrosoftMark />{t('login.withMicrosoft')}</Button>
           <p className="text-center text-xs text-muted-foreground">{t('login.entraHelp')}</p>
         </div>
       ) : !challenge ? (
-        <form onSubmit={submitPassword} className="space-y-3">
-          <Field label={t('login.user')} htmlFor="login-user"><Input id="login-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} autoFocus /></Field>
-          <Field label={t('login.password')} htmlFor="login-pw"><Input id="login-pw" type="password" autoComplete="current-password" value={password} maxLength={1024} onChange={(e) => setPassword(e.target.value)} /></Field>
-          <Button type="submit" className="w-full" disabled={busy || !userName || !password}>{t('login.submit')}</Button>
+        <form onSubmit={submitPassword} className="signin-stagger space-y-3.5">
+          <Field label={t('login.user')} htmlFor="login-user"><IconInput icon={<UserRound />} id="login-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} autoFocus /></Field>
+          <Field label={t('login.password')} htmlFor="login-pw"><IconInput icon={<LockKeyhole />} id="login-pw" type="password" autoComplete="current-password" value={password} maxLength={1024} onChange={(e) => setPassword(e.target.value)} /></Field>
+          <SubmitButton className="mt-1" busy={busy} arrow disabled={busy || !userName || !password}>{t('login.submit')}</SubmitButton>
           <div className="text-center"><Button type="button" variant="link" size="sm" onClick={() => setMode('recover')}>{t('login.recover')}</Button></div>
         </form>
       ) : (
-        <form onSubmit={submitMfa} className="space-y-4">
+        <form onSubmit={submitMfa} className="signin-stagger space-y-4">
           {useRecovery ? (
-            <Field label={t('login.recoveryCode')} htmlFor="login-code"><Input id="login-code" autoComplete="off" maxLength={20} value={code} onChange={(e) => setCode(e.target.value)} autoFocus className="font-mono" /></Field>
+            <Field label={t('login.recoveryCode')} htmlFor="login-code"><IconInput icon={<KeyRound />} id="login-code" autoComplete="off" maxLength={20} value={code} onChange={(e) => setCode(e.target.value)} autoFocus className="font-mono" /></Field>
           ) : (
             <div className="otp-center flex flex-col items-center gap-3">
               <p className="text-center text-sm text-muted-foreground">{t('login.codeHelp')}</p>
               <OtpInput label={t('login.code')} value={code} onChange={setCode} autoFocus idPrefix="login-otp" onComplete={(v) => void submitMfa(undefined, v)} />
             </div>
           )}
-          <Button type="submit" className="w-full" disabled={busy || !code}>{t('login.verify')}</Button>
+          <SubmitButton busy={busy} disabled={busy || !code}>{t('login.verify')}</SubmitButton>
           <div className="text-center">
             <Button type="button" variant="link" size="sm" onClick={() => { setUseRecovery(!useRecovery); setCode(''); }}>{useRecovery ? t('login.useCode') : t('login.useRecovery')}</Button>
           </div>
@@ -233,19 +206,19 @@ function RecoverPage({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <AuthFrame title={t('recover.title')}>
+    <AuthFrame title={t('recover.title')} icon={<LifeBuoy />}>
       <p className="mb-4 text-xs text-muted-foreground">{t('recover.help')}</p>
-      <ErrorAlert error={error} />
+      <ErrorAlert error={error} className="signin-alert" />
       {done ? (
-        <div className="space-y-3"><Notice kind="ok">{t('recover.done')}</Notice><Button type="button" className="w-full" onClick={onDone}>{t('login.title')}</Button></div>
+        <div className="space-y-3"><Notice kind="ok">{t('recover.done')}</Notice><Button type="button" className="h-10 w-full" onClick={onDone}>{t('login.title')}</Button></div>
       ) : (
-        <form onSubmit={submit} className="space-y-3">
+        <form onSubmit={submit} className="signin-stagger space-y-3">
           <Field label={t('recover.token')} htmlFor="rec-token"><Input id="rec-token" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} className="font-mono" /></Field>
           <Field label={t('login.user')} htmlFor="rec-user"><Input id="rec-user" autoComplete="username" value={userName} onChange={(e) => setUserName(e.target.value)} /></Field>
           <PasswordFields value={password} onChange={setPassword} confirm={confirm} onConfirm={setConfirm} minLength={15} label={t('recover.newPassword')} />
-          <div className="flex gap-2">
-            <Button type="submit" className="flex-1" disabled={!token || !userName || password !== confirm || password.length < 15}>{t('recover.submit')}</Button>
-            <Button type="button" variant="outline" onClick={onDone}>{t('common.cancel')}</Button>
+          <div className="flex gap-2 pt-1">
+            <Button type="submit" className="h-10 flex-1" disabled={!token || !userName || password !== confirm || password.length < 15}>{t('recover.submit')}</Button>
+            <Button type="button" variant="outline" className="h-10" onClick={onDone}>{t('common.cancel')}</Button>
           </div>
         </form>
       )}
@@ -294,7 +267,7 @@ export function ForcedPasswordChangePage() {
   const { t } = useI18n();
   const { logout } = useSession();
   return (
-    <AuthFrame title={t('pw.changeTitle')}>
+    <AuthFrame title={t('pw.changeTitle')} icon={<LockKeyhole />}>
       <ChangePasswordForm required />
       <div className="mt-4 text-center"><Button type="button" variant="link" size="sm" onClick={() => void logout()}><LogOut />{t('nav.logout')}</Button></div>
     </AuthFrame>
@@ -365,7 +338,7 @@ export function ForcedMfaPage() {
   const { t } = useI18n();
   const { logout } = useSession();
   return (
-    <AuthFrame title={t('mfa.enrollTitle')} icon={<ShieldCheck className="size-5 text-primary" />}>
+    <AuthFrame title={t('mfa.enrollTitle')} icon={<ShieldCheck />}>
       <MfaEnrollment required />
       <div className="mt-4 text-center"><Button type="button" variant="link" size="sm" onClick={() => void logout()}><LogOut />{t('nav.logout')}</Button></div>
     </AuthFrame>

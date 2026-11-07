@@ -40,7 +40,9 @@
 | `/hubs/events` (SignalR) | `inventoryChanged {hostId}`, `jobChanged {jobId,status,progress,targetId}`, `groupsChanged {}` | full session; server → client only |
 
 Agent port only (not in OpenAPI): `GET /agent/v1/ca`, `POST /agent/v1/enroll` (rate-limited),
-`GET /agent/v1/channel` (WebSocket, client certificate required).
+`GET /agent/v1/channel` (WebSocket, client certificate required), `GET /agent/v1/package` (v0.7.0: the agent package
+for agents updating themselves; client certificate of an active, recorded, non-revoked agent, otherwise 403; audited
+`agent.package.download`).
 
 ## Endpoints added in v0.3
 
@@ -89,6 +91,80 @@ message, 501 `agent_outdated`). Changes are jobs (202 + `jobId`), re-authorized 
 | GET `/vms/{id}/console/ws` (WebSocket) | console stream; first message `{"t":"auth","ticket":…}` | session cookie + same Origin + valid ticket ([console.md](console.md)) |
 | GET `/console/sessions` | open console sessions | `audit.read` |
 
+## Endpoints added in v0.7.0 (agent protocol 9)
+
+Operations on hosts need agent 0.7.0 (protocol 9): older agents get 501 `agent_outdated` and nothing is sent. Long
+operations are jobs (202 + `jobId`) re-authorized and re-validated at execution; server-controlled fields (VM id,
+destination host name, switch and VLAN of a network, repository path, credentials, point folder) are stamped by the
+gateway from its records, never taken from the request. Codes below are the `code` of the problem document.
+
+**Changed responses.** `GET /hosts`, `/hosts/{id}`: `agent7` (agent 0.7.0+ connected with Hyper-V access),
+`storageFolders` (allowed folders; `[]` = not restricted, `null` = unknown / older agent), `storageFoldersEditable`
+(remote hosts only), `backupStagingPath`, `updaterInstalled`, `lastUpdateResult`. `GET /vms/{id}`: `canMigrate`,
+`canBackup`, `canRestore`. `GET /vms/{id}/config`: `networks` (portal networks of the host), `vlanOnAdd`.
+`GET /hosts/{id}/defaults`: `networks` (only those on switches the caller may use), `vlanSupported`.
+`POST /hosts/{id}/vms` accepts `vm.networkId`; `PATCH /vms/{id}/config` accepts `networkAdapterChanges[].networkId` and
+`addNetworkAdapterNetworkId` (switch and VLAN replaced by the network's; 400 `unknown_network`).
+
+### Networks, host health, host settings, VM move, folders
+
+| Method & path | Purpose | Permission / notes |
+|---|---|---|
+| GET `/hosts/{id}/networks` · GET `/networks` | portal networks (ADR-030): `{id, hostId, hostName, name, switchName, vlanId, description, createdAt, canManage}` | host visibility (404 otherwise) |
+| POST `/hosts/{id}/networks` `{name, switchName, vlanId?, description?}` | new network on an existing switch (`vlanId` 1–4094, null = untagged). 400 `invalid_network_name`, `invalid_switch_name`, `invalid_vlan`, `unknown_switch`, `description_too_long`; 409 `too_many_networks` (200 per host), `network_name_exists`, `network_exists` (same switch + VLAN) | `network.manage` on the host; audited `network.portal.create` |
+| PUT `/networks/{id}` `{name, vlanId?, description?, updateAdapters}` | rename / change VLAN; with `updateAdapters` the adapters on the old switch + VLAN (read live, at most 50 VMs) are re-tagged by one `vm.config/Update` job per VM. Returns `{network, jobs, skipped}` (VMs without `vm.config.network`). 503 `host_unreachable` when the adapters cannot be read | `network.manage` on the host; audited `network.portal.update` |
+| DELETE `/networks/{id}` | removes the portal record only (adapters keep switch and VLAN) | `network.manage` on the host; audited |
+| GET `/hosts/{id}/health` | host health report (ADR-036): hardware, physical disks, volumes, storage pools, physical NICs, recent critical/error events, Hyper-V services, `errors`, overall `status` (`Ok`/`Warning`/`Critical`/`Unknown`). Live, up to 120 s | `inventory.read` on the **host** (404 otherwise) |
+| PUT `/hosts/{id}/storage-folders` `{folders}` | allowed storage folders of a **remote** host (ADR-034), sent to its management agent; 409 `decided_on_the_host` for hosts with their own agent; 400 `invalid_storage_folder`, `too_many_storage_folders` (16), `duplicate_storage_folder` | `hosts.manage` global; audited `hosts.storage_folders.update` |
+| PUT `/hosts/{id}/backup-staging` `{path}` | local folder for temporary backup copies (null clears it); 400 `invalid_staging_path` (drive roots and system folders refused), `location_not_allowed` | `hosts.manage` or `backup.manage` global; audited |
+| POST `/vms/{id}/move` `{mode: "host" \| "storage", destinationHostId?, destinationPath?, includeStorage = true, idempotencyKey?}` | job `vm.migrate` (ADR-035): `host` = `Move-VM` to another portal host (with storage: `destinationPath` required, the VM goes to `<path>\<name>`), `storage` = `Move-VMStorage` on the same host. 400 `invalid_move_mode`, `invalid_destination_host`, `destination_path_required`, `destination_path_only_with_storage`, `invalid_location`, `location_not_allowed`; 409 `vm_missing`, `destination_unknown_name`, `host_not_allowed`, `storage_not_allowed` (group limits); 503 `host_unreachable` | `vm.migrate` on the VM + `vm.create` on the destination host; audited `vm.migrate.request` |
+| POST `/hosts/{id}/files/folders` `{parent, name, groupId?}` | new folder `<parent>\<name>` in the file explorer (inside the allowed storage folders, never over an existing name). 400 `invalid_path`, `invalid_folder_name`, `location_not_allowed`, `path_too_long` | `host.files.write` on the host, or on the group within its storage paths; audited `host.files.folder.create` |
+
+### Agent updates (ADR-029)
+
+| Method & path | Purpose | Permission / notes |
+|---|---|---|
+| GET `/agents/updates` | `{gatewayVersion, package {version, sha256, sizeBytes, signed, selfSigned, catalogSigned, signer}, outdated, agents[]}`; each agent `{id, kind: host \| management, name, version, connected, protocol, outdated, updaterInstalled, lastUpdateResult, canUpdate, reason, runningJobId}`; `reason` = `not_connected`, `agent_too_old` (before 0.7.0), `updater_missing`, `package_unsigned` | `hosts.manage` global |
+| POST `/hosts/{id}/agent/update` · POST `/management-agents/{id}/update` | job `agent.update` (one running per agent; `created:false` returns the running one). 409 `package_missing`, `up_to_date`, or the `reason` above | `hosts.manage` global (also at execution); audited `agent.update.request` |
+| POST `/agents/update-outdated` | one job per agent that can be updated: `{queued[], skipped[{id, name, reason}]}` | `hosts.manage` global; audited |
+
+### Backups (ADR-031)
+
+"Backup area" = any of `backup.manage`, `backup.run`, `backup.restore` held at **Global** scope (403 + audit
+otherwise). A restore point is evaluated on its VM while the VM exists (404 when the VM is not readable), on Global
+afterwards. Repository passwords are write-only.
+
+| Method & path | Purpose | Permission / notes |
+|---|---|---|
+| GET `/backup/overview` | last 24 h of runs, counts, protected / unprotected VMs, latest problems, recent runs | backup area |
+| GET `/backup/repositories` | repositories with usage (`points`, `bytes`), `hasCredentials`, last check; `userName` only to `backup.manage` | backup area |
+| POST `/backup/repositories` `{name, description?, path, hostId?, userName?, password?}` · PUT `/backup/repositories/{id}` (same body; the path never changes; `userName` empty = remove the credentials, `password` omitted = keep) | local folder of one host (`hostId` required, within its allowed storage folders) or SMB share (`\\server\share[\folder]`, no `$` shares, no host). 400 `invalid_repository_name`, `invalid_repository_path`, `host_required`, `share_has_no_host`, `credentials_only_for_shares`, `invalid_repository_credentials`, `location_not_allowed`; 409 `repository_name_exists` | `backup.manage` global; audited without the password |
+| DELETE `/backup/repositories/{id}` | 409 `repository_in_use` (jobs), `repository_has_points` | `backup.manage` global; audited |
+| POST `/backup/repositories/{id}/check` `{hostId?}` | readiness checks from one host (write test, free space, staging folder, VM checks); stored as last check | `backup.manage` global; audited |
+| POST `/backup/repositories/{id}/rescan` `{hostId?}` | restore points found in the repository and unknown to the portal are added as `Unverified`: `{found, added}` | `backup.manage` global; audited |
+| GET `/hosts/{id}/backup-readiness?repositoryId=` | readiness checks of a host (optionally with a repository) | `hosts.manage` or `backup.manage` global |
+| GET `/backup/jobs` · POST `/backup/jobs` · PUT `/backup/jobs/{id}` · DELETE `/backup/jobs/{id}` | backup jobs. Body `{name, description?, repositoryId, enabled, scheduleKind: daily \| hourly \| manual, daysMask (bit 0 = Sunday), times ["HH:mm"], intervalHours (1–24), timeZoneId, retentionPoints (1–366), retentionDays?, checkpointType: Production \| ProductionOnly \| Standard, verifyAfterCopy, restoreTestDays (0–365), notifyOn: never \| failure \| warning \| always, vmIds[], groupIds[]}` (1–500 targets). The saver must hold `backup.run` on every target (400 `target_not_allowed`); runs execute as the user who last saved the job (`runsAs`). Delete keeps the restore points (no retention afterwards) | list: backup area; writes: `backup.manage` global; audited |
+| POST `/backup/jobs/{id}/run` | run now (`{runId, total}`); 409 `run_in_progress` | `backup.manage` or `backup.run` global; audited `backup.job.run` |
+| GET `/backup/runs?jobId=&limit=` · GET `/backup/runs/{id}` | runs (status Running / Success / Warning / Failed, counts, message) · one run with its points | backup area |
+| GET `/backup/points?vmId=&repositoryId=&jobId=` · GET `/backup/points/{id}` | restore points (`status` Creating / Ok / Failed / Unverified / Deleting, size, checkpoint type requested and used, verify and test results, disks, `keep`) · one point with its manifest. Points of VMs the caller cannot read are left out | backup area (list) / readable point |
+| POST `/backup/points/{id}/verify` | job `backup.verify` (size + SHA-256 of every file) on a host that can read the repository; 409 `backup_point_not_usable`; 503 `host_unreachable` | `backup.run` on the point; audited |
+| POST `/backup/points/{id}/delete` `{confirmName}` | job `backup.remove` (typed VM name); 409 `backup_point_busy` | `backup.manage` global; audited `backup.point.delete.request` |
+| POST `/backup/points/{id}/keep` `{keep}` | exclude from retention | `backup.manage` global; audited |
+| POST `/backup/points/{id}/restore` `{mode: NewVm \| Replace \| Test, hostId?, name?, location?, network: Same \| Disconnected \| Switch, switchName?, startAfter, confirmName?, idempotencyKey?}` | job `backup.restore`. NewVm / Test: on `hostId` (default the point's host), `vm.create` there; Test is always disconnected and never started after. Replace: the original VM (typed name; 409 `vm_not_found` when it is gone). 400 `invalid_restore_mode`, `invalid_vm_name`, `invalid_location`, `location_not_allowed`, `invalid_restore_network`, `confirmation_required`; 409 `backup_point_not_usable`, `vm_name_exists`, `staging_required`, `repository_other_host`, `idempotency_conflict` | `backup.restore` on the point (+ `vm.create` on the host for NewVm / Test); audited `backup.restore.request` |
+| POST `/backup/points/{id}/restore-disk` `{disk, hostId?, destinationFolder, attachVmId?}` | job `backup.restoredisk`: copy one disk of the point to a host folder, optionally attached to a VM (SCSI). 400 `invalid_disk`, `invalid_vm`, `invalid_location`, `location_not_allowed` | `backup.restore` on the point + `vm.config.storage` on the VM to attach to, or `host.files.write` on the host; audited |
+| POST `/backup/points/{id}/mount` `{disk, hostId?}` | attach a disk of the point read-only to a host with its own agent (file restore): `{mountId, hostId, volumes[], expiresUtc, staged}`. 409 `not_supported` (remote host), `backup_point_not_usable`, `staging_required`; 503 `host_unreachable`. May take long when a staged copy is made (up to 1 h) | `backup.restore` on the point; audited `backup.files.mount` |
+| GET `/backup/mounts` · GET `/backup/mounts/{mountId}/files?path=` · GET `/backup/mounts/{mountId}/download?path=` · POST `/backup/mounts/{mountId}/dismount` | the caller's own mounts · folder listing inside the mounted volumes · streamed download (4 MB chunks, aborted on failure, audited with SHA-256) · detach | only the user who mounted (404 for others); `backup.restore` re-checked on every list/download |
+| GET `/vms/{id}/backups` | restore points of a VM + `canRun`, `canRestore`, `canManage` + repositories usable from its host | `inventory.read` on the VM |
+| POST `/vms/{id}/backup` `{repositoryId, checkpointType?, verifyAfterCopy?}` | "Back up now": a run with one point and one `backup.vm` job; 409 `vm_missing`, `backup_in_progress`, `staging_required`, `repository_other_host`; 400 `unknown_repository`, `invalid_checkpoint_type` | `backup.run` on the VM; audited `backup.vm.request` |
+
+### Notifications and API tokens (ADR-032, ADR-033)
+
+| Method & path | Purpose | Permission / notes |
+|---|---|---|
+| GET `/settings/notifications` · PUT `/settings/notifications` `{email {enabled, host, port, security: starttls \| none, userName?, password?, from, to[]}, webhooks [{name, url, format: generic \| teams \| slack}], restoreTestFailed, agentsOutdated}` · POST `/settings/notifications/test` | SMTP and webhooks. `password`: omitted = keep, `""` = remove; webhook URLs are returned masked and a masked URL sent back keeps the stored one. 400 `invalid_smtp_host`, `invalid_smtp_port`, `invalid_smtp_security`, `invalid_mail_address`, `too_many_webhooks`, `invalid_webhook_url` (https only), `invalid_webhook_format`, `no_channel` | `settings.manage`; audited without secrets |
+| GET `/api-tokens` · POST `/api-tokens` `{name, expiresInDays?, scopes?: ["backup.read"]}` · POST `/api-tokens/{id}/revoke` | read-only tokens for monitoring; the token (`hvp_` + 40 characters) is returned **once** by POST. 400 `invalid_token_name`, `invalid_scope`, `invalid_expiry`; 409 `too_many_tokens` (100) | `settings.manage` (+ recent re-authentication to create); audited |
+| GET `/public/backup/status` · GET `/public/backup/runs?since=` | public read-only API: overall status, jobs with last run, VMs with newest point (names only) · runs since a time (default 24 h, max 500) | `Authorization: Bearer hvp_...` with scope `backup.read` only (no cookie, no CSRF); 401 `invalid_token` (audited `api_tokens.use`); rate limit 120/min per address (429) |
+
 ## Example (PowerShell)
 
 ```powershell
@@ -101,4 +177,9 @@ Invoke-RestMethod -Method Post "https://gw:8443/api/v1/vms/$vmId/power" -WebSess
   -ContentType application/json -Body (@{ operation = 'Start'; idempotencyKey = [guid]::NewGuid().ToString() } | ConvertTo-Json)
 ```
 Note: `WebRequestSession` keeps headers passed with `-Headers`; clear `$s.Headers` between unrelated calls.
-Automation accounts with API tokens (non-interactive) are planned for Milestone 2.
+
+Monitoring with an API token (v0.7.0, read-only, `/api/v1/public/*` only):
+```powershell
+Invoke-RestMethod https://gw:8443/api/v1/public/backup/status -Headers @{ Authorization = "Bearer $env:HVP_API_TOKEN" }
+```
+Tokens with write scopes (automation accounts) do not exist: changes still need a signed-in user.

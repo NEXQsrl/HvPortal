@@ -53,10 +53,31 @@ public sealed class JobService
     public const string TemplateCaptureJobType = "template.capture";
     /// <summary>Template folder deleted from the host (target = the host).</summary>
     public const string TemplateDeleteJobType = "template.delete";
+    /// <summary>VM moved to another host ("Host") or its files to another folder ("Storage"). Target = the VM.</summary>
+    public const string MigrateJobType = "vm.migrate";
+    /// <summary>Backup of one VM into a repository (target = the VM).</summary>
+    public const string BackupJobType = "backup.vm";
+    /// <summary>Check of a restore point (target = the host that reads it).</summary>
+    public const string BackupVerifyJobType = "backup.verify";
+    /// <summary>Restore point deleted from its repository (target = the host that deletes it).</summary>
+    public const string BackupRemoveJobType = "backup.remove";
+    /// <summary>Restore of a VM: "NewVm" / "Test" (target = the host), "Replace" (target = the VM replaced).</summary>
+    public const string RestoreJobType = "backup.restore";
+    /// <summary>One disk of a restore point copied to a host folder, optionally attached to a VM (target = the host).</summary>
+    public const string RestoreDiskJobType = "backup.restoredisk";
+    /// <summary>Update of the agent of a host (target = the host) or of a management agent (target = the management agent id).</summary>
+    public const string AgentUpdateJobType = "agent.update";
 
     /// <summary>Typed Hyper-V operation executed by a job of the given type/operation (null for power/delete jobs).</summary>
     public static HvOperation? HvOperationFor(string type, string operation) => (type, operation) switch
     {
+        (MigrateJobType, "Host") => HvOperation.MoveVm,
+        (MigrateJobType, "Storage") => HvOperation.MoveVmStorage,
+        (BackupJobType, "Backup") => HvOperation.BackupVm,
+        (BackupVerifyJobType, "Verify") => HvOperation.VerifyBackup,
+        (BackupRemoveJobType, "Delete") => HvOperation.RemoveBackup,
+        (RestoreJobType, "NewVm" or "Replace" or "Test") => HvOperation.RestoreBackup,
+        (RestoreDiskJobType, "Disk") => HvOperation.RestoreBackupDisk,
         (ConfigJobType, "Update") => HvOperation.SetVmConfig,
         (CreateJobType, "New") => HvOperation.NewVm,
         (CreateJobType, "FromTemplate") => HvOperation.NewVm,
@@ -74,7 +95,48 @@ public sealed class JobService
     /// Stored in Job.ParametersJson: the operation arguments (sent to the agent after re-stamping server-controlled
     /// fields at execution time) and gateway-only metadata.
     /// </summary>
-    public sealed record OperationParameters(JsonElement Args, Guid? GroupId = null, IReadOnlyList<string>? Permissions = null);
+    /// <summary>
+    /// BackupPointId: restore point of a backup/verify/delete/restore job (target, credentials and folder are re-stamped
+    /// from it at execution). DestinationHostId: host of a VM move. UpdateVersion: agent update jobs.
+    /// </summary>
+    public sealed record OperationParameters(JsonElement Args, Guid? GroupId = null, IReadOnlyList<string>? Permissions = null,
+        Guid? BackupPointId = null, Guid? DestinationHostId = null, string? UpdateVersion = null);
+
+    /// <summary>
+    /// Update of an agent (no Hyper-V operation): the agent downloads the package from the agent port, checks it and hands it
+    /// to its updater task; the job ends when the agent reconnects with the expected version (or fails after a timeout).
+    /// </summary>
+    public async Task<(Job Job, bool Created)> CreateAgentUpdateJobAsync(Guid userId, Guid targetId, string targetName, bool management, string version,
+        CancellationToken ct)
+    {
+        var running = await _db.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.TargetId == targetId && j.Type == AgentUpdateJobType
+            && (j.Status == JobStatus.Queued || j.Status == JobStatus.Running || j.Status == JobStatus.Reconciling), ct);
+        if (running is not null)
+        {
+            return (running, false);
+        }
+        var now = _time.GetUtcNow();
+        var job = new Job
+        {
+            Type = AgentUpdateJobType,
+            Operation = management ? "ManagementAgent" : "Host",
+            TargetType = ScopeType.Host,
+            TargetId = targetId,
+            TargetName = targetName,
+            HostId = management ? null : targetId,
+            RequestedByUserId = userId,
+            RequiredPermission = Permissions.HostsManage,
+            Status = JobStatus.Queued,
+            CreatedAt = now,
+            TimeoutSeconds = 900,
+            ParametersJson = JsonSerializer.Serialize(new OperationParameters(HvOperations.ToElement(new { }), UpdateVersion: version), AgentProtocol.Json),
+        };
+        _db.Jobs.Add(job);
+        _db.JobEvents.Add(new JobEvent { JobId = job.Id, At = now, Kind = "created", Message = $"Update of the agent of {targetName} to {version} requested" });
+        await _db.SaveChangesAsync(ct);
+        _signal.Notify();
+        return (job, true);
+    }
 
     public sealed record OperationJobSpec(string Type, string Operation, ScopeType TargetType, Guid TargetId, string? TargetName, Guid HostId,
         string RequiredPermission, OperationParameters Parameters, int TimeoutSeconds, string Description);

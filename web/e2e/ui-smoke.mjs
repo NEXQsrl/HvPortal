@@ -225,7 +225,10 @@ try {
   check('old /vms link redirects to the inventory', await page.waitForURL(/\/inventory\?view=vms/, { timeout: 5000 }).then(() => true, () => false));
   await page.waitForTimeout(800);
   await shot(page, '07-vms');
-  await page.getByRole('link', { name: 'Utenti e ruoli' }).click();
+  // Users and Audit live in the tree of the Settings area (v0.7.0), not among the top icons.
+  check('users and audit are not top navigation icons any more', (await page.locator('nav.nav a', { hasText: /Utenti e ruoli|Audit/ }).count()) === 0);
+  await page.getByRole('link', { name: 'Impostazioni', exact: true }).click();
+  await page.getByRole('treeitem', { name: 'Utenti e ruoli' }).click();
   await page.getByRole('heading', { name: 'Assegnazioni dei ruoli' }).waitFor();
   await shot(page, '08-users');
   // New user: type (Microsoft disabled until Entra is configured), role, MFA at first sign-in.
@@ -258,7 +261,8 @@ try {
     await reauthDel.getByRole('button', { name: 'Conferma' }).click();
   }
   check('user deleted from Users & roles (row and assignment gone)', await page.locator('tr', { hasText: 'mario.rossi' }).first().waitFor({ state: 'detached', timeout: 15000 }).then(() => true, () => false));
-  await page.getByRole('link', { name: 'Audit' }).click();
+  await page.getByRole('treeitem', { name: 'Audit', exact: true }).click();
+  await page.locator('.pager').waitFor();
   check('audit is paginated', (await page.locator('.pager').count()) === 1);
   check('page itself does not scroll (only panels)', await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight + 1));
   await page.getByRole('button', { name: 'Verifica integrità' }).click();
@@ -403,6 +407,43 @@ try {
   check('troubleshooting page with its sections', (await page.getByRole('heading', { level: 2 }).count()) >= 4);
   check('guide pages available in Italian', true);
   await shot(page, '11c-guide-trouble');
+
+  // v0.7.0 pages render without page errors. Hyper-V is not reachable from this machine: no backup, move or health
+  // read is exercised for real here (see docs/verification/real-host-test-plan.md).
+  await page.goto(new URL('/backup', url).href);
+  await page.getByRole('heading', { name: /^Backup/ }).first().waitFor();
+  await shot(page, '16-backup-overview');
+  for (const tab of ['jobs', 'repositories', 'runs', 'points', 'files']) {
+    await page.goto(new URL('/backup?tab=' + tab, url).href);
+    await page.waitForTimeout(800);
+    await shot(page, '16-backup-' + tab);
+  }
+  check('backup area: overview and every tab render', true);
+  await page.goto(new URL('/networks', url).href);
+  await page.getByRole('heading', { name: 'Rete', exact: true }).first().waitFor();
+  await page.goto(new URL('/inventory', url).href);
+  await page.locator('tr.clickable', { hasText: 'hv-lab-01' }).first().click();
+  await page.getByRole('heading', { name: 'hv-lab-01' }).waitFor();
+  // The networks page lists only hosts with Hyper-V access; the network tab of the host shows its portal networks anyway.
+  await page.getByRole('tab', { name: 'Rete', exact: true }).click();
+  check('host network tab shows the portal networks (VLAN)', await page.getByText('Reti (VLAN)').first().waitFor({ timeout: 15000 }).then(() => true, () => false));
+  await shot(page, '17-host-networks-vlan');
+  await page.getByRole('tab', { name: 'Stato', exact: true }).click();
+  check('host page has a health tab', await page.getByText("Stato dell'host").first().waitFor({ timeout: 15000 }).then(() => true, () => false));
+  await page.waitForTimeout(3000);
+  await shot(page, '18-host-health');
+  await page.getByRole('tab', { name: 'Impostazioni' }).click();
+  check('host settings show the storage folders, the backup staging folder and the agent update',
+    await page.getByText('Cartelle visibili dal portale').first().waitFor({ timeout: 10000 }).then(() => true, () => false)
+    && (await page.getByText('Cartella di appoggio dei backup').count()) >= 1);
+  await shot(page, '18b-host-settings-v7');
+  await page.goto(new URL('/settings?tab=notifications', url).href);
+  await page.waitForTimeout(1000);
+  await shot(page, '19-settings-notifications');
+  await page.goto(new URL('/settings?tab=apiTokens', url).href);
+  await page.waitForTimeout(1000);
+  await shot(page, '19b-settings-api-tokens');
+  check('settings: notifications and API tokens tabs', (await page.getByRole('tab', { name: 'Notifiche' }).count()) === 1 && (await page.getByRole('tab', { name: 'Token API' }).count()) === 1);
 
   // Theme + language from the account menu
   await page.locator('.account-button').click();

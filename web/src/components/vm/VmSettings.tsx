@@ -1,7 +1,7 @@
 import { Cpu, Disc3, HardDrive, MemoryStick, Network, Plus, Save, Settings2, ShieldCheck, StickyNote, Undo2, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, get } from '@/api/client';
-import type { Accepted, ConfigChange, ConfigResponse, VmConfig } from '@/api/ops-types';
+import type { Accepted, ConfigChange, ConfigResponse, PortalNetworkRef, VmConfig } from '@/api/ops-types';
 import { realtime } from '@/api/realtime';
 import type { Vm, VmDetails } from '@/api/types';
 import { ErrorAlert, Loading, Notice, StatusBadge } from '@/components/common';
@@ -26,8 +26,9 @@ interface Draft {
   startupMb: number; dynamic: boolean; minMb: number; maxMb: number; buffer: number; priority: number;
   secureBoot: boolean; template: string;
   iso: string;
-  adapters: Record<string, { switchName: string; vlanId: number }>;
-  addAdapter: boolean; addAdapterSwitch: string;
+  /** networkId: network of the portal chosen for the adapter ("" = switch and VLAN set by hand). */
+  adapters: Record<string, { switchName: string; vlanId: number; networkId: string }>;
+  addAdapter: boolean; addAdapterSwitch: string; addAdapterNetworkId: string;
   newDisk: boolean; newDiskGb: number; newDiskFixed: boolean;
   expandPath: string; expandGb: number;
 }
@@ -37,7 +38,12 @@ const GB = 1073741824;
 
 type DetailsResponse = { details: VmDetails | null; stale: boolean };
 
-function fromConfig(c: VmConfig): Draft {
+/** The network of the portal an adapter is on now: same switch and same access VLAN (0 = untagged). */
+function networkOf(networks: PortalNetworkRef[], switchName: string | null, vlanId: number): string {
+  return networks.find((n) => n.switchName === switchName && (n.vlanId ?? 0) === vlanId)?.id ?? '';
+}
+
+function fromConfig(c: VmConfig, networks: PortalNetworkRef[] = []): Draft {
   return {
     name: c.name, notes: c.notes ?? '', autoStart: c.automaticStartAction ?? 'Nothing', autoStartDelay: c.automaticStartDelay ?? 0,
     autoStop: c.automaticStopAction ?? 'Save', checkpointType: c.checkpointType ?? 'Production',
@@ -47,8 +53,8 @@ function fromConfig(c: VmConfig): Draft {
     buffer: c.memoryBuffer ?? 20, priority: c.memoryPriority ?? 50,
     secureBoot: !!c.secureBootEnabled, template: c.secureBootTemplate ?? 'MicrosoftWindows',
     iso: c.dvdDrives[0]?.path ?? '',
-    adapters: Object.fromEntries(c.networkAdapters.map((n) => [n.id, { switchName: n.switchName ?? '', vlanId: n.vlanId ?? 0 }])),
-    addAdapter: false, addAdapterSwitch: '',
+    adapters: Object.fromEntries(c.networkAdapters.map((n) => [n.id, { switchName: n.switchName ?? '', vlanId: n.vlanId ?? 0, networkId: networkOf(networks, n.switchName, n.vlanId ?? 0) }])),
+    addAdapter: false, addAdapterSwitch: '', addAdapterNetworkId: '',
     newDisk: false, newDiskGb: 40, newDiskFixed: false,
     expandPath: '', expandGb: 0,
   };
@@ -84,10 +90,13 @@ function diff(c: VmConfig, d: Draft): ConfigChange {
     const a = d.adapters[n.id]!;
     const b = o.adapters[n.id]!;
     if (a.switchName === b.switchName && a.vlanId === b.vlanId) return [];
+    // On a network of the portal: the gateway takes switch and VLAN from the network (also when the job runs).
+    if (a.networkId) return [{ adapterId: n.id, switchName: a.switchName, vlanId: a.vlanId, networkId: a.networkId }];
     return [{ adapterId: n.id, switchName: a.switchName !== b.switchName ? a.switchName : undefined, vlanId: a.vlanId !== b.vlanId ? a.vlanId : undefined }];
   });
   if (nics.length > 0) ch.networkAdapterChanges = nics;
-  if (d.addAdapter) ch.addNetworkAdapterSwitch = d.addAdapterSwitch;
+  if (d.addAdapter && d.addAdapterNetworkId) ch.addNetworkAdapterNetworkId = d.addAdapterNetworkId;
+  else if (d.addAdapter) ch.addNetworkAdapterSwitch = d.addAdapterSwitch;
   if (d.newDisk) ch.newDisk = { sizeGb: d.newDiskGb, fixed: d.newDiskFixed };
   if (d.expandPath && d.expandGb > 0) ch.expandDisk = { path: d.expandPath, newSizeGb: d.expandGb };
   return ch;
@@ -118,7 +127,7 @@ export function VmSettings({ vm }: { vm: Vm }) {
   const [error, setError] = useState<unknown>(null);
   const [pendingJob, setPendingJob] = useState<string | null>(null);
 
-  useEffect(() => { if (cfg.data) setDraft(fromConfig(cfg.data.config)); }, [cfg.data]);
+  useEffect(() => { if (cfg.data) setDraft(fromConfig(cfg.data.config, cfg.data.networks)); }, [cfg.data]);
   const diskSizes = useMemo(() => new Map((details.data?.details?.disks ?? [])
     .flatMap((k) => (k.path && k.maxSizeBytes != null ? [[k.path.toLowerCase(), k.maxSizeBytes] as const] : []))), [details.data]);
   // Reload the live configuration when the change we queued has finished.
@@ -136,6 +145,8 @@ export function VmSettings({ vm }: { vm: Vm }) {
   if (cfg.loading && !cfg.data) return <Loading />;
   if (!cfg.data || !draft) return <div className="p-4"><Notice kind="danger" title={t('cfg.loadFailed')}>{cfg.error ? String((cfg.error as Error).message) : null}</Notice></div>;
   const { config: c, can, options, switches } = cfg.data;
+  const networks = cfg.data.networks ?? [];
+  const vlanInvalid = Object.values(draft.adapters).some((a) => !Number.isInteger(a.vlanId) || a.vlanId < 0 || a.vlanId > 4094);
   const off = vm.powerState === 'Off';
   const set = (p: Partial<Draft>) => setDraft({ ...draft, ...p });
   const offBadge = !off && <StatusBadge tone="warn">{t('cfg.requiresOff')}</StatusBadge>;
@@ -285,17 +296,31 @@ export function VmSettings({ vm }: { vm: Vm }) {
           {c.networkAdapters.length === 0 && <p className="text-sm text-muted-foreground">{t('cfg.noAdapters')}</p>}
           {c.networkAdapters.map((n) => {
             const a = draft.adapters[n.id]!;
+            const setAdapter = (p: Partial<typeof a>) => set({ adapters: { ...draft.adapters, [n.id]: { ...a, ...p } } });
+            const onNetwork = !!a.networkId;
             return (
-              <div key={n.id} className="grid gap-2 rounded-md border p-2 sm:col-span-2 xl:col-span-3 xl:grid-cols-[1fr_2fr_1fr]">
+              <div key={n.id} className={cn('grid gap-2 rounded-md border p-2 sm:col-span-2 xl:col-span-3', networks.length > 0 ? 'xl:grid-cols-[1fr_2fr_2fr_1fr]' : 'xl:grid-cols-[1fr_2fr_1fr]')}>
                 <div className="min-w-0 text-sm"><div className="font-medium">{n.name}</div><div className="font-mono text-xs text-muted-foreground">{n.macAddress ?? ''}</div></div>
+                {networks.length > 0 && (
+                  <Field label={t('pnet.network')} htmlFor={`net-${n.id}`}>
+                    <NativeSelect id={`net-${n.id}`} value={a.networkId} onChange={(e) => {
+                      const net = networks.find((x) => x.id === e.target.value);
+                      setAdapter(net ? { networkId: net.id, switchName: net.switchName, vlanId: net.vlanId ?? 0 } : { networkId: '' });
+                    }}>
+                      <option value="">{t('pnet.custom')}</option>
+                      {networks.map((x) => <option key={x.id} value={x.id}>{x.name} — {x.switchName}{x.vlanId ? ` · VLAN ${x.vlanId}` : ''}</option>)}
+                    </NativeSelect>
+                  </Field>
+                )}
                 <Field label={t('cfg.switch')} htmlFor={`nic-${n.id}`}>
-                  <NativeSelect id={`nic-${n.id}`} value={a.switchName} onChange={(e) => set({ adapters: { ...draft.adapters, [n.id]: { ...a, switchName: e.target.value } } })}>
+                  <NativeSelect id={`nic-${n.id}`} value={a.switchName} disabled={onNetwork} onChange={(e) => setAdapter({ switchName: e.target.value })}>
                     <option value="">{t('cfg.notConnected')}</option>
                     {[...new Set([...(a.switchName ? [a.switchName] : []), ...switches])].map((s) => <option key={s} value={s}>{s}</option>)}
                   </NativeSelect>
                 </Field>
-                <Field label={t('cfg.vlan')} htmlFor={`vlan-${n.id}`}>
-                  <Input id={`vlan-${n.id}`} type="number" min={0} max={4094} value={a.vlanId} onChange={(e) => set({ adapters: { ...draft.adapters, [n.id]: { ...a, vlanId: num(e.target.value) } } })} />
+                <Field label={t('cfg.vlan')} htmlFor={`vlan-${n.id}`} hint={onNetwork ? undefined : t('pnet.vlanZero')}
+                  error={!Number.isInteger(a.vlanId) || a.vlanId < 0 || a.vlanId > 4094 ? t('pnet.vlanInvalid') : undefined}>
+                  <Input id={`vlan-${n.id}`} type="number" min={0} max={4094} value={a.vlanId} disabled={onNetwork} onChange={(e) => setAdapter({ vlanId: num(e.target.value) })} />
                 </Field>
               </div>
             );
@@ -305,12 +330,21 @@ export function VmSettings({ vm }: { vm: Vm }) {
               <Checkbox checked={draft.addAdapter} disabled={hotAddLocked} onCheckedChange={(v) => set({ addAdapter: !!v })} /><Plus className="size-4" />{t('cfg.addAdapter')}
             </label>
             {hotAddLocked && <StatusBadge tone="warn">{t('cfg.requiresOff')}</StatusBadge>}
-            {draft.addAdapter && (
+            {draft.addAdapter && networks.length > 0 && (
+              <NativeSelect aria-label={t('pnet.network')} value={draft.addAdapterNetworkId} onChange={(e) => set({ addAdapterNetworkId: e.target.value })} className="w-72">
+                <option value="">{t('pnet.custom')}</option>
+                {networks.map((x) => (
+                  <option key={x.id} value={x.id} disabled={!!x.vlanId && !cfg.data!.vlanOnAdd}>{x.name} — {x.switchName}{x.vlanId ? ` · VLAN ${x.vlanId}` : ''}</option>
+                ))}
+              </NativeSelect>
+            )}
+            {draft.addAdapter && !draft.addAdapterNetworkId && (
               <NativeSelect aria-label={t('cfg.switch')} value={draft.addAdapterSwitch} onChange={(e) => set({ addAdapterSwitch: e.target.value })} className="w-64">
                 <option value="">{t('cfg.notConnected')}</option>
                 {switches.map((s) => <option key={s} value={s}>{s}</option>)}
               </NativeSelect>
             )}
+            {draft.addAdapter && networks.some((x) => !!x.vlanId) && !cfg.data.vlanOnAdd && <span className="text-xs text-muted-foreground">{t('pnet.vlanOnAddOld')}</span>}
           </div>
         </Block>
 
@@ -365,7 +399,7 @@ export function VmSettings({ vm }: { vm: Vm }) {
         {offOnlyPending && <StatusBadge tone="warn">{t('cfg.pendingRequiresOff')}</StatusBadge>}
         <span className="flex-1" />
         <Button type="button" variant="outline" size="sm" disabled={count === 0 || busy} onClick={() => setDraft(fromConfig(c))}><Undo2 />{t('cfg.discard')}</Button>
-        <Button type="button" size="sm" disabled={count === 0 || busy || nameInvalid || memInvalid || dynamicRangeInvalid || expandInvalid || offOnlyPending || !!pendingJob}
+        <Button type="button" size="sm" disabled={count === 0 || busy || nameInvalid || memInvalid || vlanInvalid || dynamicRangeInvalid || expandInvalid || offOnlyPending || !!pendingJob}
           onClick={() => void apply()}><Save />{t('cfg.apply')}</Button>
       </div>
     </div>

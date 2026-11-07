@@ -253,6 +253,17 @@ public sealed class ManagedHost
     public byte[]? RemotePasswordEncrypted { get; set; }
     public bool RemoteUseHttps { get; set; }
     public DateTimeOffset? RemoteCredentialUpdatedAt { get; set; }
+
+    /// <summary>
+    /// Remote hosts only: JSON array of the folders the portal may use there (sent to the management agent, which
+    /// enforces them). Hosts with their own agent decide this list on the host (Install-Agent -StorageFolders).
+    /// </summary>
+    public string? StorageFoldersJson { get; set; }
+    /// <summary>Local folder of the host for temporary copies of backups (shares with credentials, restore tests, file restore).</summary>
+    public string? BackupStagingPath { get; set; }
+    /// <summary>From the agent's Hello (protocol 9): the updater task is registered on the host.</summary>
+    public bool? AgentUpdaterInstalled { get; set; }
+    public string? AgentLastUpdateResult { get; set; }
 }
 
 public enum TemplateStatus
@@ -324,6 +335,9 @@ public sealed class ManagementAgent
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? EnrolledAt { get; set; }
     public DateTimeOffset? LastSeenAt { get; set; }
+    /// <summary>From the agent's Hello (protocol 9): the updater task is registered on the machine.</summary>
+    public bool? UpdaterInstalled { get; set; }
+    public string? LastUpdateResult { get; set; }
 }
 
 public sealed class AgentCertificate

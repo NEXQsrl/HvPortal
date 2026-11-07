@@ -24,7 +24,7 @@ namespace HvPortal.Gateway.Jobs;
 ///    gateway restart after dispatch), the job moves to Reconciling and the outcome is derived from the VM's
 ///    observed state. Commands with an uncertain outcome are never re-sent (no exactly-once claim).
 /// </summary>
-public sealed class JobRunner : BackgroundService
+public sealed partial class JobRunner : BackgroundService
 {
     private readonly IServiceScopeFactory _scopes;
     private readonly IAgentDispatcher _dispatcher;
@@ -36,6 +36,7 @@ public sealed class JobRunner : BackgroundService
     private readonly ILogger<JobRunner> _logger;
     private readonly string _instanceId = Environment.MachineName + ":" + Guid.NewGuid().ToString("N")[..8];
     private readonly ConcurrentDictionary<Guid, Task> _running = new();
+    private readonly ConcurrentDictionary<Guid, byte> _long = new();
 
     public JobRunner(IServiceScopeFactory scopes, IAgentDispatcher dispatcher, AuditLog audit, IRealtimeNotifier notifier,
         JobSignal signal, TimeProvider time, IOptions<GatewayOptions> options, ILogger<JobRunner> logger)
@@ -113,22 +114,28 @@ public sealed class JobRunner : BackgroundService
         foreach (var done in _running.Where(kv => kv.Value.IsCompleted).Select(kv => kv.Key).ToList())
         {
             _running.TryRemove(done, out _);
+            _long.TryRemove(done, out _);
         }
-        if (_running.Count >= _options.MaxConcurrentJobs)
+        // Jobs that can take hours (backups, restores, moves, agent updates) have their own budget: they never keep
+        // power operations or configuration changes waiting.
+        var shortRunning = _running.Count - _long.Count;
+        if (shortRunning >= _options.MaxConcurrentJobs && _long.Count >= _options.MaxConcurrentLongJobs)
         {
             return;
         }
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
         var now = _time.GetUtcNow();
-        var ids = await db.Jobs.AsNoTracking()
+        var queued = await db.Jobs.AsNoTracking()
             .Where(j => j.Status == JobStatus.Queued && (j.NotBefore == null || j.NotBefore <= now))
-            .OrderBy(j => j.CreatedAt).Select(j => j.Id).Take(20).ToListAsync(ct);
-        foreach (var id in ids)
+            .OrderBy(j => j.CreatedAt).Select(j => new { j.Id, j.Type }).Take(50).ToListAsync(ct);
+        foreach (var q in queued)
         {
-            if (_running.Count >= _options.MaxConcurrentJobs)
+            var id = q.Id;
+            var isLong = IsLongJob(q.Type);
+            if (isLong ? _long.Count >= _options.MaxConcurrentLongJobs : _running.Count - _long.Count >= _options.MaxConcurrentJobs)
             {
-                break;
+                continue;
             }
             var lease = now.AddMinutes(2);
             var claimed = await db.Jobs.Where(j => j.Id == id && j.Status == JobStatus.Queued)
@@ -140,6 +147,10 @@ public sealed class JobRunner : BackgroundService
                     .SetProperty(j => j.Attempt, j => j.Attempt + 1), ct);
             if (claimed == 1)
             {
+                if (isLong)
+                {
+                    _long[id] = 0;
+                }
                 _running[id] = Task.Run(() => RunJobAsync(id, ct), CancellationToken.None);
             }
         }
@@ -148,10 +159,24 @@ public sealed class JobRunner : BackgroundService
     /// <summary>For tests: waits for in-flight job executions.</summary>
     internal Task DrainAsync() => Task.WhenAll(_running.Values);
 
-    /// <summary>VM operations are serialized per VM; VM creation is serialized per host (name uniqueness, disk file names).</summary>
-    internal static string LockKey(Job job) => job.TargetType == ScopeType.Host
-        ? "host-create:" + job.TargetId.ToString("N")
-        : "vm:" + job.TargetId.ToString("N");
+    /// <summary>
+    /// VM operations are serialized per VM; VM creation is serialized per host (name uniqueness, disk file names);
+    /// work on a restore point that is not about a VM (verify, delete, restore as a new VM) is serialized per point.
+    /// </summary>
+    internal static string LockKey(Job job)
+    {
+        if (job.Type == JobService.AgentUpdateJobType)
+        {
+            return "agent-update:" + job.TargetId.ToString("N");
+        }
+        if (job.TargetType == ScopeType.Host && job.Type.StartsWith("backup.", StringComparison.Ordinal) && ReadParameters(job)?.BackupPointId is { } point)
+        {
+            return "backup-point:" + point.ToString("N");
+        }
+        return job.TargetType == ScopeType.Host
+            ? "host-create:" + job.TargetId.ToString("N")
+            : "vm:" + job.TargetId.ToString("N");
+    }
 
     private static JobService.OperationParameters? ReadParameters(Job job)
     {
@@ -205,6 +230,22 @@ public sealed class JobRunner : BackgroundService
                 return OperationValidation.Validate(capture) is null ? HvOperations.ToElement(capture) : null;
             case HvOperation.RemoveTemplate when HvOperations.FromElement<TemplateFolderRequest>(args) is { } rt:
                 return OperationValidation.Validate(rt) is null ? HvOperations.ToElement(rt) : null;
+            case HvOperation.MoveVm when vm is not null && HvOperations.FromElement<MoveVmRequest>(args) is { } mv:
+                var move = mv with { VmId = vm.HyperVId };
+                return OperationValidation.Validate(move) is null ? HvOperations.ToElement(move) : null;
+            case HvOperation.MoveVmStorage when vm is not null && HvOperations.FromElement<MoveVmStorageRequest>(args) is { } ms:
+                var storage = ms with { VmId = vm.HyperVId };
+                return OperationValidation.Validate(storage) is null ? HvOperations.ToElement(storage) : null;
+            case HvOperation.BackupVm when vm is not null && HvOperations.FromElement<BackupVmRequest>(args) is { } bk:
+                var backup = bk with { VmId = vm.HyperVId };
+                return OperationValidation.Validate(backup) is null ? HvOperations.ToElement(backup) : null;
+            case HvOperation.VerifyBackup or HvOperation.RemoveBackup when HvOperations.FromElement<BackupPointRequest>(args) is { } bp:
+                return OperationValidation.Validate(bp) is null ? HvOperations.ToElement(bp) : null;
+            case HvOperation.RestoreBackup when HvOperations.FromElement<RestoreBackupRequest>(args) is { } rb:
+                var restore = rb.Mode == RestoreModes.Replace ? rb with { ReplaceVmId = vm?.HyperVId } : rb;
+                return (rb.Mode != RestoreModes.Replace || vm is not null) && OperationValidation.Validate(restore) is null ? HvOperations.ToElement(restore) : null;
+            case HvOperation.RestoreBackupDisk when HvOperations.FromElement<RestoreDiskRequest>(args) is { } rd:
+                return OperationValidation.Validate(rd) is null ? HvOperations.ToElement(rd) : null;
             default:
                 return null;
         }
@@ -239,6 +280,12 @@ public sealed class JobRunner : BackgroundService
                 return;
             }
 
+            if (job.Type == JobService.AgentUpdateJobType)
+            {
+                await RunAgentUpdateAsync(scope.ServiceProvider, db, access, job, ct);
+                return;
+            }
+
             var hvOperation = JobService.HvOperationFor(job.Type, job.Operation);
             var parameters = hvOperation is null ? null : ReadParameters(job);
             if (hvOperation is not null && parameters is null)
@@ -249,6 +296,12 @@ public sealed class JobRunner : BackgroundService
 
             // Re-validate authorization at execution time: user enabled, every permission the operation needs.
             var resource = job.TargetType == ScopeType.Host ? ResourceRef.Host(job.TargetId) : ResourceRef.Vm(job.TargetId);
+            // Work on a restore point done by a host (verify, delete, restore elsewhere): the backup permission is
+            // evaluated on the VM of the point while it exists, on Global once it is gone.
+            if (job.TargetType == ScopeType.Host && parameters?.BackupPointId is { } pointOfJob)
+            {
+                resource = await BackupResourceAsync(db, pointOfJob, ct);
+            }
             var required = new List<string> { job.RequiredPermission };
             required.AddRange(parameters?.Permissions ?? []);
             if (hvOperation == HvOperation.SetVmConfig && HvOperations.FromElement<VmConfigChange>(parameters!.Args) is { } requested)
@@ -262,6 +315,10 @@ public sealed class JobRunner : BackgroundService
             {
                 // Created inside a folder by one of its users: the permission is held on the folder, whose limits open this host (ADR-024).
                 authorized = await policies.HoldsViaGroupAsync(job.RequestedByUserId, job.RequiredPermission, viaGroup, job.TargetId, ct);
+            }
+            if (authorized && hvOperation is { } extraOp)
+            {
+                authorized = await HoldsExtraPermissionsAsync(db, access, extraOp, job, parameters!, ct);
             }
             if (!authorized)
             {
@@ -318,6 +375,18 @@ public sealed class JobRunner : BackgroundService
                     return;
                 }
                 parameters = parameters with { Args = withTemplate };
+            }
+
+            // Protocol 9: networks (switch + VLAN), move destination, repository of the restore point: from the portal's records now.
+            if (hvOperation is { } stampOp && parameters is not null)
+            {
+                var (stampError, stampedArgs) = await StampProtocol9Async(scope.ServiceProvider, db, stampOp, job, parameters, vm, host, ct);
+                if (stampError is not null)
+                {
+                    await FinalizeAsync(db, job, JobStatus.Failed, stampError.Value.Message, stampError.Value.Code, null);
+                    return;
+                }
+                parameters = parameters with { Args = stampedArgs };
             }
 
             // Limits of the VM folders are checked again now (other operations may have used the quota meanwhile);
@@ -434,6 +503,10 @@ public sealed class JobRunner : BackgroundService
             if (status == JobStatus.Succeeded && job.Type == JobService.NetworkJobType)
             {
                 await RecordSwitchOwnershipAsync(db, job, hostId, parameters!, result.Operation?.Result);
+            }
+            if (hvOperation is { } doneOp && parameters is not null)
+            {
+                (status, code, message) = await ApplyProtocol9ResultAsync(db, doneOp, job, parameters, vm, hostId, status, code, result.Operation, message);
             }
             await FinalizeAsync(db, job, status, message, code, result.HyperVCode);
             if (job.Type == JobService.DeleteJobType && status == JobStatus.Succeeded)
@@ -874,6 +947,11 @@ public sealed class JobRunner : BackgroundService
         {
             // Saved with the job: the template never shows a state its job did not reach.
             Templates.TemplateRules.ApplyJobOutcome(db, template, job, status, message);
+        }
+        if (job.Type.StartsWith("backup.", StringComparison.Ordinal) && ReadParameters(job)?.BackupPointId is { } pointId)
+        {
+            // Same rule for restore points: a point never shows a state its job did not reach.
+            await VmBackup.BackupJobOutcome.ApplyFinalAsync(db, job, pointId, status, message);
         }
         job.ErrorCode = errorCode;
         job.HyperVCode = hyperVCode;

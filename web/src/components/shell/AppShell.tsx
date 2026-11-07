@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { realtime } from '@/api/realtime';
 import { BrandLogo } from '@/components/common';
+import { AgentUpdatesIndicator } from '@/components/infra/AgentUpdates';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -57,6 +58,7 @@ export function AppShell() {
           <span className="truncate">{t('shell.search')}</span>
           <kbd className="ml-auto hidden rounded border bg-muted px-1.5 font-mono text-[10px] sm:inline">Ctrl K</kbd>
         </button>
+        <AgentUpdatesIndicator />
         <LiveIndicator />
         <AccountMenu />
       </header>

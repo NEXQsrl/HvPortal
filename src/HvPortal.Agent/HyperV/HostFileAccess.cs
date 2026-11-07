@@ -36,6 +36,30 @@ public abstract class HostFileAccess
 
     public abstract long? FreeSpace(string root);
 
+    /// <summary>Allowed storage folders of the host (protocol 9); empty = every local fixed drive (system folders excluded).</summary>
+    public abstract IReadOnlyList<string> StorageFolders { get; }
+
+    /// <summary>Set when the allowed folders could not be read: nothing is accepted until it is fixed (fail closed).</summary>
+    public virtual string? StorageError => null;
+
+    /// <exception cref="HostPathException">The path is outside the allowed storage folders.</exception>
+    public void CheckAllowed(string hostPath)
+    {
+        if (StorageError is { } error)
+        {
+            throw new HostPathException("location_not_allowed: " + error);
+        }
+        if (!StorageFolderRules.IsInside(hostPath, StorageFolders))
+        {
+            throw new HostPathException("location_not_allowed: the folder is outside the storage folders allowed on this host ("
+                + string.Join(", ", StorageFolders) + ").");
+        }
+    }
+
+    /// <summary>True when the path is one of the allowed storage folders (the top of what the portal can see).</summary>
+    public bool IsStorageRoot(string hostPath) =>
+        StorageFolders.Any(f => HostPaths.Normalize(f).TrimEnd('\\').Equals(HostPaths.Normalize(hostPath).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Runs file-system code with the identity that must access the host (impersonation for remote hosts).</summary>
     public virtual T Run<T>(Func<T> action) => action();
 
@@ -51,6 +75,10 @@ public abstract class HostFileAccess
 internal sealed class LocalHostFileAccess : HostFileAccess
 {
     public override bool IsLocal => true;
+
+    public override IReadOnlyList<string> StorageFolders => LocalStorageFolders.Folders;
+
+    public override string? StorageError => LocalStorageFolders.LoadError;
 
     public override string ToPhysical(string hostPath) => hostPath;
 
@@ -127,6 +155,8 @@ public sealed class RemoteHostFileAccess : HostFileAccess, IDisposable
     }
 
     public override bool IsLocal => false;
+
+    public override IReadOnlyList<string> StorageFolders => _target.StorageFolders;
 
     public override string ToPhysical(string hostPath)
     {
