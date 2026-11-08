@@ -7,10 +7,11 @@
 Segnala le vulnerabilità **in forma riservata**. Non aprire una issue pubblica, non pubblicare dettagli prima che sia
 disponibile una correzione e non fare prove su sistemi che non sono tuoi o che non sei autorizzato a provare.
 
-> **Da completare a cura dei manutentori prima della pubblicazione:** il canale riservato per le segnalazioni. Ad
-> esempio la segnalazione privata delle vulnerabilità di GitHub per questo repository (*Security > Report a
-> vulnerability*, da abilitare nelle impostazioni del repository) e/o un indirizzo dedicato alla sicurezza, con
-> un'eventuale chiave PGP. Al momento non è stato pubblicato alcun indirizzo.
+**Come segnalare**: usa la segnalazione privata delle vulnerabilità di GitHub per questo repository: apri la
+[scheda Security](https://github.com/NEXQsrl/HvPortal/security) e scegli **Report a vulnerability**
+([link diretto](https://github.com/NEXQsrl/HvPortal/security/advisories/new)). La segnalazione è visibile solo ai
+manutentori finché non viene pubblicato un avviso. Se non puoi usare GitHub, contatta NEXQ tramite
+[www.nexq.it](https://www.nexq.it) e chiedi un canale riservato, senza inserire i dettagli nel primo messaggio.
 
 Nella segnalazione indica:
 

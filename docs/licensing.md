@@ -138,6 +138,9 @@ Still open:
 - The portal does not show or link the notices (an "About / licenses" page would make them visible to users).
 - An SPDX or CycloneDX SBOM (for example with Microsoft `sbom-tool`) is not produced yet.
 - The 0.8.0 setups published before this change do not contain these files.
+- The Docker image (`docker/Dockerfile`) contains `LICENSE` and `NOTICE` in `/app` and the OCI label
+  `org.opencontainers.image.licenses`, but not `THIRD-PARTY-NOTICES.txt`: the generator needs the web `node_modules`
+  and the NuGet cache inside the image build, and it has not been run there yet.
 
 ### Rules for new dependencies
 

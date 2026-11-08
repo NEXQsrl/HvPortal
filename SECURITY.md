@@ -7,10 +7,11 @@
 Please report vulnerabilities **privately**. Do not open a public issue, do not publish details before a fix is
 available, and do not test against systems that you do not own or are not authorized to test.
 
-> **To be completed by the maintainers before publication:** the private reporting channel. For example, GitHub
-> private vulnerability reporting for this repository (*Security > Report a vulnerability*, which must be enabled in
-> the repository settings) and/or a dedicated security contact address with an optional PGP key. No contact address
-> has been published yet.
+**How to report**: use GitHub private vulnerability reporting for this repository: open the
+[Security tab](https://github.com/NEXQsrl/HvPortal/security) and choose **Report a vulnerability**
+([direct link](https://github.com/NEXQsrl/HvPortal/security/advisories/new)). The report is visible only to the
+maintainers until an advisory is published. If you cannot use GitHub, contact NEXQ through
+[www.nexq.it](https://www.nexq.it) and ask for a private channel, without including the details in the first message.
 
 Please include:
 

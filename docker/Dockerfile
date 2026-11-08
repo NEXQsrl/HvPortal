@@ -1,5 +1,5 @@
 # HvPortal gateway (web console + agent channel) for Linux containers.
-# Build from the repository root:   docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.7.0 .
+# Build from the repository root:   docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.8.1 .
 # The Hyper-V agents stay Windows services on the hosts; they connect to this container on the agent port (mTLS).
 
 # ---------------------------------------------------------------- web UI (React/Vite)
@@ -28,7 +28,10 @@ RUN pwsh -NoProfile -File installer/New-AgentPackage.ps1 -OutputDirectory /out/p
 # ---------------------------------------------------------------- runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 LABEL org.opencontainers.image.title="HvPortal gateway" \
-      org.opencontainers.image.description="Browser-based Hyper-V management: web console, REST API, agent channel (mTLS)"
+      org.opencontainers.image.description="Browser-based Hyper-V management: web console, REST API, agent channel (mTLS)" \
+      org.opencontainers.image.vendor="NEXQ S.r.l." \
+      org.opencontainers.image.source="https://github.com/NEXQsrl/HvPortal" \
+      org.opencontainers.image.licenses="LicenseRef-PolyForm-Shield-1.0.0"
 ENV HVP_DATA_DIR=/data \
     Gateway__BindAddress=0.0.0.0 \
     Gateway__UiPort=8443 \
@@ -40,6 +43,8 @@ ENV HVP_DATA_DIR=/data \
 WORKDIR /app
 COPY --from=build /out/gateway/ /app/
 COPY --from=build /out/packages/ /app/packages/
+# License terms and Required Notice (PolyForm Shield 1.0.0): whoever gets a copy of the image gets them too.
+COPY LICENSE NOTICE /app/
 # Non-root ("app", uid 1654, provided by the base image). /data must be writable by it.
 RUN mkdir -p /data && chown -R app:app /data && chmod 700 /data
 USER app

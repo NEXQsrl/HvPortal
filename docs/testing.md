@@ -1,5 +1,14 @@
 # Testing
 
+## v0.8.1 — backup fixes, license, third-party notices (2026-11-08, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 221 | pass (the additions are listed below, "After the 0.8.0 release") |
+| `tests/HvPortal.Agent.Tests` | 123 | pass (no agent change) |
+| `web`: `tsc -b`, `vitest` (IT/EN keys, staging folder suggestion) | 4 | pass |
+| `installer/Build-Release.ps1 -SigningCertificateThumbprint <self-signed NEXQ S.r.l.>` | 123 + 221 | pass with tests; the published build was then repeated with `-SkipTests` after documentation and build-script changes only (PolyForm Shield `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.txt`). Checked: `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES.txt` (303 KB, 59 .NET and 150 npm packages) in the release root, `gateway\` and `agent\`; the agent package contains them next to its signed catalog (`catalogSigned: true`). Published as the only GitHub release (`v0.8.1` on commit `98b3ece`), sizes of the uploaded setups equal to the local files |
+
 ## v0.8.0 — resource use history of VMs, confirmation code for Microsoft accounts, sign-out after inactivity (2026-11-08, development machine)
 
 | Suite | Count | Result |
