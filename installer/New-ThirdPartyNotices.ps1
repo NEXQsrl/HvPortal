@@ -16,7 +16,7 @@ param(
     [Parameter(Mandatory)][string]$WebDirectory,
     [Parameter(Mandatory)][string[]]$DepsJsonFiles,
     [Parameter(Mandatory)][string]$OutputFile,
-    [string[]]$ExtraNpmPackages = @('shadcn', 'tailwindcss', 'tw-animate-css')
+    [string[]]$ExtraNpmPackages = @('tailwindcss', 'tw-animate-css')
 )
 $ErrorActionPreference = 'Stop'
 $nugetRoot = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path $env:USERPROFILE '.nuget\packages' }
@@ -114,7 +114,6 @@ foreach ($e in ($npm.GetEnumerator() | Sort-Object { $_.Value['name'] })) {
     Add-Text ''
     Add-Text "--- $($pj['name']) $($pj['version'])"
     Add-Text "License: $lic"
-    if ($pj['name'] -eq 'shadcn') { Add-Text '(Covers the shadcn/ui component sources vendored, and partly modified, in web\src\components\ui.)' }
     $files = @(Get-LicenseFiles $e.Key)
     foreach ($f in $files) { Add-File $f.FullName $pj['name'] }
     if ($files.Count -eq 0) {
@@ -126,6 +125,17 @@ foreach ($e in ($npm.GetEnumerator() | Sort-Object { $_.Value['name'] })) {
         $standard[$lic] = Read-Text $files[0].FullName
     }
     foreach ($f in Get-NoticeFiles $e.Key) { Add-Text ''; Add-Text "Notices of $($pj['name']):"; Add-File $f.FullName $pj['name'] }
+}
+
+# Sources vendored in the repository (not npm dependencies).
+$shadcn = Join-Path $WebDirectory 'src\components\ui\LICENSE-shadcn.md'
+if (Test-Path -LiteralPath $shadcn) {
+    Add-Text ''
+    Add-Text '--- shadcn/ui (component sources in web\src\components\ui, partly modified, and web\src\styles\shadcn-tailwind.css)'
+    Add-Text 'License: MIT'
+    Add-File $shadcn 'shadcn/ui'
+} else {
+    [void]$missing.Add('license of the vendored shadcn/ui sources (web\src\components\ui\LICENSE-shadcn.md)')
 }
 
 # ---------------------------------------------------------------- appendix

@@ -85,7 +85,7 @@ in [`NOTICE`](../NOTICE).
 | QRCoder 1.8 | gateway (local QR codes) | MIT |
 | React, React DOM, React Router | web | MIT |
 | @microsoft/signalr | web | MIT |
-| shadcn/ui components (source vendored in `web/src/components/ui`, partly modified), radix-ui, Floating UI, cmdk, react-resizable-panels, get-nonce, cn and the small helpers they use | web | MIT |
+| shadcn/ui components (sources vendored in `web/src/components/ui`, partly modified, and `web/src/styles/shadcn-tailwind.css`; license in `web/src/components/ui/LICENSE-shadcn.md`), radix-ui, Floating UI, cmdk, react-resizable-panels, get-nonce, cn and the small helpers they use | web | MIT |
 | recharts 3.10 with @reduxjs/toolkit, redux, redux-thunk, react-redux, reselect, immer, es-toolkit (with a NOTICE for code derived from Lodash), eventemitter3, decimal.js-light, tiny-invariant, clsx, use-sync-external-store | web | MIT |
 | victory-vendor; d3-array, d3-color, d3-format, d3-interpolate, d3-path, d3-scale, d3-shape, d3-time, d3-time-format, d3-timer, internmap; d3-ease | web | MIT AND ISC AND BSD-3-Clause; ISC; BSD-3-Clause |
 | lucide-react (icons) | web | ISC (parts derived from Feather, MIT) |
@@ -100,7 +100,8 @@ Apache-2.0 and OFL-1.1 licenses; some packages in it (for example `ws`, `node-fe
 when the SignalR client runs in Node.js and are not part of the browser bundle.
 
 Build/test only (not distributed): xUnit (Apache-2.0), Microsoft.NET.Test.Sdk (MIT), coverlet (MIT), Vite (MIT),
-Vitest (MIT), TypeScript (Apache-2.0), playwright-core (Apache-2.0), shadcn CLI (MIT, used only to add components),
+Vitest (MIT), TypeScript (Apache-2.0), playwright-core (Apache-2.0), shadcn CLI (MIT; not a dependency since 0.8.1: run it on demand with
+`npx shadcn@<version> add <component>` to add components, then review the copied sources),
 @tailwindcss/vite (MIT), Entity Framework Core design-time tools and Roslyn (MIT).
 
 The authoritative, complete lists (including transitive packages and versions) are generated at release time in
@@ -124,8 +125,8 @@ the release ships the texts separately. From 0.8.1, `installer/Build-Release.ps1
 - the .NET packages listed in the published `*.deps.json` of the gateway and the agent (runtime packs included, with
   the .NET runtime's own third-party notices), with the license file of each package or its license expression;
 - the runtime npm dependencies of the web interface, transitively, with their `LICENSE` and `NOTICE` files (OFL text
-  of the Geist fonts included), plus the build-time packages whose code is in the bundle (vendored shadcn/ui sources,
-  Tailwind CSS, tw-animate-css);
+  of the Geist fonts included), plus the build-time packages whose code is in the bundle (Tailwind CSS, tw-animate-css) and the license of the
+  vendored shadcn/ui sources;
 - an appendix with the standard text of the licenses of packages that ship no license file (MIT, Unlicense, Apache-2.0).
 
 `LICENSE`, `NOTICE` and `THIRD-PARTY-NOTICES.txt` are copied into the release root and into the `gateway` and `agent`
