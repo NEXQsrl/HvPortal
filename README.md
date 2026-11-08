@@ -268,7 +268,7 @@ secrets in logs, and keep every user-visible text in both English and Italian.
 > [docs/licensing.md](docs/licensing.md) describes the license under consideration and lists the licenses of the
 > third-party components. Until a license file is added, no license is granted by this repository.
 
-Copyright (c) NEXQ S.r.l. · [www.nexq.it](https://www.nexq.it)
+Copyright (c) NEXQ S.r.l. · [www.nexq.it](https://www.nexq.it/?utm_source=github&utm_medium=referral&utm_campaign=hvmanager)
 
 "Hyper-V", "Windows Server" and "Microsoft Entra" are trademarks of the Microsoft group of companies. HvPortal is an
 independent project and is not affiliated with or endorsed by Microsoft.

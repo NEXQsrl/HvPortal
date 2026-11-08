@@ -92,7 +92,10 @@ public sealed class BackupTests : IAsyncLifetime
         // A share with credentials needs a staging folder on the host (Hyper-V cannot use the credentials).
         var vm = vms["web01"];
         Assert.Equal("staging_required", await (await admin.PostJsonAsync($"/api/v1/vms/{vm}/backup", new { repositoryId = repoId })).CodeAsync());
+        // A rescan says the same (not "no connected host"), and works once the host has a staging folder.
+        Assert.Equal("staging_required", await (await admin.PostJsonAsync($"/api/v1/backup/repositories/{repoId}/rescan", new { })).CodeAsync());
         await SetStagingAsync(hostId, @"D:\Staging");
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostJsonAsync($"/api/v1/backup/repositories/{repoId}/rescan", new { })).StatusCode);
         var accepted = await admin.PostJsonAsync($"/api/v1/vms/{vm}/backup", new { repositoryId = repoId });
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         var jobId = (await accepted.JsonAsync()).GetProperty("jobId").GetGuid();

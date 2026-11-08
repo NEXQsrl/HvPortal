@@ -371,12 +371,24 @@ public static class BackupEndpoints
         return Results.NoContent();
     }
 
-    /// <summary>The host that checks or scans a repository: the given one, the repository's own host, or the first connected host (shares).</summary>
+    /// <summary>
+    /// The host that checks or scans a repository: the given one, the repository's own host, or (shares) a connected host
+    /// that can use it (with credentials: one with a backup staging folder), else the first connected host, so that the
+    /// caller can say why it cannot.
+    /// </summary>
     private static async Task<ManagedHost?> CheckingHostAsync(PortalDbContext db, IAgentDispatcher agents, BackupRepository repo, Guid? requested, CancellationToken ct)
     {
         var hosts = await db.Hosts.AsNoTracking().Where(h => h.Status == HostStatus.Active).OrderBy(h => h.DisplayName).ToListAsync(ct);
-        return hosts.FirstOrDefault(h => h.Id == (requested ?? repo.HostId)) is { } chosen ? chosen
-            : repo.HostId is null ? hosts.FirstOrDefault(h => agents.IsConnected(h.Id) && agents.ProtocolVersionOf(h.Id) >= 9) : null;
+        if (hosts.FirstOrDefault(h => h.Id == (requested ?? repo.HostId)) is { } chosen)
+        {
+            return chosen;
+        }
+        if (repo.HostId is not null)
+        {
+            return null;
+        }
+        var connected = hosts.Where(h => agents.IsConnected(h.Id) && agents.ProtocolVersionOf(h.Id) >= 9).ToList();
+        return connected.FirstOrDefault(h => BackupRules.CanUse(repo, h) is null) ?? connected.FirstOrDefault();
     }
 
     private static async Task<IResult> CheckRepositoryAsync(Guid id, HostRef body, HttpContext http, PortalDbContext db, IAgentDispatcher agents, KeyRing keys, TimeProvider time)
@@ -487,10 +499,15 @@ public static class BackupEndpoints
         {
             return ApiSupport.NotFound();
         }
-        if (await CheckingHostAsync(db, agents, repo, body.HostId, http.RequestAborted) is not { } host || BackupRules.CanUse(repo, host) is not null
+        if (await CheckingHostAsync(db, agents, repo, body.HostId, http.RequestAborted) is not { } host || !agents.IsConnected(host.Id)
             || agents.ProtocolVersionOf(host.Id) < 9)
         {
             return ApiSupport.Error(StatusCodes.Status503ServiceUnavailable, "host_unreachable", "No connected host (agent 0.7.0+) can read this repository.");
+        }
+        // Say why (for example: a share with credentials needs a backup staging folder on the host).
+        if (BackupRules.CanUse(repo, host) is { } refused)
+        {
+            return ApiSupport.Conflict(refused.Code, refused.Message);
         }
         BackupTarget target;
         try
