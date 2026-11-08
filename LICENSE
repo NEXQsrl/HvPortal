@@ -1,0 +1,215 @@
+NEXQ Community License 1.0
+
+Copyright (c) NEXQ S.r.l. (https://www.nexq.it). All rights reserved except as
+expressly granted below.
+
+This is a source-available license. It is not an open-source license approved
+by the Open Source Initiative: it allows free use, study, modification and free
+redistribution of the Software, but it does not allow selling the Software
+without the written authorization of NEXQ.
+
+
+1. DEFINITIONS
+
+"NEXQ" or "Licensor" means NEXQ S.r.l., the copyright holder of the Software.
+
+"Software" means HvPortal as made available by NEXQ under this License: its
+source code, object code, executables and setup programs, scripts, user
+interface, documentation and the other files of the HvPortal repository and of
+its releases, excluding Third-Party Components.
+
+"Third-Party Components" means software, fonts, icons and other materials
+included in or distributed with the Software that are owned by parties other
+than NEXQ and are licensed under their own terms (see Section 9).
+
+"Modification" means any change to the Software and any work based on the
+Software, including translations, adaptations, renamed versions and works that
+incorporate the Software or a substantial part of it.
+
+"You" means the individual or legal entity exercising rights under this
+License. For a legal entity, "You" includes its employees and the contractors
+acting on its behalf for its own internal purposes.
+
+"Sell" means to provide the Software, a copy of the Software, a Modification,
+or a license or sublicense to any of them, in exchange for a fee, payment or
+other consideration, including by offering any of them as an item with a price
+or as a component of a product or package that is sold or licensed for a fee.
+"Sale" has the corresponding meaning. Professional Services under Section 8 are
+not a Sale.
+
+"Professional Services" means installation, configuration, training,
+maintenance and technical support services relating to the Software.
+
+"NEXQ Marks" means the name "NEXQ", the NEXQ logos and any other trademarks,
+service marks, names or logos of NEXQ, including the HvPortal name and logo.
+
+
+2. COPYRIGHT AND OWNERSHIP
+
+The Software is protected by copyright and is owned by NEXQ. This License does
+not transfer ownership of the Software or of any intellectual property right in
+it. You must not remove, alter or obscure any copyright, license or attribution
+notice included in the Software.
+
+
+3. GRANT OF RIGHTS
+
+Subject to the terms of this License, NEXQ grants You a worldwide,
+royalty-free, non-exclusive, non-transferable license, without the right to
+sublicense, to:
+
+  (a) use, install and run the Software, for any personal, professional,
+      business or commercial purpose, except as limited by Section 7;
+  (b) view, read and study the source code of the Software;
+  (c) copy the Software;
+  (d) make Modifications of the Software for Your own personal or business
+      needs and use them under the same terms as the Software; and
+  (e) redistribute the Software and Modifications free of charge, under the
+      conditions of Section 6.
+
+No fee is due to NEXQ for any of these rights.
+
+
+4. FREE BUSINESS USE
+
+For clarity, companies, public bodies and other organizations may use the
+Software free of charge, including in production, on their own servers and
+Microsoft Hyper-V hosts, and in professional and commercial environments for
+their internal purposes.
+
+This License sets no limit on the number of users, Hyper-V hosts, virtual
+machines, installations or copies.
+
+
+5. MODIFICATIONS
+
+You may modify the Software. A Modification that You distribute must:
+
+  (a) carry prominent notices stating that You changed the files and the date
+      of the change; and
+  (b) not be presented as the original Software or as a version released,
+      approved or supported by NEXQ.
+
+Modifications remain subject to this License. Section 7 applies to
+Modifications in the same way as to the Software.
+
+
+6. FREE REDISTRIBUTION
+
+You may redistribute copies of the Software and of Modifications, in source or
+object form, by any medium, provided that:
+
+  (a) You do not Sell them and do not charge any fee for the copy, for a
+      license or for access to the files, except as allowed by Section 8;
+  (b) every copy includes a copy of this License and of the NOTICE file of the
+      Software;
+  (c) You keep all copyright, license and attribution notices of the Software
+      and of the Third-Party Components;
+  (d) You distribute them under this License only, and do not impose any
+      further restriction on the rights that recipients have under it; and
+  (e) Modifications comply with Section 5.
+
+Each recipient of the Software or of a Modification receives a license directly
+from NEXQ under this License.
+
+
+7. PROHIBITED WITHOUT WRITTEN AUTHORIZATION
+
+Unless NEXQ has given its prior written authorization, You must not:
+
+  (a) resell the Software;
+  (b) Sell copies of the Software;
+  (c) Sell Modifications, including modified or renamed versions of the
+      Software;
+  (d) Sell licenses or sublicenses of the Software or of Modifications, or
+      grant licenses or sublicenses on terms other than this License;
+  (e) include the Software or a Modification, in whole or in part, as a
+      component of a commercial software product, appliance or package that is
+      sold or licensed for a fee;
+  (f) remove, alter or obscure copyright notices, this License, the NOTICE
+      file or the attributions required by this License; or
+  (g) use the NEXQ Marks in a way that states or suggests that NEXQ approves,
+      sponsors, certifies or is a partner of You, of Your products or services,
+      or of a Modification.
+
+These prohibitions do not limit the free use of the Software under Sections 3
+and 4.
+
+
+8. PROFESSIONAL SERVICES
+
+You may charge fees for Professional Services, including to Your customers,
+provided that:
+
+  (a) the Software itself is not Sold and no fee is charged for the Software,
+      for a copy of it or for a license to it;
+  (b) the customer receives the Software, and any Modification You provide,
+      under this License and free of charge; and
+  (c) You do not state or suggest that You are authorized, certified or
+      endorsed by NEXQ unless NEXQ has agreed to it in writing.
+
+
+9. THIRD-PARTY COMPONENTS
+
+Third-Party Components are licensed under their own licenses, which are listed
+in the NOTICE file and in docs/licensing.md. This License does not apply to
+them, does not restrict any right granted by their licenses, and does not grant
+any right in them. You must comply with the license of each Third-Party
+Component You use or redistribute.
+
+
+10. TRADEMARKS
+
+This License does not grant any right to use the NEXQ Marks, except as needed
+to keep the notices required by this License and to state truthfully that a
+Modification is based on the Software. Any other use of the NEXQ Marks requires
+the prior written authorization of NEXQ.
+
+
+11. DISCLAIMER OF WARRANTY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED
+"AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING WITHOUT LIMITATION ANY WARRANTY OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY OR ABSENCE OF ERRORS. YOU
+USE THE SOFTWARE AT YOUR OWN RISK, AND YOU ARE RESPONSIBLE FOR TESTING IT AND
+FOR BACKING UP YOUR SYSTEMS AND DATA BEFORE USING IT.
+
+
+12. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL NEXQ OR
+ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY OR CONSEQUENTIAL DAMAGES, INCLUDING LOSS OF DATA, LOSS OF PROFITS,
+BUSINESS INTERRUPTION OR DAMAGE TO SYSTEMS, ARISING IN ANY WAY OUT OF THE USE OF
+OR INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGES. THIS SECTION DOES NOT LIMIT ANY LIABILITY THAT CANNOT BE LIMITED OR
+EXCLUDED UNDER APPLICABLE LAW.
+
+
+13. VIOLATIONS AND TERMINATION
+
+If You violate this License, Your rights under it terminate automatically. On
+termination You must stop using, copying, modifying and redistributing the
+Software and Modifications.
+
+Termination of Your rights does not terminate the rights of persons who
+received the Software or a Modification from You, as long as they comply with
+this License.
+
+NEXQ may enforce this License and its rights in the Software by any means
+available under applicable law.
+
+
+14. RESERVATION OF RIGHTS
+
+All rights not expressly granted by this License are reserved by NEXQ. No right
+is granted by implication or estoppel. NEXQ may make the Software available
+under other licenses, including commercial licenses, and may grant written
+authorizations for the activities listed in Section 7.
+
+
+15. CONTACT
+
+Requests for written authorization, commercial rights or information about this
+License: NEXQ S.r.l., through the contacts published at https://www.nexq.it.

@@ -25,6 +25,7 @@
   <img alt="Hyper-V su Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="Nessuna telemetria" src="https://img.shields.io/badge/telemetria-nessuna-16a34a">
+  <a href="LICENSE"><img alt="Licenza: NEXQ Community License 1.0 (source available)" src="https://img.shields.io/badge/licenza-NEXQ%20Community%201.0%20(source%20available)-f59e0b"></a>
   <img alt="Italiano e inglese" src="https://img.shields.io/badge/interfaccia-Italiano%20%7C%20English-7c3aed">
 </p>
 
@@ -277,9 +278,21 @@ non mettere mai segreti nei log e tieni ogni testo visibile all'utente sia in it
 
 ## Licenza
 
-> **Licenza: da scegliere a cura dei manutentori.** Questo repository non contiene ancora un file `LICENSE`.
-> [docs/licensing.md](docs/licensing.md) descrive la licenza in valutazione ed elenca le licenze dei componenti di terze
-> parti. Finché non viene aggiunto un file di licenza, questo repository non concede alcuna licenza.
+HvPortal è sviluppato da [NEXQ](https://www.nexq.it) e distribuito con la **NEXQ Community License 1.0**
+([LICENSE](LICENSE), testo in inglese), una licenza *source available*:
+
+- **Gratuito per uso personale e aziendale**, anche in produzione, senza limiti di utenti, host Hyper-V, macchine
+  virtuali o installazioni.
+- **Il codice sorgente è pubblico**: puoi studiarlo e modificarlo per le tue esigenze, e ridistribuire gratuitamente
+  l'originale o una versione modificata, mantenendo licenza e attribuzioni.
+- **La rivendita non è consentita**: vendere copie, versioni modificate o rinominate, licenze, o includerlo in un
+  prodotto venduto richiede l'autorizzazione scritta di NEXQ. Sono consentiti i servizi a pagamento di installazione,
+  configurazione, formazione, manutenzione e supporto.
+- **Diritti commerciali aggiuntivi**: contatta NEXQ tramite [www.nexq.it](https://www.nexq.it).
+
+Non è una licenza open source approvata dall'OSI. I componenti di terze parti mantengono le proprie licenze: vedi
+[NOTICE](NOTICE) e [docs/licensing.md](docs/licensing.md), che elenca anche i casi non ancora decisi. Il testo della
+licenza è una bozza in revisione legale.
 
 Copyright (c) NEXQ S.r.l. · [www.nexq.it](https://www.nexq.it)
 

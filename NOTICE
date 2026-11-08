@@ -1,0 +1,137 @@
+HvPortal
+Copyright (c) NEXQ S.r.l. (https://www.nexq.it)
+
+HvPortal is licensed under the NEXQ Community License 1.0 (see the LICENSE file).
+That license applies only to the code and materials of NEXQ. The third-party
+components listed below are NOT covered by it: each one is licensed under its
+own license, which is not restricted by the NEXQ Community License.
+
+"Hyper-V", "Windows Server" and "Microsoft Entra" are trademarks of the
+Microsoft group of companies. HvPortal is an independent project and is not
+affiliated with or endorsed by Microsoft.
+
+Redistributions of HvPortal must keep this NOTICE file, the LICENSE file and the
+license notices of the third-party components.
+
+
+THIRD-PARTY COMPONENTS DISTRIBUTED WITH HVPORTAL
+------------------------------------------------
+
+The complete list, including transitive packages and their versions, is
+produced for every release in artifacts/release/<version>/deps/ by
+installer/Build-Release.ps1 and summarized in docs/licensing.md. The license
+text of each package is in the package itself (node_modules/<package>/LICENSE,
+the NuGet package, or the project site).
+
+Gateway and agent (.NET)
+
+  .NET runtime, ASP.NET Core, Entity Framework Core, Microsoft.Data.Sqlite,
+  Microsoft.Extensions.*, System.Management, System.Diagnostics.EventLog,
+  System.Security.Cryptography.ProtectedData, Microsoft.AspNetCore.OpenApi,
+  Microsoft.OpenApi, Microsoft.IdentityModel.* and System.IdentityModel.Tokens.Jwt
+    Copyright (c) .NET Foundation and Contributors; packages (c) Microsoft
+    Corporation. MIT License.
+    The self-contained gateway and agent include the .NET and ASP.NET Core
+    runtimes (runtime packs Microsoft.NETCore.App.Runtime.win-x64 and
+    Microsoft.AspNetCore.App.Runtime.win-x64), whose THIRD-PARTY-NOTICES.TXT
+    lists further components used by the runtime.
+
+  SQLitePCLRaw (bundle_e_sqlite3, core, provider.e_sqlite3, lib.e_sqlite3)
+    Copyright 2014-2024 SourceGear, LLC. Apache License 2.0.
+
+  SQLite (e_sqlite3 native library)
+    Public domain (https://www.sqlite.org/copyright.html).
+
+  QRCoder
+    Copyright (c) 2013-2025 Raffael Herrmann. Copyright (c) 2024-2025 Shane
+    Krueger. MIT License.
+
+Web interface (bundled in the gateway)
+
+  React, React DOM, scheduler
+    Copyright (c) Meta Platforms, Inc. and affiliates. MIT License.
+
+  React Router
+    Copyright (c) React Training LLC 2015-2019. Copyright (c) Remix Software
+    Inc. 2020-2021 (and later contributors). MIT License.
+
+  Radix UI (radix-ui, @radix-ui/*)
+    Copyright (c) 2022 WorkOS. MIT License.
+
+  shadcn/ui components (source files in web/src/components/ui, some modified)
+    Copyright (c) 2023 shadcn. MIT License.
+
+  Floating UI (@floating-ui/*)
+    Copyright (c) 2021-present Floating UI contributors. MIT License.
+
+  cmdk
+    Copyright (c) 2022 Paco Coursey. MIT License.
+
+  Recharts
+    Copyright (c) 2015-present recharts. MIT License.
+
+  Redux Toolkit (@reduxjs/toolkit)
+    Copyright (c) 2018 Mark Erikson. MIT License.
+
+  Immer
+    Copyright (c) 2017 Michel Weststrate. MIT License.
+
+  es-toolkit
+    Copyright (c) 2024 Viva Republica, Inc. MIT License.
+    Its NOTICE: parts of es-toolkit/compat are derived from Lodash,
+    Copyright OpenJS Foundation and other contributors; based on Underscore.js,
+    copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters &
+    Editors. MIT License.
+
+  D3 modules (d3-array, d3-color, d3-format, d3-interpolate, d3-path, d3-scale,
+  d3-shape, d3-time, d3-time-format, d3-timer, internmap)
+    Copyright 2010-2026 Mike Bostock. ISC License.
+  d3-ease
+    Copyright 2010-2026 Mike Bostock. BSD 3-Clause License.
+  victory-vendor
+    MIT AND ISC AND BSD-3-Clause (see the package).
+
+  Lucide icons (lucide-react)
+    Copyright (c) 2026 Lucide Icons and Contributors. ISC License.
+    Parts derived from Feather, Copyright (c) 2013-present Cole Bemis.
+    MIT License.
+
+  class-variance-authority
+    Apache License 2.0 (see the package).
+
+  Microsoft SignalR JavaScript client (@microsoft/signalr)
+    Microsoft. MIT License.
+
+  Tailwind CSS (compiled into the style sheet)
+    Copyright (c) Tailwind Labs, Inc. MIT License.
+
+  tw-animate-css (compiled into the style sheet)
+    Copyright (c) 2025 Wombosvideo. MIT License.
+
+  Other MIT, ISC, BSD-2-Clause, BSD-3-Clause, 0BSD and Unlicense packages used
+  by the components above (for example clsx, reselect, redux, react-redux,
+  eventemitter3, decimal.js-light, tiny-invariant, use-sync-external-store,
+  aria-hidden, react-remove-scroll, get-nonce, cn, tslib): see
+  docs/licensing.md and the release dependency inventory.
+
+Fonts (bundled in the gateway as .woff2 files)
+
+  Geist and Geist Mono (@fontsource-variable/geist, @fontsource-variable/geist-mono)
+    Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font).
+    Licensed under the SIL Open Font License, Version 1.1
+    (https://openfontlicense.org). The fonts are not sold by themselves and
+    keep their reserved names, if any.
+
+
+COMPONENTS USED ONLY TO BUILD OR TEST (NOT DISTRIBUTED)
+
+  TypeScript, Vite, Vitest, @tailwindcss/vite, shadcn CLI, playwright-core,
+  xUnit, Microsoft.NET.Test.Sdk, coverlet, Microsoft.NETFramework.ReferenceAssemblies,
+  Entity Framework Core design-time tools: see docs/licensing.md.
+
+
+COMPONENTS OF WINDOWS (NOT DISTRIBUTED)
+
+  The Hyper-V PowerShell module, WMI and .NET Framework 4.7.2 (used by the
+  graphical setups) are parts of Windows and are not redistributed with
+  HvPortal.

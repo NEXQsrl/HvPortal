@@ -25,6 +25,7 @@
   <img alt="Hyper-V on Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="No telemetry" src="https://img.shields.io/badge/telemetry-none-16a34a">
+  <a href="LICENSE"><img alt="License: NEXQ Community License 1.0 (source available)" src="https://img.shields.io/badge/license-NEXQ%20Community%201.0%20(source%20available)-f59e0b"></a>
   <img alt="English and Italian" src="https://img.shields.io/badge/UI-English%20%7C%20Italiano-7c3aed">
 </p>
 
@@ -264,9 +265,21 @@ secrets in logs, and keep every user-visible text in both English and Italian.
 
 ## License
 
-> **License: to be chosen by the maintainers.** This repository does not contain a `LICENSE` file yet.
-> [docs/licensing.md](docs/licensing.md) describes the license under consideration and lists the licenses of the
-> third-party components. Until a license file is added, no license is granted by this repository.
+HvPortal is developed by [NEXQ](https://www.nexq.it) and released under the **NEXQ Community License 1.0**
+([LICENSE](LICENSE)), a source-available license:
+
+- **Free for personal and business use**, including production use in companies, with no limit on users, Hyper-V
+  hosts, virtual machines or installations.
+- **The source code is publicly available**: you can study it and modify it for your own needs, and redistribute the
+  original or a modified version free of charge, keeping the license and the attributions.
+- **Reselling HvPortal is not allowed**: selling copies, modified or renamed versions, licenses, or including it in a
+  product sold for a fee requires the written authorization of NEXQ. Paid installation, configuration, training,
+  maintenance and support services are allowed.
+- **Additional commercial rights**: contact NEXQ through [www.nexq.it](https://www.nexq.it).
+
+It is not an OSI-approved open-source license. Third-party components keep their own licenses: see [NOTICE](NOTICE)
+and [docs/licensing.md](docs/licensing.md), which also lists the cases not decided yet. The license text is a draft
+under legal review.
 
 Copyright (c) NEXQ S.r.l. · [www.nexq.it](https://www.nexq.it/?utm_source=github&utm_medium=referral&utm_campaign=hvmanager)
 
