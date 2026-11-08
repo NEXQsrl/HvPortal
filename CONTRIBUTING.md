@@ -37,13 +37,13 @@ Database changes: `dotnet ef migrations add <Name> --project src/HvPortal.Gatewa
 ## Dependencies
 
 Prefer the .NET base class library and Windows built-in facilities. A new dependency needs: a license that allows
-redistribution in HvPortal under the NEXQ Community License (permissive licenses are fine; copyleft or non-commercial
+redistribution in HvPortal under the PolyForm Shield License (permissive licenses are fine; copyleft or non-commercial
 licenses need a review by NEXQ, see [docs/licensing.md](docs/licensing.md#rules-for-new-dependencies)), active
 maintenance, and a reason the platform cannot cover. Record it in [docs/licensing.md](docs/licensing.md) and in
 [NOTICE](NOTICE).
 
 ## License of contributions
 
-HvPortal is licensed under the NEXQ Community License 1.0 ([LICENSE](LICENSE)). The terms under which NEXQ accepts
+HvPortal is licensed under the PolyForm Shield License 1.0.0 ([LICENSE](LICENSE)). The terms under which NEXQ accepts
 external contributions (for example a contributor license agreement) are not defined yet: contact NEXQ before
 submitting code.

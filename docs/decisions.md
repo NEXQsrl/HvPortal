@@ -98,20 +98,23 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
-## ADR-040 License: NEXQ Community License 1.0 (source available, draft)
+## ADR-040 License: PolyForm Shield License 1.0.0 (source available)
 - **Context**: NEXQ wants HvPortal to be free for everyone, companies included, with public source code, but does not
-  want third parties to resell it. The earlier proposal (Apache-2.0) would have allowed resale.
-- **Decision**: a custom license, the NEXQ Community License 1.0 ([`LICENSE`](../LICENSE)): free use for any personal
-  or business purpose with no limits on users, hosts, VMs or installations; study and modification; free
-  redistribution with `LICENSE`, `NOTICE` and attributions, under the same license; paid professional services
-  (installation, configuration, training, maintenance, support) allowed; selling the software, copies, modified or
-  renamed versions, licenses, or including it in a product sold for a fee needs NEXQ's written authorization;
-  no trademark rights. Third-party components keep their own licenses ([`NOTICE`](../NOTICE),
-  [licensing.md](licensing.md)).
-- **Consequences**: HvPortal is source available, not OSI open source. The text is a draft to be reviewed by a lawyer
-  before the public release. Hosted/managed services, integration in paid platforms, pre-installed hardware, paid
-  custom development, contributions, patents and governing law are not decided yet (listed in
-  [licensing.md](licensing.md#not-decided-yet)). The release does not yet ship the third-party license texts.
+  want third parties to resell it, and wants a recognized license rather than a custom one. The earlier proposal
+  (Apache-2.0) would have allowed resale; no license in GitHub's list can forbid it, since they are all OSI open-source
+  licenses. A custom "NEXQ Community License" was drafted and dropped for that reason.
+- **Decision**: the standard [PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0),
+  official text unchanged in [`LICENSE`](../LICENSE), with `Required Notice: Copyright NEXQ S.r.l.
+  (https://www.nexq.it)`. Any use is permitted except providing a product that competes with the software or with a
+  product NEXQ provides using it (so no resale, no competing forks or services); distribution with the terms and the
+  required notice; patent license with patent defense; 32-day cure of a first violation. Third-party components keep
+  their own licenses ([`NOTICE`](../NOTICE), [licensing.md](licensing.md)).
+- **Consequences**: HvPortal is source available, not OSI open source; GitHub shows "Other". If NEXQ sells services
+  based on HvPortal, the same services offered by others may count as competing: NEXQ should state how it applies the
+  noncompete to third-party installation and support (listed in [licensing.md](licensing.md)). Contributions and a
+  `Licensor Line of Business` line are not decided. From 0.8.1 the release ships `LICENSE`, `NOTICE` and a generated
+  `THIRD-PARTY-NOTICES.txt` (`installer/New-ThirdPartyNotices.ps1`) in the setups, the agent package and the
+  installation folders.
 
 ## ADR-039 Resource use history of VMs (agent protocol 10)
 - **Context**: administrators want to see how much CPU, memory, disk and network a VM used over the last days (sizing,

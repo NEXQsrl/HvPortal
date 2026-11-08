@@ -48,7 +48,16 @@ foreach ($p in @(@{ Name = 'gateway'; Project = 'src\HvPortal.Gateway' }, @{ Nam
     dotnet list (Join-Path $repo $p.Project) package --include-transitive --format json |
         Out-File -Encoding utf8 "$out\deps\nuget-$($p.Name).json"
 }
-Copy-Item (Join-Path $repo 'installer\*.ps1') -Destination (New-Item -ItemType Directory -Force "$out\installer") -Exclude 'Build-Release.ps1', 'New-AgentPackage.ps1', 'New-CodeSigningCertificate.ps1'
+Copy-Item (Join-Path $repo 'installer\*.ps1') -Destination (New-Item -ItemType Directory -Force "$out\installer") -Exclude 'Build-Release.ps1', 'New-AgentPackage.ps1', 'New-CodeSigningCertificate.ps1', 'New-ThirdPartyNotices.ps1', 'Publish-GitHubRelease.ps1'
+
+# License of HvPortal and the license texts of the third-party components, next to the binaries they cover: they end
+# up in the gateway setup, in the agent package (covered by its signed catalog) and in every installation folder.
+& (Join-Path $PSScriptRoot 'New-ThirdPartyNotices.ps1') -WebDirectory (Join-Path $repo 'web') -OutputFile "$out\THIRD-PARTY-NOTICES.txt" `
+    -DepsJsonFiles (Join-Path $out 'gateway\HvPortal.Gateway.deps.json'), (Join-Path $out 'agent\HvPortal.Agent.deps.json')
+foreach ($dir in $out, "$out\gateway", "$out\agent") {
+    Copy-Item (Join-Path $repo 'LICENSE'), (Join-Path $repo 'NOTICE') -Destination $dir
+    if ($dir -ne $out) { Copy-Item "$out\THIRD-PARTY-NOTICES.txt" -Destination $dir }
+}
 
 function Add-Signature($files) {
     foreach ($f in $files) {
