@@ -21,7 +21,7 @@ guest file systems attached for file restore.
 | # | Threat | Mitigation | Residual risk |
 |---|---|---|---|
 | S1 | Credential stuffing / brute force on login | PBKDF2, blocklist, progressive delay per account+IP and per IP, rate limit, MFA for admins by default, suspicious-activity audit | distributed slow attacks on accounts without MFA → enforce MFA `All` where possible |
-| S2 | Stolen session cookie | HttpOnly, Secure, SameSite=Strict, idle/absolute timeout, server-side revocation, re-auth for critical actions | malware in the browser |
+| S2 | Stolen session cookie | HttpOnly, Secure, SameSite=Strict, idle/absolute timeout, server-side revocation, re-auth for critical actions, browser sign-out after 15 + 3 minutes without user input (v0.8.0) | malware in the browser; for Microsoft accounts the re-auth is a typed code (intent, not identity, ADR-038), so a stolen cookie can also pass it |
 | S3 | Rogue agent / impersonation of a host | one-time token + CSR, private CA, DB-bound certificates, revocation | a host administrator can steal that host's identity (trusted boundary B5) |
 | S4 | Rogue gateway (MITM) toward agents | CA pinned at enrollment by fingerprint, custom root trust, hostname check | operator skipping fingerprint verification |
 | T1 | Tampering with audit rows | HMAC chain verified on demand; external export | DB + key ring holder can rebuild the chain → export to SIEM/WORM storage |

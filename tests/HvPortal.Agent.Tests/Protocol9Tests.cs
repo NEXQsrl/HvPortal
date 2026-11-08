@@ -41,8 +41,8 @@ public sealed class Protocol9Tests
     [Fact]
     public void Protocol_9_is_required_for_every_new_operation_for_vlans_and_for_agent_updates()
     {
-        Assert.Equal(9, AgentProtocol.Version);
-        foreach (var op in Enum.GetValues<HvOperation>().Where(o => o >= HvOperation.GetHostHealth))
+        Assert.Equal(10, AgentProtocol.Version);
+        foreach (var op in Enum.GetValues<HvOperation>().Where(o => o >= HvOperation.GetHostHealth && o < HvOperation.GetVmMetrics))
         {
             Assert.Equal(9, AgentProtocol.RequiredVersion(Op(op)));
         }

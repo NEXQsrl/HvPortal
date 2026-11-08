@@ -96,6 +96,66 @@ public sealed class UserOnboardingTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, (await c.PostJsonAsync("/api/v1/users", new { userName = "new.reader", roleId = await RoleIdAsync(BuiltInRoles.ReadOnly) })).StatusCode);
     }
 
+    [Fact]
+    public async Task Entra_users_confirm_sensitive_actions_by_typing_a_one_time_code_again()
+    {
+        var admin = await AdminAsync("admin-code");
+        await ConfigureEntraAsync(admin);
+        await admin.PostJsonAsync("/api/v1/users", new { userName = "luca@contoso.com", authSource = "entra", roleId = await RoleIdAsync(BuiltInRoles.ReadOnly) });
+        var browser = _app.CreateBrowser();
+        Assert.Equal("/vms", (await SignInWithEntraAsync(browser, Guid.NewGuid().ToString(), "luca@contoso.com")).Headers.Location!.ToString());
+        await _app.WithDbAsync(db => db.Sessions.ExecuteUpdateAsync(u => u.SetProperty(s => s.ReauthenticatedAt, (DateTimeOffset?)null)));
+        Task<DateTimeOffset?> ReauthAt() => _app.WithDbAsync(db => db.Sessions.Where(s => s.UserId == db.Users.First(u => u.UserName == "luca@contoso.com").Id).Select(s => s.ReauthenticatedAt).FirstAsync());
+
+        // Without a session: refused. Local accounts confirm with their password, not with a code.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await _app.CreateBrowser().PostJsonAsync("/api/v1/auth/reauth/code", new { })).StatusCode);
+        Assert.Equal("password_required", await (await admin.PostJsonAsync("/api/v1/auth/reauth/code", new { })).CodeAsync());
+
+        // No code asked yet, or a password instead of the code: no re-authentication.
+        Assert.Equal("confirmation_code_expired", await (await browser.PostJsonAsync("/api/v1/auth/reauth", new { confirmationCode = "ABCDEF" })).CodeAsync());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await browser.PostJsonAsync("/api/v1/auth/reauth", new { password = "anything at all here 12" })).StatusCode);
+        Assert.Null(await ReauthAt());
+
+        var issued = await (await browser.PostJsonAsync("/api/v1/auth/reauth/code", new { })).JsonAsync();
+        var code = issued.GetProperty("code").GetString()!;
+        Assert.Matches("^[A-HJ-NP-Z2-9]{6}$", code);
+        var wrong = code[0] == 'A' ? "B" + code[1..] : "A" + code[1..];
+        Assert.Equal("invalid_confirmation_code", await (await browser.PostJsonAsync("/api/v1/auth/reauth", new { confirmationCode = wrong })).CodeAsync());
+        Assert.Null(await ReauthAt());
+
+        // Typed again (case and spaces do not matter): the session is re-authenticated; the code cannot be used twice.
+        var typed = code[..3].ToLowerInvariant() + " " + code[3..];
+        Assert.Equal(HttpStatusCode.OK, (await browser.PostJsonAsync("/api/v1/auth/reauth", new { confirmationCode = typed })).StatusCode);
+        Assert.NotNull(await ReauthAt());
+        Assert.Equal("confirmation_code_expired", await (await browser.PostJsonAsync("/api/v1/auth/reauth", new { confirmationCode = code })).CodeAsync());
+        Assert.True(await _app.WithDbAsync(db => db.AuditEntries.AnyAsync(a => a.Action == "auth.reauthenticate" && a.Outcome == AuditOutcome.Success && a.DetailsJson!.Contains("confirmation-code"))));
+
+        // A code is bound to its session: another session of the same user cannot use it.
+        var other = _app.CreateBrowser();
+        await SignInWithEntraAsync(other, await _app.WithDbAsync(db => db.Users.Where(u => u.UserName == "luca@contoso.com").Select(u => u.ExternalObjectId!).FirstAsync()), "luca@contoso.com");
+        var code2 = (await (await browser.PostJsonAsync("/api/v1/auth/reauth/code", new { })).JsonAsync()).GetProperty("code").GetString()!;
+        Assert.Equal("confirmation_code_expired", await (await other.PostJsonAsync("/api/v1/auth/reauth", new { confirmationCode = code2 })).CodeAsync());
+
+        // Five wrong attempts discard the code.
+        var wrong2 = code2[0] == 'A' ? "B" + code2[1..] : "A" + code2[1..];
+        for (var i = 0; i < ReauthCodeService.MaxAttempts - 1; i++)
+        {
+            Assert.Equal("invalid_confirmation_code", await (await browser.PostJsonAsync("/api/v1/auth/reauth", new { confirmationCode = wrong2 })).CodeAsync());
+        }
+        Assert.Equal("confirmation_code_locked", await (await browser.PostJsonAsync("/api/v1/auth/reauth", new { confirmationCode = wrong2 })).CodeAsync());
+        Assert.Equal("confirmation_code_expired", await (await browser.PostJsonAsync("/api/v1/auth/reauth", new { confirmationCode = code2 })).CodeAsync());
+    }
+
+    [Fact]
+    public async Task A_sign_out_after_the_inactivity_warning_is_audited_as_such()
+    {
+        var c = await AdminAsync("admin-idle");
+        Assert.Equal(HttpStatusCode.NoContent, (await c.PostJsonAsync("/api/v1/auth/logout?reason=idle", new { })).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await c.GetAsync("/api/v1/auth/me")).StatusCode);
+        Assert.True(await _app.WithDbAsync(db => db.AuditEntries.AnyAsync(a => a.Action == "auth.logout" && a.DetailsJson!.Contains("idle"))));
+        Assert.True(await _app.WithDbAsync(db => db.Sessions.AnyAsync(s => s.RevokedReason == "idle timeout (browser)")));
+    }
+
     private async Task ConfigureEntraAsync(HttpClient admin)
     {
         await admin.CsrfAsync();

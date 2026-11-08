@@ -19,7 +19,8 @@ public static class AuthEndpoints
     public sealed record LoginRequest(string UserName, string Password);
     public sealed record MfaLoginRequest(string Challenge, string? Code, string? RecoveryCode);
     public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
-    public sealed record ReauthRequest(string Password, string? Code);
+    /// <summary>Local accounts: Password (+ Code with MFA). Microsoft accounts: ConfirmationCode from POST /auth/reauth/code (ADR-038).</summary>
+    public sealed record ReauthRequest(string? Password, string? Code, string? ConfirmationCode = null);
     public sealed record RecoverRequest(string Token, string UserName, string NewPassword);
     public sealed record LoginResponse(string Status, string? Challenge = null, string? Restriction = null);
 
@@ -47,10 +48,12 @@ public static class AuthEndpoints
         g.MapPost("/auth/login/mfa", LoginMfaAsync).AllowAnonymous().RequireRateLimiting("auth");
         g.MapPost("/auth/recover", RecoverAsync).AllowAnonymous().RequireRateLimiting("auth");
 
-        g.MapPost("/auth/logout", async (HttpContext http, SessionService sessions) =>
+        g.MapPost("/auth/logout", async (HttpContext http, SessionService sessions, string? reason) =>
         {
-            await sessions.RevokeAsync(http.User.SessionId(), "logout", http.RequestAborted);
-            await http.WriteAuditAsync("auth.logout");
+            // reason=idle: the browser signed the user out after the inactivity warning (15 + 3 minutes, ADR-038).
+            var idle = string.Equals(reason, "idle", StringComparison.Ordinal);
+            await sessions.RevokeAsync(http.User.SessionId(), idle ? "idle timeout (browser)" : "logout", http.RequestAborted);
+            await http.WriteAuditAsync("auth.logout", details: idle ? new { reason = "idle" } : null);
             await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
             return Results.NoContent();
         }).RequireAuthorization(AuthPolicies.AnySession);
@@ -58,6 +61,7 @@ public static class AuthEndpoints
         g.MapGet("/auth/me", MeAsync).RequireAuthorization(AuthPolicies.AnySession);
         g.MapPost("/auth/password", ChangePasswordAsync).RequireAuthorization(AuthPolicies.AnySession).RequireRateLimiting("auth");
         g.MapPost("/auth/reauth", ReauthAsync).RequireAuthorization(AuthPolicies.AnySession).RequireRateLimiting("auth");
+        g.MapPost("/auth/reauth/code", ReauthCodeAsync).RequireAuthorization(AuthPolicies.AnySession).RequireRateLimiting("auth");
 
         g.MapGet("/auth/sessions", async (HttpContext http, PortalDbContext db, TimeProvider time) =>
         {
@@ -356,12 +360,49 @@ public static class AuthEndpoints
         return Results.Ok(new { status = "ok" });
     }
 
+    /// <summary>
+    /// Microsoft accounts only: a random code that the user types again to confirm a sensitive action (ADR-038). Local
+    /// accounts confirm with their password (and authenticator code) instead.
+    /// </summary>
+    private static async Task<IResult> ReauthCodeAsync(HttpContext http, PortalDbContext db, ReauthCodeService codes)
+    {
+        var uid = http.User.UserId();
+        var source = await db.Users.AsNoTracking().Where(u => u.Id == uid).Select(u => u.AuthSource).FirstAsync(http.RequestAborted);
+        if (source != "entra")
+        {
+            return ApiSupport.BadRequest("password_required", "Local accounts confirm with their password.");
+        }
+        var (code, expiresAt) = codes.Issue(http.User.SessionId());
+        return Results.Ok(new { code, expiresAt, length = ReauthCodeService.Length });
+    }
+
     private static async Task<IResult> ReauthAsync(ReauthRequest req, HttpContext http, PortalDbContext db, PasswordHasher hasher, KeyRing keys,
-        LoginThrottleService throttle, TimeProvider time, AuditLog audit)
+        LoginThrottleService throttle, TimeProvider time, AuditLog audit, ReauthCodeService codes)
     {
         var uid = http.User.UserId();
         var user = await db.Users.FirstAsync(u => u.Id == uid, http.RequestAborted);
         var ip = http.ClientIp();
+        if (user.AuthSource == "entra")
+        {
+            // No password in the portal: the user types again the code shown by the portal (intent, not identity).
+            var outcome = codes.Verify(http.User.SessionId(), req.ConfirmationCode);
+            if (outcome != ReauthCodeService.Outcome.Ok)
+            {
+                await audit.WriteAsync(http.Audit("auth.reauthenticate", AuditOutcome.Failure, "user", uid.ToString("D"),
+                    new { method = "confirmation-code", reason = outcome.ToString() }));
+                return outcome switch
+                {
+                    ReauthCodeService.Outcome.Wrong => ApiSupport.Error(StatusCodes.Status401Unauthorized, "invalid_confirmation_code", "The code does not match."),
+                    ReauthCodeService.Outcome.TooManyAttempts => ApiSupport.Error(StatusCodes.Status401Unauthorized, "confirmation_code_locked", "Too many wrong attempts: ask for a new code."),
+                    _ => ApiSupport.Error(StatusCodes.Status401Unauthorized, "confirmation_code_expired", "The code expired: ask for a new code."),
+                };
+            }
+            var at = time.GetUtcNow();
+            var sessionId = http.User.SessionId();
+            await db.Sessions.Where(s => s.Id == sessionId).ExecuteUpdateAsync(u => u.SetProperty(s => s.ReauthenticatedAt, at), http.RequestAborted);
+            await audit.WriteAsync(http.Audit("auth.reauthenticate", resourceType: "user", resourceId: uid.ToString("D"), details: new { method = "confirmation-code" }));
+            return Results.Ok(new { status = "ok", validUntil = at.AddMinutes(5) });
+        }
         if (await throttle.GetRemainingDelayAsync(user.UserName, ip, http.RequestAborted) is { } delay)
         {
             return ApiSupport.Error(StatusCodes.Status429TooManyRequests, "throttled", $"Retry in {Math.Ceiling(delay.TotalSeconds)} s.");

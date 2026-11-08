@@ -246,6 +246,8 @@ public sealed partial class JobRunner : BackgroundService
                 return (rb.Mode != RestoreModes.Replace || vm is not null) && OperationValidation.Validate(restore) is null ? HvOperations.ToElement(restore) : null;
             case HvOperation.RestoreBackupDisk when HvOperations.FromElement<RestoreDiskRequest>(args) is { } rd:
                 return OperationValidation.Validate(rd) is null ? HvOperations.ToElement(rd) : null;
+            case HvOperation.SetVmResourceMetering when vm is not null && HvOperations.FromElement<VmMeteringChange>(args) is { } mc:
+                return HvOperations.ToElement(mc with { VmId = vm.HyperVId });
             default:
                 return null;
         }
@@ -508,6 +510,11 @@ public sealed partial class JobRunner : BackgroundService
             if (hvOperation is { } doneOp && parameters is not null)
             {
                 (status, code, message) = await ApplyProtocol9ResultAsync(db, doneOp, job, parameters, vm, hostId, status, code, result.Operation, message);
+            }
+            if (status == JobStatus.Succeeded && job.Type == JobService.MeteringJobType && vm is not null)
+            {
+                await VmMetrics.MeteringRules.ApplyJobOutcomeAsync(db, scope.ServiceProvider.GetRequiredService<VmMetrics.VmMetricsBuffer>(), vm,
+                    job.Operation == "Enable", _time.GetUtcNow(), ct);
             }
             await FinalizeAsync(db, job, status, message, code, result.HyperVCode);
             if (job.Type == JobService.DeleteJobType && status == JobStatus.Succeeded)

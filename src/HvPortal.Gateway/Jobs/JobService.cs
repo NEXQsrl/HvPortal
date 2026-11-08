@@ -67,6 +67,8 @@ public sealed class JobService
     public const string RestoreDiskJobType = "backup.restoredisk";
     /// <summary>Update of the agent of a host (target = the host) or of a management agent (target = the management agent id).</summary>
     public const string AgentUpdateJobType = "agent.update";
+    /// <summary>Resource metering of a VM on (Enable) or off (Disable), ADR-039.</summary>
+    public const string MeteringJobType = "vm.metering";
 
     /// <summary>Typed Hyper-V operation executed by a job of the given type/operation (null for power/delete jobs).</summary>
     public static HvOperation? HvOperationFor(string type, string operation) => (type, operation) switch
@@ -88,6 +90,7 @@ public sealed class JobService
         (CheckpointJobType, "Delete") => HvOperation.RemoveCheckpoint,
         (NetworkJobType, "Create") => HvOperation.NewSwitch,
         (NetworkJobType, "Delete") => HvOperation.RemoveSwitch,
+        (MeteringJobType, "Enable" or "Disable") => HvOperation.SetVmResourceMetering,
         _ => null,
     };
 

@@ -69,6 +69,15 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
   creation/revocation/token issuance, MFA changes, and in v0.7.0: creation of API tokens, creating or changing a backup
   repository (credentials), notification settings, agent updates from the portal and a *Replace* restore. Other
   restores and the deletion of restore points rely on the permission, typed confirmations where noted, and audit.
+- **How the window is opened** (ADR-038): local accounts with their password (+ authenticator code when enrolled);
+  Microsoft (Entra ID) accounts, from v0.8.0, by typing again a random 6-character code shown by the portal (2 minutes,
+  bound to the session, single use, 5 attempts, audited as `confirmation-code`). The code confirms the intent of the
+  person at the session, **not** their identity: it does not protect against someone who already controls an open
+  session or its cookie. For those accounts the identity rests on the Microsoft sign-in of the session.
+- **Inactivity in the browser** (v0.8.0, ADR-038): after 15 minutes without user input in any tab of the portal (or 3
+  minutes before the server idle timeout when shorter) a dialog counts down 3 minutes; without "Stay signed in" the
+  browser signs out (`/auth/logout?reason=idle`, audited). Background refreshes keep the server session alive, so this
+  is what ends an unattended session; the server idle timeout still applies on its own.
 
 ## RBAC
 

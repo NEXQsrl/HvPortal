@@ -1,5 +1,20 @@
 # Testing
 
+## v0.8.0 — resource use history of VMs, confirmation code for Microsoft accounts, sign-out after inactivity (2026-11-08, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 220 | pass — adds `VmMetricsTests` (4, ADR-039): the history is read with `inventory.read` on the VM (a user without roles gets 404) and metering is changed only with `vm.config.compute` (refusal audited, nothing sent to the agent), refused with `agent_outdated` for agent protocol 9; the job `vm.metering` re-stamps the Hyper-V id and records the state; a stored sample combines the inventory readings of the period (average 40 / peak 60 from 20 and 60, assigned memory average and peak, lowest available memory) with the Hyper-V totals, VMs without metering are not collected; disk, IOPS and network rates are differences of the totals over the time Hyper-V measured (1 MB/s, 0.5 MB/s, 100 IOPS, 2 Mbit/s), a total going back is a reset (no negative values); after 10 days the counters are reset once (audited `vm.metering.reset`); samples older than 10 days are deleted; metering turned off outside the portal is followed, metering turned on outside the portal is adopted; deleting a VM deletes its history; series keep gaps (more than three intervals without samples), never more than 600 points, 95th percentile and totals across a gap. `UserOnboardingTests` (2, ADR-038): a Microsoft account confirms with a one-time code typed again (case and spaces ignored), a wrong code does not re-authenticate, a code works once, only in its session, is discarded after 5 wrong attempts, a password is not accepted instead, local accounts get `password_required`, without a session 401, success and failures audited; `logout?reason=idle` revokes the session with that reason and is audited as such |
+| `tests/HvPortal.Agent.Tests` | 123 | pass — adds `Protocol10Tests` (3): the three metering operations need protocol 10 (agent 0.8.0), only the changes are mutating, arguments validated (VM id), the script branch `GetVmMetrics` changes nothing and measures only VMs with metering on (one failing VM does not hide the others), `SetVmResourceMetering` acts on the VM by id and reports the state Hyper-V has afterwards, `ResetVmResourceMetering` refuses a VM without metering. Version assertions moved to protocol 10 |
+| PowerShell parser on `Ops\HvPortal.Ops.ps1` (5.1) | — | pass |
+| `web`: `tsc -b`, `vitest` (IT/EN keys), `vite build` | — | pass |
+| Visual check of the static build served with the gateway CSP, API stubbed in the browser (Edge headless, test harness in the session scratchpad) | 18 | pass — *Resource use* tab: 6 charts drawn with their series in light, dark and phone width, no horizontal overflow, no CSP violation (the chart colors are CSS variables set through the style property, no inserted `<style>`); range 10 days requests `hours=240`; "Turn off" on a Microsoft account opens the confirmation-code dialog, the typed code is accepted and the request retried; inactivity (browser clock moved forward): no warning before 15 minutes, warning with a 3-minute countdown, mouse movement does not dismiss it, "Stay signed in" does, at the end `logout?reason=idle` and the sign-in page explains why. Data in this check is a stub of the API: it says nothing about what a real host reports |
+
+| `installer/Build-Release.ps1 -SigningCertificateThumbprint <self-signed NEXQ S.r.l.>` (full, with tests) | 123 + 220 | pass — release 0.8.0: 14 files signed, agent package `signed: true, selfSigned: true, catalogSigned: true`, `setup\HvPortal.Gateway.Setup.exe` (139 MB) and `setup\HvPortal.Agent.Setup.exe` (42 MB); setups not driven through an installation |
+
+Not validated on a real host: Measure-VM and Get-VM values of real VMs, the enable/disable/reset cmdlets, rates against
+what the guest sees (real-host plan V69–V71). The confirmation code and the inactivity sign-out do not depend on Hyper-V.
+
 ## v0.7.0 — backups, VM move, host health, networks with VLAN, storage folders, agent update from the portal (2026-11-07, development machine)
 
 | Suite | Count | Result |

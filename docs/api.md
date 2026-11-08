@@ -19,6 +19,8 @@
 | POST `/auth/recover` | password reset with admin-CLI recovery token | anonymous |
 | POST `/auth/logout` · GET `/auth/me` | session | any session |
 | POST `/auth/password` · POST `/auth/reauth` | change password · step-up | any session |
+| POST `/auth/reauth/code` · POST `/auth/reauth {confirmationCode}` | Microsoft accounts: random 6-character code to type again (2 min, single use, 5 attempts) · step-up with it (ADR-038) | any session (local accounts: `password_required`) |
+| POST `/auth/logout?reason=idle` | sign-out after the inactivity warning (15 + 3 minutes); audited with `reason: idle` | any session |
 | GET `/auth/sessions` · DELETE `/auth/sessions/{id}` | own sessions | full session |
 | POST `/mfa/totp/enroll` · `/mfa/totp/confirm` | TOTP enrollment | any session + recent re-auth |
 | POST `/mfa/totp/disable` · `/mfa/recovery-codes` | MFA management | full session + recent re-auth |
@@ -62,6 +64,7 @@ message, 501 `agent_outdated`). Changes are jobs (202 + `jobId`), re-authorized 
 | POST `/vms/{id}/checkpoints/{cid}/apply` `{confirmName}` | apply (job); a running VM is turned off first by agents 0.5.0+ (409 `invalid_state` with older agents) | `vm.checkpoint.apply`; typed VM name |
 | POST `/vms/{id}/checkpoints/{cid}/delete` `{includeChildren}` | delete/merge (job) | `vm.checkpoint.apply` |
 | POST `/vms/{id}/delete` `{confirmName, deleteDisks?, idempotencyKey?}` | delete the VM (job `vm.delete`, Off or Saved). `deleteDisks: true` (agent 0.7.0+, operation `DeleteWithDisks`, ADR-037) also deletes the disk files used only by that VM inside the allowed storage folders; 501 `agent_outdated` with an older agent; the job message lists deleted and kept files | `vm.delete` + re-auth, typed name; audited with `deleteDisks` |
+| GET `/vms/{id}/metrics?hours=1..240` · POST `/vms/{id}/metering` `{enabled, idempotencyKey?}` | resource use history (stored samples + live reading, summary, at most 600 points) · resource metering on/off (job `vm.metering`, agent 0.8.0+, ADR-039) | `inventory.read` on the VM · `vm.config.compute` on the VM |
 | GET `/hosts/{id}/defaults?groupId=` | wizard data: host capacity, default paths, switches, ISO library, existing names; with `groupId` only the group's allowed switches and `storageRoots` | `vm.create` on host, or on the group when its limits enable the host |
 | POST `/hosts/{id}/vms` `{vm, groupId?}` | create VM (job `vm.create/New`, serialized per host); optional `vm.location` (local folder; `invalid_location`, `location_not_allowed`, 501 `agent_outdated` before agent 0.3.1) | `vm.create` on host; group placement needs `groups.manage` (+ access-change rule) |
 | GET `/hosts/{id}/switches` · `/hosts/{id}/disks` | virtual switches · VM virtual disks (live) | host visibility; VM names/disks filtered to readable VMs |

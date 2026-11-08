@@ -217,7 +217,7 @@ The test suites and the browser end-to-end test are described in [docs/testing.m
 | Installation, updates, uninstallation | [INSTALL.md](INSTALL.md), with every option in [docs/install.md](docs/install.md) |
 | Gateway in a Linux container | [docker/README.md](docker/README.md) |
 | Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
-| Backup and restore of the portal itself | [docs/backup-restore.md](docs/backup-restore.md) |
+| VM backups (how they work, repositories, jobs, restores) and backup of the portal itself | [docs/backup-restore.md](docs/backup-restore.md) |
 | Architecture and design decisions | [docs/architecture.md](docs/architecture.md), [docs/decisions.md](docs/decisions.md) |
 | Security | [SECURITY.md](SECURITY.md), [docs/security-model.md](docs/security-model.md), [docs/threat-model.md](docs/threat-model.md) |
 | REST API | [docs/api.md](docs/api.md), [docs/openapi/v1.json](docs/openapi/v1.json) |

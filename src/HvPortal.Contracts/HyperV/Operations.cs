@@ -80,6 +80,15 @@ public enum HvOperation
     /// folders. Sent by the agent itself for <c>DeleteVm</c> with <c>DeleteDisks</c>; never queued by the gateway.
     /// </summary>
     RemoveVmWithDisks,
+    /// <summary>
+    /// Protocol 10. Resource use of VMs (Get-VM + Measure-VM): one VM (VmMetricsRequest.VmId, also when metering is off)
+    /// or every VM of the host with resource metering on. Read-only (VmMetricsReport).
+    /// </summary>
+    GetVmMetrics,
+    /// <summary>Protocol 10. Enable-VMResourceMetering / Disable-VMResourceMetering on one VM (VmMeteringChange).</summary>
+    SetVmResourceMetering,
+    /// <summary>Protocol 10. Reset-VMResourceMetering on one VM (VmRef): the counters of Measure-VM start again from zero.</summary>
+    ResetVmResourceMetering,
 }
 
 public static class HvOperations

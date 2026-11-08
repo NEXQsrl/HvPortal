@@ -34,6 +34,10 @@ docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Do
 # Packaging / release
 .\installer\New-AgentPackage.ps1 -OutputDirectory artifacts\packages   # zip served by the gateway (/api/v1/downloads)
 .\installer\Build-Release.ps1 [-SkipTests]                             # also builds setup\HvPortal.{Gateway,Agent}.Setup.exe
+.\installer\Build-Release.ps1 -SigningCertificateThumbprint <t> -PublishGitHub   # + publish the 2 setups as the ONLY GitHub release
+.\installer\Publish-GitHubRelease.ps1 [-WhatIf] [-AllowUncommitted]    # publish an already built release; deletes older releases and tags
+#   refuses unsigned files, uncommitted changes / unpushed HEAD (the tag must match the build) and public repositories;
+#   token: GITHUB_TOKEN / GH_TOKEN, gh auth token, or the Git Credential Manager credential for github.com (never printed)
 # Graphical setup alone (net472 WinForms, not in the solution); pages can be checked without installing:
 dotnet build installer\HvPortal.Setup -c Release -p:SetupComponent=Agent -o <dir>      # or Gateway; -p:PayloadZip=<zip> embeds the files
 <dir>\HvPortal.Agent.Setup.exe --render <folder> --lang it                            # PNG of every wizard page

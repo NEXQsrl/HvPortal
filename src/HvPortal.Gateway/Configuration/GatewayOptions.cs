@@ -34,6 +34,20 @@ public sealed class GatewayOptions
     public JobOptions Jobs { get; set; } = new();
     public VmGroupOptions VmGroups { get; set; } = new();
     public BackupOptions Backup { get; set; } = new();
+    public MetricsOptions Metrics { get; set; } = new();
+}
+
+/// <summary>Resource use history of VMs (ADR-039).</summary>
+public sealed class MetricsOptions
+{
+    /// <summary>Collects samples of the VMs with resource metering on. Disabled only in tests that drive it explicitly.</summary>
+    public bool CollectorEnabled { get; set; } = true;
+    /// <summary>One stored sample per VM every this many seconds (Measure-VM on the host; CPU and memory from the inventory in between).</summary>
+    public int SampleIntervalSeconds { get; set; } = 300;
+    /// <summary>Samples older than this are deleted.</summary>
+    public int RetentionDays { get; set; } = 10;
+    /// <summary>Reset-VMResourceMetering after this many days, so that the totals of Hyper-V cover at most this period.</summary>
+    public int ResetDays { get; set; } = 10;
 }
 
 public sealed class BackupOptions

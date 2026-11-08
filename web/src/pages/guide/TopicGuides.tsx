@@ -1,5 +1,5 @@
 import {
-  BookOpen, Camera, FolderTree, HardDrive, Layers, LayoutDashboard, LayoutTemplate, ListChecks, Monitor, MonitorPlay, Network, Plus, Rocket,
+  Archive, BookOpen, Camera, FolderTree, HardDrive, Layers, LayoutDashboard, LayoutTemplate, ListChecks, Monitor, MonitorPlay, Network, Plus, Rocket,
   ScrollText, Settings, SlidersHorizontal, SquarePlus, UserRound, Users, type LucideIcon,
 } from 'lucide-react';
 import type { ComponentType, ReactNode } from 'react';
@@ -599,6 +599,73 @@ function UsersGuide() {
   );
 }
 
+// ---------------------------------------------------------------- VM backups
+
+const BACKUP_POINT_STATES: { label: TKey; tone: 'ok' | 'warn' | 'danger' | 'info'; text: TKey }[] = [
+  { label: 'bk.pointStatus.Creating', tone: 'info', text: 'topic.bk.st.Creating' },
+  { label: 'bk.pointStatus.Ok', tone: 'ok', text: 'topic.bk.st.Ok' },
+  { label: 'bk.pointStatus.Unverified', tone: 'warn', text: 'topic.bk.st.Unverified' },
+  { label: 'bk.pointStatus.Failed', tone: 'danger', text: 'topic.bk.st.Failed' },
+];
+
+const BACKUP_RESTORES: [TKey, TKey, string][] = [
+  ['bk.restore.mode.NewVm', 'topic.bk.r.newVm', 'backup.restore, vm.create'],
+  ['bk.restore.mode.Replace', 'topic.bk.r.replace', 'backup.restore'],
+  ['bk.restore.mode.Test', 'topic.bk.r.test', 'backup.restore, vm.create'],
+  ['bk.point.restoreDisk', 'topic.bk.r.disk', 'backup.restore, vm.config.storage'],
+  ['bk.tab.files', 'topic.bk.r.files', 'backup.restore'],
+];
+
+function BackupGuide() {
+  const { t } = useI18n();
+  return (
+    <>
+      <Lead links={<Go to="/backup" icon={Archive}>{t('nav.backup')}</Go>}>{t('topic.bk.intro')}</Lead>
+      <Block title={t('topic.bk.how')}>
+        <Text>{t('topic.bk.howHelp')}</Text>
+        <Steps>
+          <Step n={1} id="bkh-1" title={t('topic.bk.h1.title')}><Text>{t('topic.bk.h1.help')}</Text></Step>
+          <Step n={2} id="bkh-2" title={t('topic.bk.h2.title')}><Text>{t('topic.bk.h2.help')}</Text></Step>
+          <Step n={3} id="bkh-3" title={t('topic.bk.h3.title')}><Text>{t('topic.bk.h3.help')}</Text></Step>
+          <Step n={4} id="bkh-4" title={t('topic.bk.h4.title')}><Text>{t('topic.bk.h4.help')}</Text></Step>
+          <Step n={5} id="bkh-5" title={t('topic.bk.h5.title')}><Text>{t('topic.bk.h5.help')}</Text></Step>
+        </Steps>
+        <Notice kind="info">{t('topic.bk.notWsb')}</Notice>
+      </Block>
+      <Block title={t('topic.bk.prepare')}>
+        <Steps>
+          <Step n={1} id="bkp-1" title={t('topic.bk.p1.title')}><Text>{t('topic.bk.p1.help')}</Text></Step>
+          <Step n={2} id="bkp-2" title={t('topic.bk.p2.title')}><Text>{t('topic.bk.p2.help')}</Text><Needs perms={['backup.manage']} /></Step>
+          <Step n={3} id="bkp-3" title={t('staging.title')}><Text>{t('topic.bk.p3.help')}</Text><Needs perms={['hosts.manage', 'backup.manage']} /></Step>
+          <Step n={4} id="bkp-4" title={t('bk.repo.check')}><Text>{t('topic.bk.p4.help')}</Text></Step>
+        </Steps>
+      </Block>
+      <Block title={t('topic.bk.run')}>
+        <Bullets items={[
+          <Item key="j" label={t('bk.job.new')}>{t('topic.bk.j.job')}</Item>,
+          <Item key="r" label={t('bk.job.retention')}>{t('topic.bk.j.retention')}</Item>,
+          <Item key="n" label={t('bk.backupNow')}>{t('topic.bk.j.now')}</Item>,
+          <Item key="o" label={t('bk.job.notify')}>{t('topic.bk.j.notify')}</Item>,
+        ]} />
+        <Needs perms={['backup.manage', 'backup.run']} />
+      </Block>
+      <Block title={t('topic.bk.states')}>
+        <Terms head={[t('topic.col.what'), t('topic.col.meaning')]}
+          rows={BACKUP_POINT_STATES.map((s) => [<StatusBadge key="b" tone={s.tone}>{t(s.label)}</StatusBadge>, t(s.text)])} />
+        <Text>{t('topic.bk.verify')}</Text>
+      </Block>
+      <Block title={t('topic.bk.restore')}>
+        <Terms head={[t('topic.col.what'), t('topic.col.effect'), t('topic.col.permission')]}
+          rows={BACKUP_RESTORES.map(([label, text, perms]) => [t(label), t(text), <Code key="p">{perms}</Code>])} />
+        <Notice kind="warn">{t('topic.bk.replaceWarn')}</Notice>
+      </Block>
+      <Block title={t('topic.h.notes')}>
+        <Bullets items={[t('topic.bk.n.full'), t('topic.bk.n.consistency'), t('topic.bk.n.security'), t('topic.bk.n.portal'), t('topic.bk.n.docs')]} />
+      </Block>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------- catalog
 
 export const TOPIC_GUIDES: TopicGuide[] = [
@@ -612,6 +679,7 @@ export const TOPIC_GUIDES: TopicGuide[] = [
   { slug: 'groups', title: 'topic.groups.title', desc: 'topic.groups.desc', icon: FolderTree, Page: GroupsGuide, related: ['users', 'networks'] },
   { slug: 'networks', title: 'topic.net.title', desc: 'topic.net.desc', icon: Network, Page: NetworksGuide, related: ['settings', 'groups'] },
   { slug: 'storage', title: 'topic.sto.title', desc: 'topic.sto.desc', icon: HardDrive, Page: StorageGuide, related: ['create', 'settings'] },
+  { slug: 'backup', title: 'topic.bk.title', desc: 'topic.bk.desc', icon: Archive, Page: BackupGuide, related: ['checkpoints', 'storage', 'templates'] },
   { slug: 'jobs', title: 'topic.jobs.title', desc: 'topic.jobs.desc', icon: ListChecks, Page: JobsGuide, related: ['start', 'users'] },
   { slug: 'users', title: 'topic.users.title', desc: 'topic.users.desc', icon: Users, Page: UsersGuide, related: ['groups', 'jobs'] },
 ];

@@ -1,6 +1,7 @@
 import { KeyRound, LifeBuoy, LockKeyhole, LogIn, LogOut, ShieldCheck, UserRound } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { ApiError, post, resetCsrf } from '@/api/client';
+import { IDLE_SIGNED_OUT_KEY } from '@/components/IdleGuard';
 import { AuthShell as AuthFrame, IconInput, SubmitButton } from '@/components/auth/AuthShell';
 import { CopyButton, ErrorAlert, Notice } from '@/components/common';
 import { Field } from '@/components/dialogs';
@@ -79,6 +80,13 @@ export function LoginPage() {
   const localAllowed = state?.localSignIn !== 'break-glass-only';
   const [tab, setTab] = useState<'local' | 'entra'>(entra && !localAllowed ? 'entra' : 'local');
   const [mode, setMode] = useState<'login' | 'recover'>('login');
+  // Set by IdleGuard just before it signs the user out: shown once, then forgotten.
+  const [idleSignedOut] = useState(() => {
+    try { return window.sessionStorage.getItem(IDLE_SIGNED_OUT_KEY) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { window.sessionStorage.removeItem(IDLE_SIGNED_OUT_KEY); } catch { /* nothing to forget */ }
+  }, []);
   const entraError = (() => {
     const e = new URLSearchParams(window.location.search).get('error');
     if (!e?.startsWith('entra_')) return null;
@@ -153,6 +161,7 @@ export function LoginPage() {
         </div>
       )}
       {(error ?? entraError) && <Notice kind="danger" className="signin-alert mb-4">{error ?? entraError}</Notice>}
+      {idleSignedOut && !error && !entraError && <Notice kind="info" className="signin-alert mb-4">{t('idle.signedOut')}</Notice>}
       {!challenge && tab === 'entra' ? (
         <div className="space-y-3">
           <Button type="button" variant="outline" className="signin-ms h-10 w-full" onClick={signInWithMicrosoft}><MicrosoftMark />{t('login.withMicrosoft')}</Button>

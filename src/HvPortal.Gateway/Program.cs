@@ -114,6 +114,7 @@ namespace HvPortal.Gateway
             builder.Services.AddScoped<LoginThrottleService>();
             builder.Services.AddScoped<SettingsStore>();
             builder.Services.AddScoped<SessionService>();
+            builder.Services.AddSingleton<ReauthCodeService>();
             builder.Services.AddScoped<EnrollmentService>();
             builder.Services.AddScoped<InventoryIngestor>();
             builder.Services.AddScoped<JobService>();
@@ -126,6 +127,10 @@ namespace HvPortal.Gateway
             builder.Services.AddScoped<HvPortal.Gateway.VmBackup.BackupService>();
             builder.Services.AddSingleton<HvPortal.Gateway.VmBackup.BackupScheduler>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<HvPortal.Gateway.VmBackup.BackupScheduler>());
+            // v0.8.0: resource use history of VMs (ADR-039).
+            builder.Services.AddSingleton<HvPortal.Gateway.VmMetrics.VmMetricsBuffer>();
+            builder.Services.AddSingleton<HvPortal.Gateway.VmMetrics.MetricsCollector>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<HvPortal.Gateway.VmMetrics.MetricsCollector>());
 
             if (!string.Equals(options.Database.Provider, "Sqlite", StringComparison.OrdinalIgnoreCase))
             {
@@ -286,6 +291,7 @@ namespace HvPortal.Gateway
             HvPortal.Gateway.VmBackup.BackupFileEndpoints.Map(app);
             HvPortal.Gateway.VmBackup.NotificationEndpoints.Map(app);
             HvPortal.Gateway.VmBackup.ApiTokenEndpoints.Map(app);
+            HvPortal.Gateway.VmMetrics.MetricsEndpoints.Map(app);
 
             app.MapGet("/api/v1/system/info", async (HttpContext http, AccessEvaluator access, AgentConnectionManager agents, GatewayPaths paths) =>
             {

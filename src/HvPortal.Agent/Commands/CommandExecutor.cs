@@ -42,7 +42,8 @@ public sealed class CommandExecutor
             or HvOperation.NewSwitch or HvOperation.RemoveSwitch or HvOperation.NewTemplate or HvOperation.RemoveTemplate
             or HvOperation.MoveVm or HvOperation.MoveVmStorage or HvOperation.NewFolder
             or HvOperation.BackupVm or HvOperation.RemoveBackup or HvOperation.RestoreBackup or HvOperation.RestoreBackupDisk
-            or HvOperation.MountBackupDisk or HvOperation.DismountBackupDisk,
+            or HvOperation.MountBackupDisk or HvOperation.DismountBackupDisk
+            or HvOperation.SetVmResourceMetering or HvOperation.ResetVmResourceMetering,
         _ => false,
     };
 

@@ -42,6 +42,15 @@ function Get-VmById([string]$id) {
     return $vm
 }
 
+# A number of a Measure-VM report, by the first of its property names that exists on this host (null when none does).
+function Get-MeterNumber($report, [string[]]$names) {
+    foreach ($n in $names) {
+        $p = $report.PSObject.Properties[$n]
+        if ($p -and $null -ne $p.Value) { return [int64]$p.Value }
+    }
+    return $null
+}
+
 function Get-SafeName([string]$name) {
     $s = ($name -replace '[^A-Za-z0-9_.-]', '_').Trim('.', ' ')
     if ($s.Length -eq 0) { $s = 'vm' }
@@ -618,6 +627,77 @@ try {
             if ([bool]$a.includeChildren) { Remove-VMSnapshot -VMSnapshot $s -IncludeAllChildSnapshots -Confirm:$false }
             else { Remove-VMSnapshot -VMSnapshot $s -Confirm:$false }
             Write-Response $true @{ id = "$($s.Id)" } $null @('removed')
+        }
+
+        'GetVmMetrics' {
+            # Read-only. One VM (answered also when its resource metering is off) or every VM of the host with metering on.
+            # Get-VM gives the values of this moment; Measure-VM gives totals and averages since metering was enabled or
+            # last reset (the gateway derives the use between two reports from the difference of the totals).
+            $list = $(if ($a.vmId) { @(Get-VmById $a.vmId) } else { @(Get-VM | Where-Object { $_.ResourceMeteringEnabled }) })
+            $samples = New-Object System.Collections.ArrayList
+            $errors = New-Object System.Collections.ArrayList
+            foreach ($vm in $list) {
+                try {
+                    $s = [ordered]@{
+                        vmId = "$($vm.Id)"; name = $vm.Name; state = "$($vm.State)"; meteringEnabled = [bool]$vm.ResourceMeteringEnabled
+                        processorCount = [int]$vm.ProcessorCount; cpuUsagePercent = [int]$vm.CPUUsage
+                        memoryAssignedMb = [int64]($vm.MemoryAssigned / 1MB); memoryDemandMb = [int64]($vm.MemoryDemand / 1MB)
+                        memoryStartupMb = [int64]($vm.MemoryStartup / 1MB); memoryMaximumMb = [int64]($vm.MemoryMaximum / 1MB)
+                        dynamicMemoryEnabled = [bool]$vm.DynamicMemoryEnabled; memoryStatus = "$($vm.MemoryStatus)"
+                        uptimeSeconds = [int64]$vm.Uptime.TotalSeconds
+                    }
+                    if ($vm.ResourceMeteringEnabled) {
+                        $m = Measure-VM -VM $vm
+                        if ($null -ne $m.MeteringDuration) { $s.meteringSeconds = [double]$m.MeteringDuration.TotalSeconds }
+                        $s.averageCpuMhz = Get-MeterNumber $m @('AverageProcessorUsage', 'AvgCPU')
+                        $s.averageMemoryMb = Get-MeterNumber $m @('AverageMemoryUsage', 'AvgRAM')
+                        $s.minimumMemoryMb = Get-MeterNumber $m @('MinimumMemoryUsage', 'MinRAM')
+                        $s.maximumMemoryMb = Get-MeterNumber $m @('MaximumMemoryUsage', 'MaxRAM')
+                        $s.totalDiskMb = Get-MeterNumber $m @('TotalDiskAllocation', 'TotalDisk')
+                        $s.normalizedIoCount = Get-MeterNumber $m @('AggregatedNormalizedIOCount')
+                        $s.averageNormalizedIops = Get-MeterNumber $m @('AggregatedAverageNormalizedIOPS')
+                        $s.averageLatencyMs = Get-MeterNumber $m @('AggregatedAverageLatency')
+                        $s.diskReadMb = Get-MeterNumber $m @('AggregatedDiskDataRead')
+                        $s.diskWrittenMb = Get-MeterNumber $m @('AggregatedDiskDataWritten')
+                        $in = [int64]0; $out = [int64]0; $seenTraffic = $false
+                        foreach ($r in @($m.NetworkMeteredTrafficReport)) {
+                            if ($null -eq $r) { continue }
+                            $seenTraffic = $true
+                            if ("$($r.Direction)" -eq 'Inbound') { $in += [int64]$r.TotalTraffic } elseif ("$($r.Direction)" -eq 'Outbound') { $out += [int64]$r.TotalTraffic }
+                        }
+                        if ($seenTraffic) { $s.networkInboundMb = $in; $s.networkOutboundMb = $out }
+                    }
+                    [void]$samples.Add($s)
+                } catch {
+                    [void]$errors.Add("$($vm.Id): $($_.Exception.Message)")
+                }
+            }
+            $mhz = $null; $logical = $null
+            try {
+                $cpus = @(Get-CimInstance -ClassName Win32_Processor)
+                $mhz = [int](($cpus | Measure-Object -Property MaxClockSpeed -Maximum).Maximum)
+                $logical = [int](($cpus | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum)
+            } catch { [void]$errors.Add("host: processor clock not readable: $($_.Exception.Message)") }
+            Write-Response $true @{ hostProcessorMhz = $mhz; hostLogicalProcessors = $logical; vms = @($samples); errors = @($errors) } $null @()
+        }
+
+        'SetVmResourceMetering' {
+            $vm = Get-VmById $a.vmId
+            $want = [bool]$a.enabled
+            if ([bool]$vm.ResourceMeteringEnabled -ne $want) {
+                if ($want) { Enable-VMResourceMetering -VM $vm; [void]$applied.Add('enabled') }
+                else { Disable-VMResourceMetering -VM $vm; [void]$applied.Add('disabled') }
+            }
+            $after = Get-VmById $a.vmId
+            if ([bool]$after.ResourceMeteringEnabled -ne $want) { throw "Hyper-V still reports resource metering $(if ($after.ResourceMeteringEnabled) { 'on' } else { 'off' })." }
+            Write-Response $true @{ enabled = [bool]$after.ResourceMeteringEnabled; changed = ($applied.Count -gt 0) } $null $applied
+        }
+
+        'ResetVmResourceMetering' {
+            $vm = Get-VmById $a.vmId
+            if (-not $vm.ResourceMeteringEnabled) { throw 'invalid_state: resource metering is off for this VM.' }
+            Reset-VMResourceMetering -VM $vm
+            Write-Response $true @{ reset = $true } $null @('reset')
         }
 
         'ListSwitches' {

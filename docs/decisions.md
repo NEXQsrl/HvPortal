@@ -98,6 +98,62 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-039 Resource use history of VMs (agent protocol 10)
+- **Context**: administrators want to see how much CPU, memory, disk and network a VM used over the last days (sizing,
+  troubleshooting), as charts with peaks. Hyper-V resource metering (`Enable-VMResourceMetering`, `Measure-VM`) keeps
+  only totals and averages since it was enabled or reset, not a time series; the inventory already reports CPU load
+  and assigned memory every 30 s.
+- **Decision**:
+  - *On/off*: `POST /vms/{id}/metering {enabled}` queues a job `vm.metering` (`Enable` / `Disable`, permission
+    `vm.config.compute` on the VM, audited) that runs `SetVmResourceMetering` (Enable-/Disable-VMResourceMetering by VM
+    id; the result is the state Hyper-V reports afterwards). The VM tab *Resource use* turns metering on by itself only
+    the first time it is opened for a VM never metered and only for a user who may do it; after a "Turn off" it stays
+    off until someone turns it on again. Hyper-V is the truth: a VM metered or no longer metered outside the portal is
+    adopted / marked off at the next reading.
+  - *Collection* (`VmMetrics/MetricsCollector`, every `Gateway:Metrics:SampleIntervalSeconds` = 300 s): for each
+    connected host with agent protocol 10 and at least one metered VM, one `GetVmMetrics` (Get-VM + Measure-VM for all
+    metered VMs, read-only). One row per VM (`VmMetricSamples`) with: CPU average and peak and assigned memory average
+    and peak of the period, computed from the inventory readings of the period (`VmMetricsBuffer`, in memory); memory
+    demand, status and limits of that moment; the Hyper-V totals (normalized I/O count, MB read/written, MB
+    received/sent, metering duration, latency average, allocated disk space).
+  - *Series* (`MetricsSeries`): disk and network rates are differences of two consecutive totals divided by the time
+    Hyper-V measured between them; a total that goes back means a reset (the period starts from zero); more than three
+    intervals without a sample is a gap (no value is invented). At most 600 points per request (averages per bucket,
+    peaks kept). Summary cards: CPU peak/average/95th percentile/hours above 80 %, highest assigned memory and demand,
+    memory pressure (demand ÷ assigned), IOPS, data read/written, network peaks and totals, allocated space.
+  - *Retention*: samples older than `RetentionDays` (10) are deleted; every `ResetDays` (10) the collector runs
+    `ResetVmResourceMetering` (audited as `vm.metering.reset`, system action) so that the Hyper-V totals cover at most
+    that period. Deleting a VM or a host deletes its samples.
+  - CPU percent comes from the inventory (Msvm_SummaryInformation ProcessorLoad), not from `Measure-VM` AvgCPU: that is an
+    integer MHz average since the reset, whose rounding makes the difference over 5 minutes meaningless after a few days.
+- **Consequences**: one PowerShell process per host every 5 minutes while at least one VM is metered. After a gateway
+  restart the first sample covers a shorter period (`ObservedSeconds`). CPU and memory peaks shorter than the 30-second
+  inventory interval are not seen. Hosts with agents older than 0.8.0: the tab says so, nothing is sent. Remote hosts
+  (management agents) use the same script through the launcher.
+- Not validated on a real host: Measure-VM property names differ between Windows Server versions (the script reads
+  them by name and leaves a value empty when missing); real-host plan V69-V71.
+
+## ADR-038 Confirmation code for Microsoft accounts and sign-out after inactivity
+- **Context**: sensitive actions need a recent step-up (`RequireRecentReauthAsync`, 5 minutes). For Microsoft (Entra ID)
+  accounts it opened a Microsoft sign-in popup (`prompt=login`), which did not work in practice (popup blocked,
+  redirect issues, conditional access). Separately, the portal refreshes in the background, so an unattended browser
+  kept its session alive: the server idle timeout (default 30 minutes) never expired while a tab was open.
+- **Decision**:
+  - *Confirmation code*: `POST /auth/reauth/code` (Microsoft accounts only; local accounts get `password_required`)
+    returns a random 6-character code (no 0/O/1/I/L), kept in memory for 2 minutes, bound to the session, single use,
+    discarded after 5 wrong attempts. The user types it again (paste disabled in the dialog) and `POST /auth/reauth
+    {confirmationCode}` marks the session as re-authenticated (audit `auth.reauthenticate`, method
+    `confirmation-code`; failures audited with the reason). Local accounts keep password (+ authenticator code).
+  - *Inactivity*: `IdleGuard` in the browser counts real user activity (pointer, keyboard, wheel, touch, scroll) in any
+    tab of the portal (shared through localStorage). After 15 minutes without activity (or 3 minutes before the server
+    idle timeout when that is shorter) a dialog counts down 3 minutes; only "Stay signed in" keeps the session (it also
+    calls `/auth/me`). At zero the browser signs out with `POST /auth/logout?reason=idle` (session revoked with reason
+    "idle timeout (browser)", audit `auth.logout` with `reason: idle`) and the sign-in page says why.
+- **Consequences**: the code confirms the **intent** of the person at the session, not the identity: whoever controls
+  an open session (or its cookie) can also type the code. The protection left for Microsoft accounts is the Microsoft
+  sign-in of the session itself, the 5-minute window, the inactivity sign-out and the audit. The server idle timeout
+  still applies independently. The Entra `mode=reauth` endpoint stays for compatibility but the UI no longer uses it.
+
 ## ADR-037 Delete a VM with its disk files, only on explicit request (agent protocol 9)
 - **Context**: deleting a VM removed only its configuration (`DestroySystem`, ADR-009 era) and left the disk files on
   the host: safe, but administrators then had to find and delete the files by hand, often outside the portal.

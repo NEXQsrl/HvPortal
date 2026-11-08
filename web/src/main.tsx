@@ -6,6 +6,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Loading } from './components/common';
 import { InventoryProvider } from './components/inventory/InventoryProvider';
 import { OperationsProvider } from './components/ops/OperationsProvider';
+import { IdleGuard } from './components/IdleGuard';
 import { ReauthDialog } from './components/ReauthDialog';
 import { AppShell } from './components/shell/AppShell';
 import { TooltipProvider } from './components/ui/tooltip';
@@ -38,6 +39,12 @@ function ReauthDone() {
     window.close();
   }
   return <div className="flex h-dvh items-center justify-center p-6 text-center text-sm text-muted-foreground">{status === 'ok' ? 'OK' : status}</div>;
+}
+
+/** Inactivity warning and sign-out, for every signed-in user (also on the forced password / MFA pages). */
+function SignedInIdleGuard() {
+  const { me } = useSession();
+  return me ? <IdleGuard key={me.id} /> : null;
 }
 
 function Gate() {
@@ -96,6 +103,7 @@ createRoot(document.getElementById('root')!).render(
         <BrowserRouter>
           <TooltipProvider delayDuration={400}>
             <Gate />
+            <SignedInIdleGuard />
             <ReauthDialog />
             <Toaster />
           </TooltipProvider>

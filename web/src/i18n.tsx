@@ -8,6 +8,7 @@ import { enInfra, itInfra } from './i18n-infra';
 import { enLogin, itLogin } from './i18n-login';
 import { enTopics, itTopics } from './i18n-topics';
 import { enBackup, itBackup } from './i18n-backup';
+import { enMetrics, itMetrics } from './i18n-metrics';
 
 const enBase = {
   'app.name': 'HvPortal',
@@ -97,6 +98,12 @@ const enBase = {
   'reauth.title': 'Confirm your identity',
   'reauth.help': 'This action is sensitive. Re-enter your password (and authenticator code if enabled).',
   'reauth.submit': 'Confirm',
+  'idle.title': 'Are you still there?',
+  'idle.help': 'No activity in the portal for {minutes} minutes. For security you will be signed out when the countdown ends, unless you choose to stay.',
+  'idle.countdown': 'Sign-out in',
+  'idle.stay': 'Stay signed in',
+  'idle.signOut': 'Sign out now',
+  'idle.signedOut': 'You were signed out for security after a period of inactivity. Sign in again to continue.',
   'dash.hosts': 'Hosts',
   'dash.connected': 'connected',
   'dash.vms': 'Virtual machines',
@@ -376,7 +383,7 @@ const enBase = {
   'state.Unknown': 'Unknown',
 };
 
-const en = { ...enBase, ...enOps, ...enGuide, ...enLimits, ...enAudit, ...enTemplates, ...enInfra, ...enLogin, ...enTopics, ...enBackup };
+const en = { ...enBase, ...enOps, ...enGuide, ...enLimits, ...enAudit, ...enTemplates, ...enInfra, ...enLogin, ...enTopics, ...enBackup, ...enMetrics };
 type Key = keyof typeof en;
 
 const itBase: Record<keyof typeof enBase, string> = {
@@ -467,6 +474,12 @@ const itBase: Record<keyof typeof enBase, string> = {
   'reauth.title': 'Conferma la tua identità',
   'reauth.help': "Azione sensibile. Reinserisci la password (e il codice dell'app se attivo).",
   'reauth.submit': 'Conferma',
+  'idle.title': 'Sei ancora lì?',
+  'idle.help': 'Nessuna attività nel portale da {minutes} minuti. Per sicurezza la sessione verrà chiusa alla fine del conto alla rovescia, a meno che tu non scelga di rimanere.',
+  'idle.countdown': 'Disconnessione tra',
+  'idle.stay': 'Rimani nella sessione',
+  'idle.signOut': 'Esci ora',
+  'idle.signedOut': 'La sessione è stata chiusa per sicurezza dopo un periodo di inattività. Accedi di nuovo per continuare.',
   'dash.hosts': 'Host',
   'dash.connected': 'connessi',
   'dash.vms': 'Macchine virtuali',
@@ -746,7 +759,7 @@ const itBase: Record<keyof typeof enBase, string> = {
   'state.Unknown': 'Sconosciuto',
 };
 
-const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide, ...itLimits, ...itAudit, ...itTemplates, ...itInfra, ...itLogin, ...itTopics, ...itBackup };
+const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide, ...itLimits, ...itAudit, ...itTemplates, ...itInfra, ...itLogin, ...itTopics, ...itBackup, ...itMetrics };
 
 export type Lang = 'it' | 'en';
 const dictionaries: Record<Lang, Record<Key, string>> = { en, it };

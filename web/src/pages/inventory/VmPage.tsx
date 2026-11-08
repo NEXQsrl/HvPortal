@@ -16,13 +16,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { VmCheckpoints } from '@/components/vm/VmCheckpoints';
 import { VmBackups } from '@/components/backup/VmBackups';
 import { VmHardware, type DetailsResponse } from '@/components/vm/VmHardware';
+import { VmMetrics } from '@/components/vm/VmMetrics';
 import { VmSettings } from '@/components/vm/VmSettings';
 import { vmMemory } from '@/components/vm/VmTable';
 import { useI18n, type TKey } from '@/i18n';
 import { formatBytes, formatDuration, percent } from '@/lib/format';
 import { useLive, useLoad } from '@/lib/hooks';
 
-const TABS = ['summary', 'console', 'settings', 'hardware', 'checkpoints', 'backups', 'events'] as const;
+const TABS = ['summary', 'console', 'settings', 'hardware', 'metrics', 'checkpoints', 'backups', 'events'] as const;
 
 /** Msvm_SummaryInformation.ReplicationHealth: 0 Not applicable, 1 Ok, 2 Warning, 3 Critical. */
 function ReplicationHealth({ value }: { value: number | null | undefined }) {
@@ -188,6 +189,7 @@ export function VmPage() {
       </TabsContent>
       <TabsContent value="settings" className="min-h-0">{tab === 'settings' && <VmSettings vm={vm} />}</TabsContent>
       <TabsContent value="hardware" className="min-h-0">{tab === 'hardware' && <VmHardware vm={vm} />}</TabsContent>
+      <TabsContent value="metrics" className="min-h-0">{tab === 'metrics' && <VmMetrics vm={vm} />}</TabsContent>
       <TabsContent value="checkpoints" className="min-h-0">{tab === 'checkpoints' && <VmCheckpoints vm={vm} />}</TabsContent>
       <TabsContent value="backups" className="min-h-0">{tab === 'backups' && <VmBackups vm={vm} />}</TabsContent>
       <TabsContent value="events" className="min-h-0 overflow-auto p-4">

@@ -473,10 +473,59 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                     Isos = b.IncludeIsos && b.Path.Equals(@"D:\ISO", StringComparison.OrdinalIgnoreCase) ? [new IsoFile(@"D:\ISO\win.iso", 5L << 30, DateTimeOffset.UtcNow)] : [],
                     FreeBytes = 1L << 39,
                 });
+            case HvOperation.GetVmMetrics:
+                var mr = HvOperations.FromElement<VmMetricsRequest>(command.OperationArgs)!;
+                var measured = _vms.Where(kv => kv.Value.HostId == hostId && (mr.VmId is { } one ? kv.Key == one : Meters.ContainsKey(kv.Key)))
+                    .Select(kv => Meters.TryGetValue(kv.Key, out var totals)
+                        ? totals with { VmId = kv.Key, Name = kv.Value.Name, State = kv.Value.State.ToString(), MeteringEnabled = true }
+                        : new VmMetricsSample { VmId = kv.Key, Name = kv.Value.Name, State = kv.Value.State.ToString(), MeteringEnabled = false, ProcessorCount = 2 })
+                    .ToList();
+                if (mr.VmId is { } wanted && measured.Count == 0)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = $"VM {wanted} not found on this host." };
+                }
+                return Ok(new VmMetricsReport { HostProcessorMhz = 2000, HostLogicalProcessors = 16, Vms = measured });
+            case HvOperation.SetVmResourceMetering:
+                var mc = HvOperations.FromElement<VmMeteringChange>(command.OperationArgs)!;
+                if (!_vms.TryGetValue(mc.VmId, out var meteredVm) || meteredVm.HostId != hostId)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "VM not found on this host." };
+                }
+                if (mc.Enabled)
+                {
+                    Meters.TryAdd(mc.VmId, NewMeter(mc.VmId));
+                }
+                else
+                {
+                    Meters.TryRemove(mc.VmId, out _);
+                }
+                return Ok(new { enabled = mc.Enabled, changed = true }, mc.Enabled ? "enabled" : "disabled");
+            case HvOperation.ResetVmResourceMetering:
+                var rr = HvOperations.FromElement<VmRef>(command.OperationArgs)!;
+                if (!Meters.ContainsKey(rr.VmId))
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "invalid_state: resource metering is off for this VM." };
+                }
+                Meters[rr.VmId] = NewMeter(rr.VmId);
+                MeteringResets.Enqueue(rr.VmId);
+                return Ok(new { reset = true }, "reset");
             default:
                 return new HvOperationOutcome { Ok = false, Error = "Unsupported operation." };
         }
     }
+
+    /// <summary>Simulated resource metering (Hyper-V VM id -> Measure-VM totals of this moment; present = metering on).</summary>
+    public ConcurrentDictionary<Guid, VmMetricsSample> Meters { get; } = new();
+
+    public ConcurrentQueue<Guid> MeteringResets { get; } = new();
+
+    public static VmMetricsSample NewMeter(Guid vmId) => new()
+    {
+        VmId = vmId, MeteringEnabled = true, ProcessorCount = 2, CpuUsagePercent = 5, MemoryAssignedMb = 4096, MemoryDemandMb = 2048,
+        MemoryStartupMb = 4096, MemoryMaximumMb = 8192, DynamicMemoryEnabled = true, MemoryStatus = "OK", MeteringSeconds = 0,
+        AverageCpuMhz = 0, TotalDiskMb = 65536, NormalizedIoCount = 0, AverageLatencyMs = 0, DiskReadMb = 0, DiskWrittenMb = 0,
+        NetworkInboundMb = 0, NetworkOutboundMb = 0,
+    };
 
     /// <summary>Health report returned by GetHostHealth (default: a healthy host).</summary>
     public HostHealthReport? Health { get; set; }

@@ -26,6 +26,7 @@ until publication is authorized.
 | @microsoft/signalr | web | MIT |
 | shadcn/ui components (source vendored in `web/src/components/ui`), radix-ui 1.8, cmdk, react-resizable-panels, get-nonce, cn | web | MIT |
 | lucide-react (icons) | web | ISC |
+| recharts 3.10 (charts of the VM resource use tab, ADR-039) and its runtime dependencies: @reduxjs/toolkit, redux, redux-thunk, react-redux, reselect, immer, es-toolkit, eventemitter3, decimal.js-light, tiny-invariant, clsx, use-sync-external-store (MIT); victory-vendor (MIT AND ISC AND BSD-3-Clause), d3-array/color/format/interpolate/path/scale/shape/time/time-format/timer and internmap (ISC), d3-ease (BSD-3-Clause) | web | MIT / ISC / BSD-3-Clause |
 | class-variance-authority | web | Apache-2.0 |
 | Tailwind CSS 4, tw-animate-css (compiled into the CSS bundle) | web | MIT |
 | Geist / Geist Mono variable fonts (@fontsource-variable) | web (bundled font files) | SIL OFL 1.1 — keep the font license notice in `NOTICE` |

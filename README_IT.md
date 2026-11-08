@@ -231,7 +231,7 @@ La documentazione in `docs/` è in inglese.
 | Installazione, aggiornamento, disinstallazione | [INSTALL_IT.md](INSTALL_IT.md), con tutte le opzioni in [docs/install.md](docs/install.md) |
 | Gateway in un container Linux | [docker/README.md](docker/README.md) |
 | Risoluzione dei problemi | [docs/troubleshooting.md](docs/troubleshooting.md) |
-| Backup e ripristino del portale stesso | [docs/backup-restore.md](docs/backup-restore.md) |
+| Backup delle VM (come funzionano, repository, job, ripristini) e backup del portale stesso | [docs/backup-restore_IT.md](docs/backup-restore_IT.md) (italiano), [docs/backup-restore.md](docs/backup-restore.md) (inglese) |
 | Architettura e decisioni di progetto | [docs/architecture.md](docs/architecture.md), [docs/decisions.md](docs/decisions.md) |
 | Sicurezza | [SECURITY_IT.md](SECURITY_IT.md), [docs/security-model.md](docs/security-model.md), [docs/threat-model.md](docs/threat-model.md) |
 | API REST | [docs/api.md](docs/api.md), [docs/openapi/v1.json](docs/openapi/v1.json) |

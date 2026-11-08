@@ -38,6 +38,8 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
     public DbSet<BackupRun> BackupRuns => Set<BackupRun>();
     public DbSet<BackupPoint> BackupPoints => Set<BackupPoint>();
     public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
+    public DbSet<VmMetering> VmMeterings => Set<VmMetering>();
+    public DbSet<VmMetricSample> VmMetricSamples => Set<VmMetricSample>();
 
     /// <summary>Optimistic concurrency: entities with a long "Version" property get it incremented on update.</summary>
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
@@ -112,6 +114,19 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.HasIndex(x => new { x.ParentId, x.Name }).IsUnique();
             e.Property(x => x.Description).HasMaxLength(1000);
             e.Property(x => x.PolicyJson).HasMaxLength(32000);
+        });
+        m.Entity<VmMetering>(e =>
+        {
+            e.HasKey(x => x.VmId);
+            e.HasIndex(x => x.HostId);
+            e.Property(x => x.LastError).HasMaxLength(1000);
+        });
+        m.Entity<VmMetricSample>(e =>
+        {
+            e.HasIndex(x => new { x.VmId, x.At });
+            e.HasIndex(x => x.At);
+            e.Property(x => x.State).HasMaxLength(40);
+            e.Property(x => x.MemoryStatus).HasMaxLength(40);
         });
         m.Entity<VmTemplate>(e =>
         {

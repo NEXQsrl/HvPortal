@@ -1,5 +1,7 @@
 # Backup and restore
 
+> Italian version: [backup-restore_IT.md](backup-restore_IT.md). Keep both in step when this page changes.
+
 This page has two parts:
 
 - **Part A — VM backups** (v0.7.0, menu *Backup*): copies of the virtual machines, restores, restore tests. Design and
@@ -15,6 +17,65 @@ This page has two parts:
 ---
 
 ## Part A — VM backups
+
+### How it works: technology and components
+
+HvPortal does **not** use Windows Server Backup (`wbadmin`), the Hyper-V VSS writer of a host-level backup, or any
+third-party backup engine. A backup is made with the standard cmdlets of the Hyper-V PowerShell module, run by the
+agent on the host that owns the VM, through the single fixed operations script `Ops\HvPortal.Ops.ps1` (Windows
+PowerShell 5.1, typed operations only, ADR-012). No backup software has to be installed on the hosts or on the NAS.
+
+| Component | Where | What it does |
+|---|---|---|
+| Backup scheduler (`VmBackup/BackupScheduler`) | gateway | every 20 s (`Gateway__Backup__IntervalSeconds`): starts the jobs that are due (also a start missed while the gateway was stopped), applies retention after each run, queues restore tests every *N* days, sends notifications |
+| Backup service and job runner (`VmBackup/BackupService`, `Jobs/JobRunner`) | gateway | one persistent task per VM (`backup.vm`, `backup.verify`, `backup.restore`, `backup.delete`, ...), authorized again when it starts, at most 4 long tasks at the same time; records restore points and their state in the portal database |
+| Agent | each host | receives the typed command over its outbound channel and runs the matching branch of the operations script (`BackupVm`, `VerifyBackup`, `RestoreBackup`, `RestoreBackupDisk`, `MountBackupDisk`, `RemoveBackup`, `ListBackups`, `GetBackupReadiness`) |
+| Hyper-V (`vmms`) | each host | takes the checkpoint, writes the export, imports a restore point |
+| Repository | local folder or SMB share / NAS | holds the restore points: plain folders and files, readable without HvPortal |
+
+**A backup, step by step** (`BackupVm`):
+
+1. The repository is opened. Local folder or domain share: used directly. Share with stored credentials (NAS outside the
+   domain): mapped for the duration of the task with `New-PSDrive -Credential`, and the export goes to a temporary
+   folder `hvportal-<id>` in the host's **staging folder**, because Hyper-V cannot use those credentials.
+2. A checkpoint left by an interrupted backup (`HvPortal backup *`) is removed first, and the checkpoint type it
+   recorded is put back.
+3. **Checkpoint** (`Checkpoint-VM`), also while the VM runs. If the job's checkpoint type (Production,
+   ProductionOnly, Standard) differs from the VM's, the VM's type is changed only for that moment and put back.
+4. **Export of the checkpoint** (`Export-VMSnapshot`): configuration (`.vmcx`, `.vmgs`, ...) and disks (`.vhdx`) as
+   they were at the checkpoint, written by Hyper-V into the restore point folder (or the staging folder).
+5. **Removal of the checkpoint** (`Remove-VMSnapshot`, merged by Hyper-V), always, also when the export fails.
+6. **SHA-256 of every exported file** (`Get-FileHash`), computed on the host before any copy.
+7. Staging only: **copy** to the share (`Copy-Item`, file by file) and, with *verify after copy*, the copy is read
+   back and compared with the hashes; then the staging folder is deleted.
+8. **Manifest** `hvportal-backup.json` written last (VM, host, times, checkpoint type requested and used, files with
+   size and SHA-256, configuration file, disks). A folder without the manifest is never used; a failed backup deletes
+   the folder it created.
+
+Who accesses the repository: with a local folder or a domain share, Hyper-V writes the export (on a share: with the
+**computer account** of the host, `HOST$`) and the agent account reads it to compute the hashes; with stored
+credentials only the agent reads and writes the share, Hyper-V writes only to the local staging folder.
+
+**Restores** use the same tools:
+
+| Operation | Cmdlets |
+|---|---|
+| As a new VM / restore test | `Compare-VM -Copy -GenerateNewId` (compatibility check, nothing copied), `Import-VM -CompatibilityReport` into `<folder>\<name>`, `Rename-VM`; restore test: `Start-VM`, wait for the guest heartbeat, then `Stop-VM -TurnOff`, `Remove-VM` and the folder deleted |
+| Replace the VM | the same check **before** the original is touched; then `Stop-VM -TurnOff`, `Remove-VM`, original disks renamed `.pre-restore-<time>`, `Import-VM` with the **original id** (`Compare-VM -Copy` without a new id) |
+| One disk | `Copy-Item` of the `.vhdx` out of the point, optionally `Add-VMHardDiskDrive` (SCSI) |
+| Single files | `Mount-VHD -ReadOnly` on the host, volumes found through WMI; files read by the agent in chunks and streamed by the gateway to the browser; `Dismount-VHD` at the end |
+| Verify | `Get-FileHash` of every file, compared with the manifest |
+| Delete a point | removal of the point folder `<VM folder>\<point id>` only (its name is checked against a fixed pattern) |
+
+From a share with stored credentials the files are first copied to the staging folder, because Hyper-V reads the export
+itself during an import.
+
+**Why not Windows Server Backup.** It backs up at host level (volumes or the whole Hyper-V host, through the Hyper-V VSS
+writer) and is driven per host with `wbadmin`: it does not give per-VM restore points, jobs, retention, notifications,
+permissions per VM or group, restore tests or file restore from the portal, and on a network share it keeps only the
+latest backup (each run overwrites the previous one). The export of a checkpoint gives a point in time of one VM while it runs, in a standard Hyper-V format
+that can be imported with Hyper-V Manager even without HvPortal. Considered as future work: recovery checkpoints with
+resilient change tracking (RCT) for incremental copies ([ADR-031](decisions.md)).
 
 ### What a restore point is, and what it is not
 

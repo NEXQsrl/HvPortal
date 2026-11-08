@@ -1637,6 +1637,133 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.ToTable("VirtualMachines");
                 });
 
+            modelBuilder.Entity("HvPortal.Gateway.Data.VmMetering", b =>
+                {
+                    b.Property<Guid>("VmId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("EnabledAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("HostId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LastErrorAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LastResetAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("LastSampleAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("VmId");
+
+                    b.HasIndex("HostId");
+
+                    b.ToTable("VmMeterings");
+                });
+
+            modelBuilder.Entity("HvPortal.Gateway.Data.VmMetricSample", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("At")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("AverageCpuMhz")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("AverageLatencyMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("CpuAvgPercent")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("CpuMaxPercent")
+                        .HasColumnType("REAL");
+
+                    b.Property<long?>("DiskReadMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("DiskWrittenMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool?>("DynamicMemory")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("MaximumMemoryMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("MemoryAssignedAvgMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("MemoryAssignedMaxMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MemoryAvailableMinPercent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("MemoryDemandMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("MemoryMaximumMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("MemoryStartupMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MemoryStatus")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("MeteringSeconds")
+                        .HasColumnType("REAL");
+
+                    b.Property<long?>("NetworkInboundMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("NetworkOutboundMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("NormalizedIoCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ObservedSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ProcessorCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("State")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("TotalDiskMb")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("VmId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("At");
+
+                    b.HasIndex("VmId", "At");
+
+                    b.ToTable("VmMetricSamples");
+                });
+
             modelBuilder.Entity("HvPortal.Gateway.Data.VmTemplate", b =>
                 {
                     b.Property<Guid>("Id")

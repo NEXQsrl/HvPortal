@@ -8,7 +8,8 @@ interface Session {
   me: Me | null;
   loading: boolean;
   refresh: () => Promise<void>;
-  logout: () => Promise<void>;
+  /** reason "idle": signed out by IdleGuard after the inactivity warning (audited as such). */
+  logout: (reason?: 'idle') => Promise<void>;
   can: (permission: string) => boolean;
 }
 
@@ -50,8 +51,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     });
   }, [refresh]);
 
-  const logout = useCallback(async () => {
-    try { await post('/api/v1/auth/logout'); } catch { /* already signed out */ }
+  const logout = useCallback(async (reason?: 'idle') => {
+    try { await post(reason ? `/api/v1/auth/logout?reason=${reason}` : '/api/v1/auth/logout'); } catch { /* already signed out */ }
     await realtime.stop();
     await refresh();
   }, [refresh]);

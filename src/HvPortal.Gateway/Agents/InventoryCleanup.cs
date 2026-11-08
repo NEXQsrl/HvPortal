@@ -17,6 +17,8 @@ public static class InventoryCleanup
         await db.RoleAssignments.Where(a => a.ScopeType == ScopeType.Vm && a.ScopeId == scope).ExecuteDeleteAsync(ct);
         await db.LogicalGroupMembers.Where(m => m.VmId == vmId).ExecuteDeleteAsync(ct);
         await db.ResourceLocks.Where(l => l.ResourceKey == "vm:" + vmId.ToString("N")).ExecuteDeleteAsync(ct);
+        await db.VmMetricSamples.Where(s => s.VmId == vmId).ExecuteDeleteAsync(ct);
+        await db.VmMeterings.Where(m => m.VmId == vmId).ExecuteDeleteAsync(ct);
         await db.VirtualMachines.Where(v => v.Id == vmId).ExecuteDeleteAsync(ct);
         db.InventoryEvents.Add(new InventoryEvent { HostId = hostId, VmId = vmId, Kind = eventKind, Details = vm?.Name, At = now });
         await db.SaveChangesAsync(ct);
@@ -34,6 +36,8 @@ public static class InventoryCleanup
         await db.GroupNetworks.Where(n => n.HostId == hostId).ExecuteDeleteAsync(ct);
         // The records only: the template folders stay on the host, which the portal no longer manages.
         await db.VmTemplates.Where(t => t.HostId == hostId).ExecuteDeleteAsync(ct);
+        await db.VmMetricSamples.Where(s => vmIds.Contains(s.VmId)).ExecuteDeleteAsync(ct);
+        await db.VmMeterings.Where(m => m.HostId == hostId || vmIds.Contains(m.VmId)).ExecuteDeleteAsync(ct);
         await db.VirtualMachines.Where(v => v.HostId == hostId).ExecuteDeleteAsync(ct);
         await db.EnrollmentTokens.Where(t => t.HostId == hostId).ExecuteDeleteAsync(ct);
         await db.AgentCertificates.Where(c => c.HostId == hostId).ExecuteDeleteAsync(ct);

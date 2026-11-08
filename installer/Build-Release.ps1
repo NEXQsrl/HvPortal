@@ -10,14 +10,16 @@
   Signing: when -SigningCertificateThumbprint is given, executables and scripts are Authenticode-signed with that
   certificate (LocalMachine\My or CurrentUser\My) and an RFC 3161 timestamp server if -TimestampServer is set.
   Without a certificate the binaries are NOT signed and the script says so — it never fakes a signature.
-  Nothing is uploaded anywhere.
+  Nothing is uploaded anywhere, unless -PublishGitHub: then Publish-GitHubRelease.ps1 publishes the two setup files as
+  the only release of the GitHub repository (older releases and their tags are deleted; see that script for its checks).
 #>
 param(
     [string]$Configuration = 'Release',
     [string]$Runtime = 'win-x64',
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$PublishGitHub
 )
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..')
@@ -134,3 +136,6 @@ $sums = Get-ChildItem $out -Recurse -File | Where-Object Name -ne 'SHA256SUMS.tx
 }
 $sums | Out-File -Encoding ascii "$out\SHA256SUMS.txt"
 Write-Host "Release layout: $out"
+if ($PublishGitHub) {
+    & (Join-Path $PSScriptRoot 'Publish-GitHubRelease.ps1') -Version $version
+}

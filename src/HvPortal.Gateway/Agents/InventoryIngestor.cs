@@ -17,11 +17,13 @@ public sealed class InventoryIngestor
     private const int MaxVms = 5000;
     private readonly PortalDbContext _db;
     private readonly TimeProvider _time;
+    private readonly VmMetrics.VmMetricsBuffer? _metrics;
 
-    public InventoryIngestor(PortalDbContext db, TimeProvider time)
+    public InventoryIngestor(PortalDbContext db, TimeProvider time, VmMetrics.VmMetricsBuffer? metrics = null)
     {
         _db = db;
         _time = time;
+        _metrics = metrics;
     }
 
     public async Task ApplyAsync(Guid hostId, HostInventory inv, CancellationToken ct)
@@ -125,6 +127,8 @@ public sealed class InventoryIngestor
             vm.LastSeenAt = now;
             vm.IsMissing = false;
             vm.MissingSince = null;
+            // CPU and memory readings of VMs with resource metering on (resource use history, ADR-039).
+            _metrics?.Observe(vm.Id, v, now);
         }
 
         if (!inv.Partial)
