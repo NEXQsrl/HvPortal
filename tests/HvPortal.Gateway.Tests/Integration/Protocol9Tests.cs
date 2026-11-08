@@ -274,6 +274,24 @@ public sealed class Protocol9Tests : IAsyncLifetime
     // ------------------------------------------------------------------ storage folders and new folders
 
     [Fact]
+    public async Task The_backup_staging_folder_must_be_on_a_drive_the_host_has()
+    {
+        var (hostId, _) = await _app.CreateHostAsync("staging-c-only");
+        var admin = await UserAsync("staging-admin", BuiltInRoles.InfrastructureAdmin);
+        await _app.WithDbAsync(async db =>
+        {
+            var h = await db.Hosts.FirstAsync(x => x.Id == hostId);
+            h.HostFactsJson = JsonSerializer.Serialize(new HostFacts { ComputerName = "S", AgentVersion = "0.8.0", VirtualSwitches = [], Volumes = [new HostVolume("C:", "System", "NTFS", 200L << 30, 80L << 30)] });
+            await db.SaveChangesAsync();
+        });
+        // Only C: on this host: the usual "D:\..." example would fail at the first backup, so it is refused now.
+        var refused = await PutAsync(admin, $"/api/v1/hosts/{hostId}/backup-staging", new { path = @"D:\HvPortal-staging" });
+        Assert.Equal("drive_not_found", await refused.CodeAsync());
+        Assert.Equal(HttpStatusCode.OK, (await PutAsync(admin, $"/api/v1/hosts/{hostId}/backup-staging", new { path = @"c:\HvPortal-staging" })).StatusCode);
+        Assert.Equal(@"C:\HvPortal-staging", await _app.WithDbAsync(db => db.Hosts.Where(h => h.Id == hostId).Select(h => h.BackupStagingPath).FirstAsync()));
+    }
+
+    [Fact]
     public async Task Storage_folders_are_decided_on_the_host_except_for_remote_hosts()
     {
         var (hostId, _) = await _app.CreateHostAsync("sf-agent-host");

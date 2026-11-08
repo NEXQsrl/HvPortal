@@ -12,6 +12,12 @@
 
 | `installer/Build-Release.ps1 -SigningCertificateThumbprint <self-signed NEXQ S.r.l.>` (full, with tests) | 123 + 220 | pass — release 0.8.0: 14 files signed, agent package `signed: true, selfSigned: true, catalogSigned: true`, `setup\HvPortal.Gateway.Setup.exe` (139 MB) and `setup\HvPortal.Agent.Setup.exe` (42 MB); setups not driven through an installation |
 
+After the 0.8.0 release (next release): `Protocol9Tests` adds *the backup staging folder must be on a drive the host
+has* (`drive_not_found` with the host's drives, from the inventory); `BackupTests` checks that a rescan of a share with
+credentials from a host without staging folder says `staging_required` (it said "no connected host") and works once
+the folder is set; the host page suggests a staging folder on the host's drive with most free space, inside its
+storage folders (`web/src/lib/staging.test.ts`, 3 tests).
+
 Not validated on a real host: Measure-VM and Get-VM values of real VMs, the enable/disable/reset cmdlets, rates against
 what the guest sees (real-host plan V69–V71). The confirmation code and the inactivity sign-out do not depend on Hyper-V.
 

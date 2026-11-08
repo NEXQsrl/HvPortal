@@ -67,7 +67,7 @@ export const enBackup = {
   'bk.check.staging': 'Backup staging folder',
   'bk.check.staging.how': 'The staging folder must be a local folder of the host that the agent can write to, with room for a full copy of the largest VM.',
   'bk.check.staging-folder': 'Backup staging folder not set',
-  'bk.check.staging-folder.how': 'Open the host page > Settings and set "Backup staging folder" (a local folder such as D:\\HvPortal-staging, not a system folder). It is needed for shares with credentials, restore tests and browsing the files of restore points on shares.',
+  'bk.check.staging-folder.how': 'Open the host page > Settings and set "Backup staging folder" (a local folder on a drive of that host, for example C:\\HvPortal-staging: the page suggests one; not a system folder). It is needed for shares with credentials, restore tests and browsing the files of restore points on shares.',
 
   'bk.cp.Production': 'Production, standard if not possible',
   'bk.cp.ProductionOnly': 'Production only',
@@ -673,7 +673,7 @@ export const itBackup: Record<keyof typeof enBackup, string> = {
   'bk.check.staging': 'Cartella di appoggio dei backup',
   'bk.check.staging.how': 'La cartella di appoggio deve essere una cartella locale dell’host in cui l’agente può scrivere, con spazio per una copia completa della VM più grande.',
   'bk.check.staging-folder': 'Cartella di appoggio dei backup non impostata',
-  'bk.check.staging-folder.how': 'Apri la pagina dell’host > Impostazioni e imposta "Cartella di appoggio dei backup" (una cartella locale come D:\\HvPortal-staging, non una cartella di sistema). Serve per le condivisioni con credenziali, i test di ripristino e la navigazione dei file dei punti di ripristino sulle condivisioni.',
+  'bk.check.staging-folder.how': 'Apri la pagina dell’host > Impostazioni e imposta "Cartella di appoggio dei backup" (una cartella locale su un disco di quell’host, per esempio C:\\HvPortal-staging: la pagina ne propone una; non una cartella di sistema). Serve per le condivisioni con credenziali, i test di ripristino e la navigazione dei file dei punti di ripristino sulle condivisioni.',
 
   'bk.cp.Production': 'Di produzione, standard se non possibile',
   'bk.cp.ProductionOnly': 'Solo di produzione',

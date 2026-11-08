@@ -142,7 +142,11 @@ export const enInfra = {
   // Backup staging folder
   'staging.title': 'Backup staging folder',
   'staging.help': 'Local folder of the host where backups to a NAS share are written first, then copied to the share and verified. Needs enough free space for the largest VM. Empty = backups go only to local repositories.',
-  'staging.invalid': 'A local folder such as D:\\HvPortal-staging (not a drive root, not a system folder).',
+  'staging.invalid': 'A local folder such as C:\\HvPortal-staging (not a drive root, not a system folder).',
+  'staging.useSuggestion': 'Use {path}',
+  'staging.noDrive': 'This host has no drive {drive}. Its local drives: {drives}.',
+  'staging.outside': 'The folder is outside the storage folders allowed on this host.',
+  'staging.free': 'Free space on {drive} at the last inventory: {free}. It must hold a full copy of the largest VM backed up from this host.',
   'audit.a.hosts.backup_staging.update': 'Backup staging folder of the host changed',
 
   // New folder (file explorer)
@@ -367,7 +371,11 @@ export const itInfra: Record<keyof typeof enInfra, string> = {
 
   'staging.title': 'Cartella di appoggio dei backup',
   'staging.help': 'Cartella locale dell\'host in cui i backup verso una share del NAS vengono scritti prima, poi copiati sulla share e verificati. Serve spazio libero sufficiente per la VM più grande. Vuota = backup solo su repository locali.',
-  'staging.invalid': 'Una cartella locale come D:\\HvPortal-staging (non la radice di un\'unità, non una cartella di sistema).',
+  'staging.invalid': 'Una cartella locale come C:\\HvPortal-staging (non la radice di un\'unità, non una cartella di sistema).',
+  'staging.useSuggestion': 'Usa {path}',
+  'staging.noDrive': 'Questo host non ha il disco {drive}. I suoi dischi locali: {drives}.',
+  'staging.outside': 'La cartella è fuori dalle cartelle storage consentite su questo host.',
+  'staging.free': 'Spazio libero su {drive} all\'ultimo inventario: {free}. Deve contenere una copia completa della VM più grande di cui fai il backup da questo host.',
   'audit.a.hosts.backup_staging.update': 'Cartella di appoggio dei backup dell\'host modificata',
 
   'nfold.action': 'Nuova cartella',
