@@ -88,8 +88,19 @@ gateway verso `login.microsoftonline.com`), il tuo server SMTP e i tuoi webhook 
 
 ## 1. Procurarsi i file della release
 
-Compila la release su una macchina Windows con i prerequisiti indicati nel [README](README_IT.md#compilare-dai-sorgenti),
-oppure usa i file di release pubblicati dai manutentori.
+I setup dell'ultima versione sono nella pagina delle release su GitHub:
+[github.com/NEXQsrl/HvPortal/releases/latest](https://github.com/NEXQsrl/HvPortal/releases/latest)
+(`HvPortal.Gateway.Setup.exe` e `HvPortal.Agent.Setup.exe`, con il loro SHA-256 nelle note della release; viene tenuta
+solo l'ultima versione). Contengono tutto quello che serve ai setup: il setup del gateway porta con sé anche il
+pacchetto dell'agent che il portale offre in download. Il certificato pubblico di firma si ricava dalla firma di un
+setup, vedi [Firma del codice](#firma-del-codice).
+
+I manutentori pubblicano una release con `.\installer\Build-Release.ps1 -SigningCertificateThumbprint <thumb> -PublishGitHub`
+(oppure `.\installer\Publish-GitHubRelease.ps1` per una release già compilata): lo script rifiuta file non firmati,
+modifiche non committate e un repository pubblico, poi sostituisce tutte le release precedenti e i loro tag.
+
+Puoi anche compilare la release su una macchina Windows con i prerequisiti indicati nel
+[README](README_IT.md#compilare-dai-sorgenti).
 
 ```powershell
 .\installer\Build-Release.ps1                                       # build non firmata
@@ -125,6 +136,15 @@ importa il certificato pubblico su ogni server (PowerShell come amministratore, 
 ```powershell
 Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
 Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+```
+
+Se hai solo i setup (release su GitHub), ricava il certificato pubblico dalla firma di un setup e importalo solo se la
+sua impronta è quella pubblicata dai manutentori (build di NEXQ S.r.l.: `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`):
+
+```powershell
+$cert = (Get-AuthenticodeSignature .\HvPortal.Gateway.Setup.exe).SignerCertificate
+$cert.Thumbprint
+Export-Certificate -Cert $cert -FilePath .\HvPortal-CodeSigning.cer | Out-Null
 ```
 
 Dopo l'importazione Authenticode segnala i file come validi, i criteri PowerShell `AllSigned` accettano gli script e le

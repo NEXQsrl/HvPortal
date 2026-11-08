@@ -5,138 +5,205 @@
   </picture>
 </p>
 
-<p align="center"><a href="README.md">English</a> | <b>Italiano</b></p>
+<h3 align="center">La console web che mancava ai tuoi host Hyper-V.</h3>
 
-# HvPortal
+<p align="center">
+  Inventario, console nel browser, modifiche alle VM, template, backup, storico delle risorse e permessi granulari<br>
+  per tutti i tuoi host Hyper-V, da un unico portale installato da te. Niente System Center, niente Domain Admin, nessuna porta in ingresso sugli host.
+</p>
 
-**Gestisci i tuoi host Hyper-V dal browser.** HvPortal è un portale web per Microsoft Hyper-V da installare sui propri
-server, pensato sul modello di VMware vCenter. Offre un unico inventario di tutti gli host, la console delle VM nel
-browser, modifiche e template delle VM, backup e permessi granulari, con un registro di audit che rende visibili le
-manomissioni. Funziona con host Hyper-V standalone, sia in un dominio Active Directory sia in workgroup, e non richiede
-mai un account di amministratore di dominio.
+<p align="center">
+  <a href="https://github.com/NEXQsrl/HvPortal/releases/latest"><b>Scarica l'ultima release</b></a> ·
+  <a href="#installazione-in-dieci-minuti">Installazione</a> ·
+  <a href="#funzionalità">Funzionalità</a> ·
+  <a href="INSTALL_IT.md">Guida completa</a> ·
+  <a href="README.md">English</a>
+</p>
 
-> **Anteprima, versione 0.7.0.** HvPortal non è ancora alla versione 1.0. Ha un'ampia suite di test automatici, e le
-> operazioni che richiedono un vero host Hyper-V sono provate con un agent simulato. Le verifiche ancora
-> da eseguire su host reali sono elencate nel [piano di test su host reali](docs/verification/real-host-test-plan.md).
-> In particolare, le funzioni introdotte nella 0.7.0 (backup e ripristino delle VM, spostamento delle VM, stato di
-> salute degli host, reti con VLAN e aggiornamento degli agent dal portale) non sono ancora state validate su host di
-> produzione. Prova HvPortal prima in laboratorio o su host non critici.
+<p align="center">
+  <img alt="Versione 0.8.0 anteprima" src="https://img.shields.io/badge/versione-0.8.0%20anteprima-2563eb">
+  <img alt="Hyper-V su Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
+  <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
+  <img alt="Nessuna telemetria" src="https://img.shields.io/badge/telemetria-nessuna-16a34a">
+  <img alt="Italiano e inglese" src="https://img.shields.io/badge/interfaccia-Italiano%20%7C%20English-7c3aed">
+</p>
 
-## Che cosa fa HvPortal
+<p align="center">
+  <img src="assets/screenshots/dashboard-it.png" alt="Dashboard di HvPortal: host, VM accese, attività recenti" width="900">
+</p>
 
-### Inventario, console e stato degli host
+## Perché HvPortal
 
-- **Un solo inventario per tutti gli host**: un unico albero (Host, Gruppi, Tutte le VM) che mostra di ogni VM stato,
-  risorse, tempo di attività, heartbeat, sistema operativo guest, note e stato della replica. Le modifiche fatte fuori
-  dal portale (in Hyper-V Manager o in PowerShell) vengono rilevate e registrate.
-- **Console nel browser**: la console Hyper-V della VM, cioè lo schermo della VM così come lo vede l'hypervisor, con
-  tastiera e mouse. Funziona prima che parta il sistema operativo (firmware, installazione, ripristino) e anche se il
-  guest non ha rete. Non è una sessione RDP. Ha una frequenza di aggiornamento bassa e non offre audio né appunti
-  ([dettagli](docs/console.md)).
-- **Stato di salute degli host**: hardware, dischi fisici, volumi e spazio libero, pool di archiviazione, schede di rete
-  fisiche, errori recenti di archiviazione e hardware dai registri eventi, servizi Hyper-V. Una sezione che l'agent non
-  riesce a leggere viene mostrata come non leggibile, mai come sana.
+Hyper-V è un ottimo hypervisor, ma gestirne più di un paio di host di solito significa Hyper-V Manager su una
+macchina di salto, script PowerShell, un prodotto di backup separato e amministratori con molti più diritti del
+necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno con vCenter:
+
+- **Un solo posto per tutti gli host e le VM.** Un inventario aggiornato di tutti gli host, in dominio o in workgroup,
+  con console, impostazioni e storico di ogni VM a un clic.
+- **Delega in sicurezza.** Dai a un team la sua cartella di VM, con quote e con gli host, le reti e lo storage che può
+  usare. I ruoli si assegnano per host, gruppo o VM; nessuno può concedere più diritti di quelli che ha.
+- **Ogni modifica è tracciata.** Ogni operazione è un'attività autorizzata, validata, seguita fino alla fine e scritta
+  in un log di audit a prova di manomissione. Un esito che non si può verificare è mostrato come tale, mai come un
+  successo.
+- **Backup inclusi.** Backup pianificati delle VM su NAS o cartella locale, copie verificate, test di ripristino
+  automatici, ripristino di un'intera VM, di un disco o di singoli file.
+- **Sai davvero cosa usano le tue VM.** Dieci giorni di storico di CPU, memoria, dischi e rete per ogni VM, con grafici
+  che spiegano cosa guardare.
+- **Costruito sul minimo privilegio.** L'agent su ogni host è solo membro di *Hyper-V Administrators*, apre lui la
+  connessione (nessuna porta in ingresso sull'host) e accetta solo un insieme chiuso di comandi tipizzati: dal portale
+  non si può eseguire uno script arbitrario.
+
+## Guardalo
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/inventory.png" alt="Inventario di tutte le VM"><br><b>Inventario</b>: tutte le VM di tutti gli host, con stato, carico, memoria e uptime. Host, cartelle e tutte le VM in un unico albero.</td>
+    <td width="50%"><img src="assets/screenshots/vm-summary.png" alt="Riepilogo della VM"><br><b>Pagina della VM</b>: riepilogo, console nel browser, impostazioni, dischi e rete, checkpoint, backup ed eventi.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/vm-resource-use-it.png" alt="Storico dell'uso delle risorse di una VM"><br><b>Uso risorse</b> (novità della 0.8.0): picchi e medie, poi grafici spiegati di CPU, memoria, pressione, IOPS, throughput e rete.</td>
+    <td width="50%"><img src="assets/screenshots/backup-it.png" alt="Panoramica dei backup"><br><b>Backup</b>: VM protette, ultima esecuzione di ogni job, repository, punti di ripristino e ripristino file.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/vm-resource-use-dark.png" alt="Tema scuro"><br><b>Tema chiaro e scuro</b>, italiano e inglese, guide passo passo integrate.</td>
+    <td width="50%"><img src="assets/screenshots/sign-in.png" alt="Accesso"><br><b>Accesso</b> con account locali e verifica in due passaggi, oppure con Microsoft Entra ID.</td>
+  </tr>
+</table>
+
+<sub>Le immagini mostrano l'interfaccia reale della versione 0.8.0 con dati di esempio (host, VM e valori sono esempi).</sub>
+
+## Funzionalità
+
+### Inventario, console e stato
+- **Inventario aggiornato** di tutti gli host: stato, vCPU e carico, memoria e domanda, uptime, heartbeat, sistema
+  operativo guest, note, stato di Hyper-V Replica. Le modifiche fatte da Hyper-V Manager o PowerShell vengono rilevate e
+  registrate.
+- **Console nel browser**: lo schermo della VM come lo vede Hyper-V, con tastiera e mouse, anche prima che parta il
+  sistema operativo e senza rete nel guest. È la console di Hyper-V, non una sessione RDP (pochi fotogrammi al secondo,
+  niente audio né appunti: [dettagli](docs/console.md)).
+- **Salute degli host**: hardware, dischi fisici, volumi e spazio libero, storage pool, schede di rete, errori hardware
+  recenti e servizi di Hyper-V. Ciò che non si riesce a leggere è mostrato come sconosciuto, mai come sano.
+- **Storico dell'uso delle risorse** (0.8.0): misurazione delle risorse di Hyper-V attivata dalla pagina della VM, un
+  campione ogni 5 minuti conservato per 10 giorni, card con i picchi (CPU, RAM, pressione della memoria, IOPS, dati
+  disco, rete) e sei grafici, ognuno con *cosa mostra* e *cosa guardare*.
 
 ### Macchine virtuali
-
-- **Alimentazione e ciclo di vita**: avvio, arresto e riavvio del guest, spegnimento forzato, reset, pausa, ripresa e
-  salvataggio dello stato. Puoi anche eliminare una VM: viene rimossa la sua configurazione da Hyper-V e restano i file
-  dei dischi.
-- **Creazione guidata**: generazione 1 o 2, CPU, memoria, dischi, rete, immagine ISO, Secure Boot e TPM virtuale, con la
-  posizione scelta da un selettore di cartelle.
-- **Impostazioni**: CPU, memoria (statica o dinamica), firmware, dischi nuovi ed espansi, DVD/ISO dalla libreria ISO
-  dell'host, schede di rete, nome e note. Una modifica che Hyper-V non può applicare a una VM accesa viene rifiutata,
-  con il motivo.
-- **Checkpoint**: creazione, applicazione ed eliminazione.
-- **Template**: un template è una copia dei dischi di una VM preparata e spenta. Da un template si creano nuove VM,
-  ognuna con il proprio nome e le proprie risorse.
-- **Spostamento**: migrazione in tempo reale di una VM verso un altro host del portale (con o senza i suoi file), oppure
-  spostamento dei file di una VM in un'altra cartella dello stesso host. HvPortal usa la migrazione di Hyper-V e non
-  modifica le impostazioni di migrazione degli host ([prerequisiti](INSTALL_IT.md#8-prima-di-spostare-le-vm-tra-host)).
-- **Ogni modifica è un'attività**: viene messa in coda, autorizzata e validata di nuovo al momento dell'esecuzione e
-  seguita fino alla fine. Quando l'esito non si può verificare, l'attività viene mostrata come *Non verificata* o con
-  *Esito sconosciuto*, mai come riuscita.
+- **Alimentazione**: avvio, arresto e riavvio del guest, spegnimento, reset, pausa, ripresa, salvataggio.
+- **Procedura guidata di creazione**: generazione 1 o 2, CPU, memoria, dischi, rete e VLAN, ISO, Secure Boot e TPM
+  virtuale, posizione scelta con un selettore di cartelle.
+- **Impostazioni**: CPU, memoria statica o dinamica, firmware, dischi nuovi ed espansi, DVD/ISO dalla libreria
+  dell'host, schede di rete, nome e note. Ciò che Hyper-V non può cambiare su una VM accesa viene rifiutato, con il
+  motivo.
+- **Checkpoint**, **template** (una copia dei dischi di una VM preparata; le nuove VM hanno nome e risorse proprie) e
+  **spostamenti** (live migration su un altro host, con o senza storage, oppure spostamento dello storage sullo stesso
+  host).
+- **Eliminazione** di una VM tenendo i dischi, oppure cancellando anche i file dei dischi, senza mai toccare file usati
+  da altre VM.
 
 ### Gruppi, permessi e limiti
+- **Cartelle di VM** annidate, riportate sugli host come gruppi di VM nativi di Hyper-V.
+- **Accesso basato sui ruoli**: ambito globale, host, gruppo o VM; tutto negato per default, il divieto esplicito vince.
+  Ruoli predefiniti da *Amministratore della piattaforma* a *Sola lettura*, più ruoli personalizzati.
+- **Limiti per cartella**: quote (VM, vCPU, memoria, disco, reti private) e gli host, le reti e i percorsi di storage
+  che la cartella può usare, controllati alla richiesta e di nuovo all'esecuzione.
 
-- **Gruppi di VM**: cartelle annidate di VM, replicate sugli host come gruppi di VM nativi di Hyper-V. I gruppi già
-  presenti su un host vengono importati automaticamente la prima volta, se questo non cambia nulla in Hyper-V; gli
-  altri si possono importare su richiesta.
-- **Controllo degli accessi basato sui ruoli**: i ruoli si assegnano a livello globale, di host, di gruppo o di VM.
-  L'accesso è negato se nessun ruolo lo consente, un divieto esplicito prevale sempre e nessuno può dare a sé stesso o
-  ad altri più diritti di quelli che ha. Ruoli predefiniti (il portale li mostra con il nome inglese): Platform
-  administrator, Infrastructure administrator, Folder administrator, VM operator, Backup operator, Auditor e Read
-  only. Sono supportati anche ruoli personalizzati.
-- **Limiti di un gruppo**: quote (VM, vCPU, memoria, disco, reti private) e gli host, le reti e i percorsi di
-  archiviazione che gli utenti del gruppo possono usare. Vengono controllati quando un'operazione viene richiesta e di
-  nuovo quando viene eseguita.
-
-### Reti e archiviazione
-
-- **Switch virtuali**: creazione e rimozione di switch esterni, interni e privati.
-- **Reti con VLAN**: una rete del portale è uno switch più una VLAN di accesso. Scegliendo una rete per la scheda di
-  rete di una VM si impostano entrambi. Quando cambi la VLAN di una rete, le schede già collegate possono essere
-  aggiornate.
-- **File degli host**: esplorazione delle cartelle, download e upload di file con verifica SHA-256. Le cartelle di
-  sistema sono nascoste e rifiutate.
-- **Cartelle di storage**: quando installi l'agent puoi limitarlo a cartelle scelte (`-StorageFolders`). Il portale
-  allora non vede nient'altro su quell'host e non può modificare l'elenco.
+### Reti e storage
+- **Switch virtuali** (External, Internal, Private) e **reti con VLAN**: scegli una rete e switch e VLAN seguono;
+  cambia la VLAN di una rete e ritagga le schede già collegate.
+- **File degli host**: sfoglia, scarica, carica con verifica SHA-256. Le **cartelle storage** scelte all'installazione
+  dell'agent limitano ciò che il portale può vedere su un host.
 
 ### Backup
-
-- **Repository**: una cartella locale di un host oppure una condivisione SMB, ad esempio un NAS, eventualmente con
-  credenziali conservate cifrate nel portale.
-- **Job di backup** per VM e gruppi: giornalieri, orari o manuali, con conservazione e verifica della copia. Una
-  singola VM si può anche salvare al momento.
-- **Punti di ripristino**: ognuno è un'esportazione completa di un checkpoint della VM (per impostazione predefinita
-  un checkpoint di produzione), con lo SHA-256 di ogni file e un manifest.
-- **Ripristini**: come nuova VM o sopra la VM originale; di un singolo disco (che si può collegare a una VM); oppure di
-  singoli file, da un disco montato in sola lettura e scaricati attraverso il portale.
-- **Test di ripristino**: periodicamente un punto di ripristino viene ripristinato come VM isolata (con le schede di
-  rete scollegate); la VM viene avviata, controllata tramite l'heartbeat del guest e poi eliminata.
-- **Che tipo di copia è**: un checkpoint di produzione chiede al guest di partecipare tramite il servizio di
-  integrazione di backup di Hyper-V (VSS nei guest Windows). Quando il guest non può partecipare, la copia è
-  coerente solo come dopo un arresto improvviso (crash-consistent). HvPortal registra quale tipo di checkpoint ha
-  effettivamente usato Hyper-V, quando riesce a leggerlo. Non dichiara backup coerenti a livello applicativo.
+- **Repository** su NAS o condivisione SMB (anche fuori dominio, con credenziali salvate) o in una cartella locale.
+- **Job** per VM e cartelle: giornalieri, orari o manuali, con conservazione, verifica delle copie (SHA-256) e notifiche.
+- **Ripristino** come nuova VM o sopra l'originale, di un disco, o di singoli file da un disco montato in sola lettura.
+- **Test di ripristino**: un punto di ripristino viene ripristinato isolato, avviato, controllato tramite l'heartbeat
+  del guest e poi eliminato.
+- Basati su checkpoint ed esportazioni di Hyper-V, nessun software in più sugli host o sul NAS. HvPortal dice quale tipo
+  di checkpoint Hyper-V ha usato davvero e non promette backup coerenti a livello applicativo
+  ([come funziona](docs/backup-restore_IT.md)).
 
 ### Gestione e integrazione
-
-- **Notifiche**: e-mail (SMTP) e webhook HTTPS (JSON generico, Microsoft Teams, Slack) per gli esiti dei backup, i test
-  di ripristino falliti e gli agent non aggiornati. Restano disattivate finché non le configuri.
-- **Token API**: token di sola lettura con cui i sistemi di monitoraggio leggono lo stato dei backup e le esecuzioni
-  recenti. Un token viene mostrato una sola volta e conservato solo come hash.
-- **API REST** con descrizione OpenAPI ([docs/api.md](docs/api.md)).
-- **Aggiornamento degli agent dal portale**: con una release firmata, gli agent non aggiornati si possono aggiornare
-  dal portale. Un host installa un pacchetto solo se il suo catalogo è firmato con lo stesso certificato dell'agent
-  già installato.
-- **Host senza agent (facoltativo)**: un *agent di management* su un server Windows può raggiungere host su cui non è
-  installato nulla, con credenziali conservate cifrate nel portale. L'agent sull'host resta la modalità consigliata.
-- **Backup del portale stesso**: un file di backup sigillato del gateway (database, chiavi e CA interna) dalle
-  Impostazioni, un ripristino preparato in anticipo e applicato al riavvio, e copie automatiche giornaliere del
-  database.
+- **Notifiche** via e-mail, Microsoft Teams, Slack o webhook; **token API di sola lettura** per i sistemi di
+  monitoraggio; **API REST** con OpenAPI ([docs/api.md](docs/api.md)).
+- **Aggiornamento degli agent dal portale** per le release firmate, accettato solo se firmato dallo stesso editore.
+- **Host senza agent** (facoltativo), tramite un agent di gestione con credenziali salvate.
+- **Backup del portale stesso** dalle Impostazioni, più copie automatiche giornaliere del suo database.
 
 ### Accesso e audit
+- **Account locali** con passphrase e verifica in due passaggi (app di autenticazione, codici di recupero), oppure
+  **Microsoft Entra ID**. Le azioni sensibili chiedono una conferma; un browser lasciato incustodito viene disconnesso
+  dopo 15 + 3 minuti.
+- **Log di audit** di ogni modifica e di ogni tentativo rifiutato, concatenato con HMAC così che le modifiche alle voci
+  salvate si possano rilevare; verificabile ed esportabile.
 
-- **Account locali** con passphrase lunghe (almeno 15 caratteri, confrontate con un elenco di password comuni) e
-  ritardi progressivi al posto dei blocchi. La verifica in due passaggi con un'app di autenticazione (TOTP) e codici di
-  recupero è obbligatoria per gli amministratori per impostazione predefinita.
-- **Accesso con Microsoft Entra ID** per gli utenti creati prima nel portale. L'MFA di questi utenti è gestita da Entra
-  ID, ad esempio con l'accesso condizionale.
-- **Registro di audit** di ogni modifica e di ogni tentativo rifiutato: chi, come ha fatto l'accesso, che cosa e con
-  quale esito. Le voci sono concatenate con un HMAC, quindi le modifiche alle voci salvate si possono rilevare. Il
-  registro si può verificare ed esportare.
-- **Interfaccia web** in italiano e in inglese, con tema chiaro e scuro e guide passo passo integrate.
+## Installazione in dieci minuti
+
+Ti servono un Windows Server per il portale (il **gateway**, che può girare anche come container Linux) e l'**agent**
+su ogni host Hyper-V. Gli host hanno bisogno solo di poter raggiungere il gateway in uscita.
+
+**1. Scarica** `HvPortal.Gateway.Setup.exe` e `HvPortal.Agent.Setup.exe` dall'[ultima release](https://github.com/NEXQsrl/HvPortal/releases/latest).
+Le note della release riportano il loro SHA-256: controllalo con `Get-FileHash <file> -Algorithm SHA256`.
+
+**2. Rendi attendibile la firma (una volta per server).** I file sono firmati da *NEXQ S.r.l.* con un certificato
+self-signed, che Windows considera attendibile solo dopo che l'hai importato. Il certificato pubblico è dentro la firma
+del file: estrailo, controlla che l'impronta sia `989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8` e importalo (PowerShell da
+amministratore):
+
+```powershell
+$cert = (Get-AuthenticodeSignature .\HvPortal.Gateway.Setup.exe).SignerCertificate
+$cert.Thumbprint          # deve essere 989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8
+Export-Certificate -Cert $cert -FilePath .\HvPortal-CodeSigning.cer | Out-Null
+Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
+Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+```
+
+Anche senza questo passaggio i setup partono (*Ulteriori informazioni > Esegui comunque*), ma serve per aggiornare gli
+agent dal portale. Una firma self-signed non dà alcuna reputazione presso SmartScreen o gli antivirus.
+
+**3. Installa il gateway.** Avvia `HvPortal.Gateway.Setup.exe` sul server di gestione e indica i nomi e gli indirizzi
+che useranno browser e agent (porta del portale 8443, porta degli agent 8444). Alla fine il setup mostra l'indirizzo
+del portale e un **token di configurazione monouso**.
+
+**4. Primo accesso.** Apri l'indirizzo (con il certificato interno il browser avvisa una volta, vedi
+[INSTALL_IT.md](INSTALL_IT.md#4-certificato-del-portale-e-nomi)), inserisci il token, crea l'amministratore e
+registra un'app di autenticazione. Non esistono credenziali predefinite.
+
+**5. Aggiungi un host.** Nel portale scegli **Aggiungi host > Agent sull'host** e copia la riga *Dati per il setup*
+(vale 15 minuti).
+
+**6. Installa l'agent.** Avvia `HvPortal.Agent.Setup.exe` sull'host Hyper-V, premi **Incolla dal portale** e scegli
+quali cartelle locali il portale può usare. L'host compare online in pochi secondi.
+
+**7. Invita il tuo team.** In **Utenti e ruoli** crea gli utenti (locali o Microsoft) e assegna i ruoli su host,
+cartelle o VM. I nuovi utenti non hanno permessi finché non glieli dai.
+
+**Aggiornamenti**: avvia il nuovo setup del gateway sul gateway, poi aggiorna gli agent dal portale (*Guida >
+Aggiornare i servizi Windows*) o con il nuovo setup dell'agent. Tutto il resto, compresi gli script per le installazioni automatiche,
+Docker, il tuo certificato, i prerequisiti per backup e live migration, è in **[INSTALL_IT.md](INSTALL_IT.md)**.
+
+### Requisiti
+
+| Componente | Requisito |
+|---|---|
+| Gateway | Windows Server a 64 bit (autonomo, nessun .NET da installare; il setup grafico richiede .NET Framework 4.7.2, incluso da Windows Server 2019), oppure un host Docker Linux (`linux/amd64`) |
+| Host Hyper-V | Windows Server con il ruolo Hyper-V e il suo modulo PowerShell; TCP in uscita verso la porta degli agent del gateway. Non serve essere in dominio. |
+| Browser | Edge, Chrome o Firefox aggiornati |
+| Internet | Non necessario. Lo usa solo ciò che attivi: accesso con Entra ID, SMTP, webhook |
+
+Windows Server 2025 è la piattaforma di riferimento, la 2022 è in valutazione: vedi la
+[matrice di compatibilità](docs/compatibility-matrix.md).
 
 ## Come funziona
 
 ```mermaid
 flowchart LR
     browser["Browser"]
-    subgraph mgmt["Server di management: servizio Windows o container Linux"]
+    subgraph mgmt["Server di gestione: servizio Windows o container Linux"]
         gw["HvPortal Gateway<br/>interfaccia web, API REST, attività,<br/>permessi, audit, SQLite"]
     end
     subgraph host["Ogni host Hyper-V"]
-        agent["HvPortal Agent<br/>solo nel gruppo Hyper-V Administrators"]
+        agent["HvPortal Agent<br/>solo membro di Hyper-V Administrators"]
         hv["Hyper-V<br/>WMI e modulo PowerShell"]
         agent --> hv
     end
@@ -144,136 +211,77 @@ flowchart LR
     agent -- "WebSocket su TLS reciproco, porta 8444<br/>aperto dall'agent" --> gw
 ```
 
-- Il **gateway** è il piano di controllo: interfaccia web, API REST, aggiornamenti in tempo reale, accesso, permessi,
-  attività, audit e database (SQLite). Su Windows gira con l'account virtuale `NT SERVICE\HvPortalGateway`, che non è
-  amministratore. Può anche girare come container Linux senza privilegi di root.
-- L'**agent** gira su ogni host Hyper-V come `NT SERVICE\HvPortalAgent`, membro del solo gruppo locale *Hyper-V
-  Administrators*. È l'agent ad aprire la connessione verso il gateway: un WebSocket protetto da TLS reciproco, con
-  certificati di una CA interna. Gli host non hanno bisogno di porte in ingresso.
-- L'agent accetta solo un **insieme chiuso di comandi tipizzati**. Inventario, alimentazione e console usano WMI. Le
-  operazioni di gestione passano da un unico script PowerShell fisso con parametri tipizzati. Nessun comando esegue
-  uno script, una query o un percorso forniti da chi chiama.
+- Il **gateway** gira con un account di servizio non amministratore (`NT SERVICE\HvPortalGateway`) o in un container
+  non root, e contiene interfaccia web, API, attività, permessi, audit e database.
+- L'**agent** gira su ogni host come `NT SERVICE\HvPortalAgent`, solo membro di *Hyper-V Administrators*, e si collega
+  al gateway con TLS reciproco e certificati di una CA interna.
+- I comandi sono **chiusi e tipizzati**: WMI per inventario, alimentazione e console; un unico script PowerShell fisso
+  con parametri tipizzati per le operazioni di gestione.
 
-Approfondimenti: [architettura](docs/architecture.md) e [decisioni di progetto](docs/decisions.md) (in inglese).
+Approfondimenti: [architettura](docs/architecture.md), [decisioni di progetto](docs/decisions.md),
+[modello di sicurezza](docs/security-model.md).
 
-## Requisiti
+## Stato del progetto
 
-| Componente | Requisito |
-|---|---|
-| Gateway | Windows Server a 64 bit, oppure un host Docker Linux (`linux/amd64`). La release è autonoma: non serve installare il runtime .NET. Il setup grafico richiede .NET Framework 4.7.2, incluso in Windows Server 2019 e successivi. |
-| Host Hyper-V | Windows Server con il ruolo Hyper-V e il modulo PowerShell Hyper-V, e traffico TCP in uscita verso la porta degli agent del gateway. L'appartenenza a un dominio non è richiesta. |
-| Browser | Edge, Chrome o Firefox in versione aggiornata. |
-| Internet | Non serve. La usano solo le funzioni che attivi: l'accesso con Microsoft Entra ID, e SMTP o webhook per le notifiche. |
-| Facoltativo | Un certificato di firma del codice, per le build firmate e per l'aggiornamento degli agent dal portale. |
-
-La piattaforma di riferimento è Windows Server 2025; Windows Server 2022 è in valutazione. Una piattaforma viene
-dichiarata supportata solo dopo che i test su host reali sono stati superati: vedi la
-[matrice di compatibilità](docs/compatibility-matrix.md).
-
-## Avvio rapido
-
-1. **Procurati i file della release**: compilali tu (vedi [Compilare dai sorgenti](#compilare-dai-sorgenti)),
-   oppure usa i file di release pubblicati dai manutentori, se ce ne sono.
-2. **Installa il gateway**: avvia `HvPortal.Gateway.Setup.exe` sul server di management. Alla fine mostra l'indirizzo
-   del portale e un token di setup monouso.
-3. **Fai il primo accesso**: inserisci il token, crea l'amministratore e configura un'app di autenticazione.
-4. **Aggiungi un host**: nel portale scegli **Aggiungi host**, scarica il setup dell'agent e copia la riga
-   *Dati per il setup* (vale 15 minuti).
-5. **Installa l'agent**: avvia `HvPortal.Agent.Setup.exe` sull'host Hyper-V e premi *Incolla dal portale*. In pochi
-   secondi l'host risulta online.
-6. **Dai gli accessi**: in **Utenti e ruoli** crea gli utenti e assegna i ruoli. I nuovi utenti non hanno alcun
-   permesso.
-
-La procedura completa, con gli script PowerShell, Docker, i certificati, gli aggiornamenti e i prerequisiti per backup
-e migrazione in tempo reale, è in **[INSTALL_IT.md](INSTALL_IT.md)**.
-
-## Compilare dai sorgenti
-
-Prerequisiti: Windows 10/11 o Windows Server; .NET SDK 10.0.204 (fissato da `global.json`, che accetta anche feature
-band successive); Node.js 22 o successivo; PowerShell 7 per lo script di release.
-
-```powershell
-# Interfaccia web (la build viene scritta in src\HvPortal.Gateway\wwwroot)
-cd web; npm ci; npm run build; npx vitest run; cd ..
-
-# Gateway, agent e test
-dotnet build HvPortal.slnx
-dotnet test HvPortal.slnx
-
-# Gateway di sviluppo: https://localhost:18443 (porta agent 18444), senza diritti di amministratore.
-# Il token di setup è in %LOCALAPPDATA%\HvPortal\dev-gateway\bootstrap\setup-token.txt
-.\scripts\dev\Start-DevGateway.ps1 -Reset
-```
-
-Build di release (test, gateway e agent autonomi, setup grafici, pacchetto dell'agent, checksum SHA-256):
-
-```powershell
-.\installer\Build-Release.ps1                     # risultato: artifacts\release\<versione>\
-# Build firmata, ad esempio con un certificato self-signed (viene esportato solo il .cer pubblico):
-.\installer\New-CodeSigningCertificate.ps1         # stampa l'impronta (thumbprint)
-.\installer\Build-Release.ps1 -SigningCertificateThumbprint <thumbprint>
-```
-
-Immagine container del gateway (si compila dal repository; non è pubblicata nessuna immagine pronta):
-
-```powershell
-docker build --provenance=false --sbom=false --platform linux/amd64 -f docker/Dockerfile -t hvportal-gateway:0.7.0 .
-```
-
-Le suite di test e il test end-to-end nel browser sono descritti in [docs/testing.md](docs/testing.md).
+HvPortal 0.8.0 è un'**anteprima**. Ha un'ampia suite di test automatici; le operazioni che richiedono un host Hyper-V
+reale sono provate contro un sostituto di prova dell'agent, e le verifiche ancora da fare su host reali sono elencate
+nel [piano di test sugli host reali](docs/verification/real-host-test-plan.md). Comincia in laboratorio o su host non
+critici, e non esporre il portale né la porta degli agent su Internet. HvPortal non ha ancora avuto una revisione di
+sicurezza indipendente.
 
 ## Documentazione
 
-La documentazione in `docs/` è in inglese.
-
 | Argomento | Documento |
 |---|---|
-| Installazione, aggiornamento, disinstallazione | [INSTALL_IT.md](INSTALL_IT.md), con tutte le opzioni in [docs/install.md](docs/install.md) |
+| Installazione, aggiornamenti, disinstallazione | [INSTALL_IT.md](INSTALL_IT.md), tutte le opzioni in [docs/install.md](docs/install.md) |
 | Gateway in un container Linux | [docker/README.md](docker/README.md) |
+| Backup e ripristini, backup del portale | [docs/backup-restore_IT.md](docs/backup-restore_IT.md) |
 | Risoluzione dei problemi | [docs/troubleshooting.md](docs/troubleshooting.md) |
-| Backup delle VM (come funzionano, repository, job, ripristini) e backup del portale stesso | [docs/backup-restore_IT.md](docs/backup-restore_IT.md) (italiano), [docs/backup-restore.md](docs/backup-restore.md) (inglese) |
-| Architettura e decisioni di progetto | [docs/architecture.md](docs/architecture.md), [docs/decisions.md](docs/decisions.md) |
 | Sicurezza | [SECURITY_IT.md](SECURITY_IT.md), [docs/security-model.md](docs/security-model.md), [docs/threat-model.md](docs/threat-model.md) |
 | API REST | [docs/api.md](docs/api.md), [docs/openapi/v1.json](docs/openapi/v1.json) |
-| Console nel browser | [docs/console.md](docs/console.md), [docs/console-study.md](docs/console-study.md) |
-| API di Hyper-V usate e privilegi necessari | [docs/capability-matrix.md](docs/capability-matrix.md) |
-| Piattaforme supportate | [docs/compatibility-matrix.md](docs/compatibility-matrix.md) |
-| Requisiti e roadmap | [docs/requirements.md](docs/requirements.md), [docs/roadmap.md](docs/roadmap.md) |
+| Architettura e decisioni | [docs/architecture.md](docs/architecture.md), [docs/decisions.md](docs/decisions.md) |
+| API di Hyper-V e privilegi | [docs/capability-matrix.md](docs/capability-matrix.md) |
 | Test e verifica su host reali | [docs/testing.md](docs/testing.md), [docs/verification/real-host-test-plan.md](docs/verification/real-host-test-plan.md) |
-| Licenze dei componenti di terze parti | [docs/licensing.md](docs/licensing.md) |
+| Licenze di terze parti | [docs/licensing.md](docs/licensing.md) |
+
+I documenti in `docs/` sono in inglese, tranne dove indicato.
+
+## Compilare dai sorgenti
+
+Prerequisiti: Windows 10/11 o Windows Server, .NET SDK 10.0.204 (fissato da `global.json`), Node.js 22+, PowerShell 7.
+
+```powershell
+cd web; npm ci; npm run build; npx vitest run; cd ..     # interfaccia web, scritta in src\HvPortal.Gateway\wwwroot
+dotnet build HvPortal.slnx
+dotnet test HvPortal.slnx
+.\scripts\dev\Start-DevGateway.ps1 -Reset                  # gateway di sviluppo su https://localhost:18443
+.\installer\Build-Release.ps1                              # release: artifacts\release\<versione>\ (setup inclusi)
+```
+
+Le build firmate e la pubblicazione su GitHub sono descritte in [INSTALL_IT.md](INSTALL_IT.md#1-procurarsi-i-file-della-release),
+l'immagine del container in [docker/README.md](docker/README.md), le suite di test in [docs/testing.md](docs/testing.md).
 
 ## Sicurezza
 
-HvPortal si basa sul privilegio minimo. I servizi girano con account dedicati che non sono amministratori. Gli agent
-aprono la connessione verso il gateway su TLS reciproco. L'insieme dei comandi è chiuso e tipizzato. L'accesso è
-negato per impostazione predefinita. I segreti sono cifrati o conservati solo come hash, e ogni modifica finisce in un
-registro di audit concatenato. La release può essere firmata, ma una firma self-signed non rende attendibile una build.
-Il riepilogo è in [SECURITY_IT.md](SECURITY_IT.md).
-
-HvPortal non ha ancora avuto una revisione di sicurezza indipendente. Non esporre su Internet né il portale né la
-porta degli agent.
-
-**Per segnalare una vulnerabilità non aprire una issue pubblica**: segui [SECURITY_IT.md](SECURITY_IT.md).
+Minimo privilegio ovunque: account di servizio non amministratori, agent che aprono la connessione su TLS reciproco,
+un insieme chiuso di comandi tipizzati, tutto negato per default, segreti cifrati o salvati solo come hash, un log di
+audit concatenato. Nessuna telemetria: il gateway contatta servizi esterni solo per ciò che configuri (Entra ID, il tuo
+server SMTP, i tuoi webhook). **Per segnalare una vulnerabilità non aprire una issue pubblica**: segui
+[SECURITY_IT.md](SECURITY_IT.md).
 
 ## Contribuire
 
-Leggi prima [CONTRIBUTING.md](CONTRIBUTING.md) (in inglese). In breve: non presentare mai come riuscito un risultato
-non verificato, autorizza ogni endpoint sul server (con un test per il rifiuto), non aggiungere mai un modo per
-eseguire script arbitrari sugli host, non scrivere mai segreti nei log e tieni ogni testo visibile all'utente sia in
-italiano sia in inglese.
+Leggi prima [CONTRIBUTING.md](CONTRIBUTING.md). In breve: non riportare mai un risultato non verificato, autorizza ogni
+endpoint sul server (con un test per il rifiuto), non aggiungere mai un modo per eseguire script arbitrari sugli host,
+non mettere mai segreti nei log e tieni ogni testo visibile all'utente sia in italiano sia in inglese.
 
 ## Licenza
 
 > **Licenza: da scegliere a cura dei manutentori.** Questo repository non contiene ancora un file `LICENSE`.
-> [docs/licensing.md](docs/licensing.md) descrive la licenza presa in considerazione ed elenca le licenze dei componenti
-> di terze parti. Finché non viene aggiunto un file di licenza, questo repository non concede alcuna licenza.
+> [docs/licensing.md](docs/licensing.md) descrive la licenza in valutazione ed elenca le licenze dei componenti di terze
+> parti. Finché non viene aggiunto un file di licenza, questo repository non concede alcuna licenza.
 
-Copyright (c) NEXQ S.r.l.
+Copyright (c) NEXQ S.r.l. · [www.nexq.it](https://www.nexq.it)
 
-## Marchi e privacy
-
-"Hyper-V", "Windows Server" e "Microsoft Entra" sono marchi del gruppo Microsoft. HvPortal è un progetto indipendente:
-non è affiliato a Microsoft né approvato da essa.
-
-HvPortal non contiene telemetria. Il gateway contatta servizi esterni solo per le funzioni che configuri: l'accesso
-con Microsoft Entra ID, il tuo server SMTP e i tuoi webhook.
+"Hyper-V", "Windows Server" e "Microsoft Entra" sono marchi del gruppo di società Microsoft. HvPortal è un progetto
+indipendente, non affiliato né approvato da Microsoft.

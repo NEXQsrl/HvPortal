@@ -35,6 +35,19 @@ function ReplicationHealth({ value }: { value: number | null | undefined }) {
 type Tab = (typeof TABS)[number];
 
 /**
+ * Msvm_SummaryInformation.Heartbeat (operational status of the heartbeat integration service): 2 OK, 3 Degraded,
+ * 7 Non-recoverable error, 12 No contact, 13 Lost communication, 15 Paused. Other values are shown as the number.
+ */
+const HEARTBEAT_KNOWN = [2, 3, 7, 12, 13, 15];
+function HeartbeatText({ value }: { value: number | null | undefined }) {
+  const { t } = useI18n();
+  if (value == null) return <>—</>;
+  if (!HEARTBEAT_KNOWN.includes(value)) return <>{value}</>;
+  const tone = value === 2 ? 'ok' : value === 15 ? 'muted' : value === 3 ? 'warn' : 'danger';
+  return <StatusBadge tone={tone}>{t(('hb.' + value) as TKey)}</StatusBadge>;
+}
+
+/**
  * Summary card of the virtual disks: provisioned capacity and space used on the host (live from the agent, or the last
  * known values when the host is offline). Mounted only with the Summary tab, so other tabs make no extra agent call.
  */
@@ -143,8 +156,8 @@ export function VmPage() {
               [t('vm.guestOs'), vm.guestOperatingSystem ?? '—'],
               [t('vm.state'), <PowerBadge key="p" state={vm.powerState} critical={vm.isCritical} />],
               [t('vm.shutdownService'), vm.shutdownServiceAvailable == null ? '—' : vm.shutdownServiceAvailable ? 'OK' : t('common.no')],
-              ['Heartbeat', vm.heartbeat ?? '—'],
-              [t('job.completed'), fmtDate(vm.stateChangedAt)],
+              [t('vm.heartbeat'), <HeartbeatText key="hb" value={vm.heartbeat} />],
+              [t('vm.stateChanged'), fmtDate(vm.stateChangedAt)],
             ]} />
           </Section>
           <Section title={t('vm.related')} bodyClassName="p-3">

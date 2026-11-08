@@ -82,8 +82,19 @@ WMI/DCOM (TCP 135 and dynamic RPC), WinRM (5985 or 5986) and SMB (445) from the 
 
 ## 1. Get the release files
 
-Build the release on a Windows machine with the prerequisites listed in the [README](README.md#building-from-source),
-or use release files published by the maintainers.
+The setups of the latest version are on the GitHub releases page:
+[github.com/NEXQsrl/HvPortal/releases/latest](https://github.com/NEXQsrl/HvPortal/releases/latest)
+(`HvPortal.Gateway.Setup.exe` and `HvPortal.Agent.Setup.exe`, with their SHA-256 in the release notes; only the latest
+version is kept). They contain everything the setups need: the gateway setup also carries the agent package that the
+portal offers for download. The public signing certificate can be taken from the signature of a setup, see
+[Code signing](#code-signing).
+
+Maintainers publish a release with `.\installer\Build-Release.ps1 -SigningCertificateThumbprint <thumb> -PublishGitHub`
+(or `.\installer\Publish-GitHubRelease.ps1` for a release already built): the script refuses unsigned files, a working
+tree with uncommitted changes and a public repository, then replaces every older release and its tag.
+
+You can also build the release on a Windows machine with the prerequisites listed in the
+[README](README.md#building-from-source).
 
 ```powershell
 .\installer\Build-Release.ps1                                       # unsigned build
@@ -119,6 +130,16 @@ on each server (elevated PowerShell, or a GPO):
 ```powershell
 Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\Root
 Import-Certificate -FilePath .\HvPortal-CodeSigning.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+```
+
+With only the setups (GitHub release), take the public certificate from the signature of a setup, and import it only
+if its thumbprint is the one published by the maintainers (NEXQ S.r.l. builds:
+`989A5C82203AB19B6DB29FC447E8CB5EBEEB60D8`):
+
+```powershell
+$cert = (Get-AuthenticodeSignature .\HvPortal.Gateway.Setup.exe).SignerCertificate
+$cert.Thumbprint
+Export-Certificate -Cert $cert -FilePath .\HvPortal-CodeSigning.cer | Out-Null
 ```
 
 Once the certificate is imported, Authenticode reports the files as valid, `AllSigned` PowerShell policies accept the

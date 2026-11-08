@@ -49,7 +49,9 @@ const RANGES = [6, 24, 72, 240] as const;
 const MB = 1024 * 1024;
 
 const fmtMb = (mb: number | null | undefined) => (mb == null ? '—' : formatBytes(mb * MB));
-const fmtNum = (v: number | null | undefined, digits = 0) => (v == null ? '—' : v.toLocaleString(undefined, { maximumFractionDigits: digits }));
+/** Numbers in the language of the portal (not of the browser), like the rest of the text. */
+const numberFormatter = (lang: string) => (v: number | null | undefined, digits = 0) =>
+  (v == null ? '—' : v.toLocaleString(lang === 'it' ? 'it-IT' : 'en-GB', { maximumFractionDigits: digits }));
 
 /**
  * Resource use history of a VM (ADR-039): Hyper-V resource metering turned on from here (once: after it is turned off
@@ -58,6 +60,7 @@ const fmtNum = (v: number | null | undefined, digits = 0) => (v == null ? '—' 
  */
 export function VmMetrics({ vm }: { vm: Vm }) {
   const { t, lang, fmtDate } = useI18n();
+  const fmtNum = numberFormatter(lang);
   const ops = useOps();
   const [hours, setHours] = useState<number>(24);
   const data = useLoad(() => get<MetricsResponse>(`/api/v1/vms/${vm.id}/metrics?hours=${hours}`), [vm.id, hours]);
