@@ -87,7 +87,8 @@ if (-not $info.private -and -not $AllowPublic) { throw "$Repository is PUBLIC: t
 Write-Host "Repository: $Repository ($(if ($info.private) { 'private' } else { 'public' })), commit $($commit.Substring(0, 12))$(if ($dirty) { ' + uncommitted changes' })"
 
 $tag = "v$Version"
-$sums = $files | ForEach-Object { '{0}  {1}' -f (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $_ -Leaf) }
+# One string: an array inside the @() below would be written as "System.Object[]" by -join.
+$sums = @($files | ForEach-Object { '{0}  {1}' -f (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $_ -Leaf) }) -join "`n"
 $signer = (Get-AuthenticodeSignature -LiteralPath $files[0]).SignerCertificate
 $notes = @(
     "HvPortal $Version - graphical setups of the gateway and of the agent.",
