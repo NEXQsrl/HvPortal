@@ -62,7 +62,7 @@ public static class HostFileService
         var folders = new List<FolderEntry>();
         var files = new List<FileEntry>();
         var truncated = false;
-        foreach (var d in dir.EnumerateDirectories("*", Options))
+        foreach (var d in HostFolderBrowser.Subfolders(dir, fs))
         {
             if ((atRoot && HostPaths.IsBlockedRootFolder(d.Name)) || d.Name.StartsWith('$'))
             {
@@ -90,7 +90,7 @@ public static class HostFileService
             Parent = top ? null : fs.ToHost(dir.Parent!.FullName),
             Folders = folders.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
             Files = files.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
-            FreeBytes = fs.FreeSpace(path[..3]),
+            FreeBytes = fs.FreeSpaceOf(path),
             Truncated = truncated,
         };
     }
@@ -165,7 +165,7 @@ public static class HostFileService
         }
         var folder = CheckFolder(request.Folder, true, fs);
         var hostFinal = Path.Combine(folder, request.Name);
-        if (fs.FreeSpace(folder[..3]) is { } free && free < request.SizeBytes)
+        if (fs.FreeSpaceOf(folder) is { } free && free < request.SizeBytes)
         {
             throw new HostPathException("insufficient_space: not enough free space on the drive.");
         }

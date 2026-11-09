@@ -110,6 +110,9 @@ export function VmPage() {
           <PowerBadge state={vm.powerState} critical={vm.isCritical} />
           {vm.stale && <StatusBadge tone="warn" title={t('stale.banner')}>stale</StatusBadge>}
           {vm.isMissing && <StatusBadge tone="danger">{t('vm.missing')}</StatusBadge>}
+          {inv.hostById.get(vm.hostId)?.clusterId && vm.isClustered != null && (
+            <StatusBadge tone={vm.isClustered ? 'ok' : 'warn'}>{t(vm.isClustered ? 'cl.vm.ha' : 'cl.vm.notHa')}</StatusBadge>
+          )}
         </>}
         subtitle={<span className="flex flex-wrap items-center gap-x-3">
           <Link className="inline-flex items-center gap-1 hover:underline" to={`/hosts/${vm.hostId}`}><Server className="size-3" />{vm.hostName}</Link>

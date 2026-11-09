@@ -526,6 +526,8 @@ namespace HvPortal.Setup
                         gateway.Text = parsed.Gateway;
                         ca.Text = parsed.CaSha256;
                         token.Text = parsed.Token;
+                        // A node of a failover cluster: the portal asks for the access of the agent to the cluster.
+                        _agent.ClusterAccess = parsed.ClusterAccess;
                         if (parsed.Management != _agent.Management)
                         {
                             // The portal created these data for the other kind of agent: follow it, and say so.
@@ -587,6 +589,7 @@ namespace HvPortal.Setup
             RadioButton all = null!, restrict = null!;
             TextBox folders = null!;
             CheckBox updates = null!;
+            CheckBox cluster = null!;
             var page = Page("storage.title", "storage.sub", c =>
             {
                 if (_upgrade)
@@ -601,6 +604,10 @@ namespace HvPortal.Setup
                 c.Gap(14);
                 updates = c.Check(Strings.T("storage.updates"), true);
                 c.Text(Strings.T("storage.updatesHelp"), muted: true, indent: 22);
+                c.Gap(14);
+                // Node of a failover cluster (ADR-041): checked when the data from the portal ask for it or the Cluster service runs.
+                cluster = c.Check(Strings.T("storage.cluster"), _agent.ClusterAccess == "Full" || (_agent.ClusterAccess == null && SetupEngine.ClusterServiceRunning()));
+                c.Text(Strings.T("storage.clusterHelp"), muted: true, indent: 22);
                 // The list (pre-filled with an example) is editable only when "only these folders" is chosen, so it is
                 // never mistaken for a value that applies with the other choices.
                 void Sync() => folders.Enabled = restrict.Checked;
@@ -613,6 +620,7 @@ namespace HvPortal.Setup
                     : restrict.Checked ? SetupRules.SplitFolders(folders.Text)
                     : _upgrade ? new List<string>() : null;
                 _agent.DisableRemoteUpdate = !updates.Checked;
+                _agent.ClusterAccess = _agent.Management ? null : cluster.Checked ? "Full" : null;
                 if (restrict.Checked && (_agent.StorageFolders == null || _agent.StorageFolders.Count == 0))
                 {
                     return Strings.T("err.storage");
@@ -652,6 +660,10 @@ namespace HvPortal.Setup
                     ? Strings.T(_upgrade ? "summary.storageKeep" : "summary.storageAll")
                     : _agent.StorageFolders.Count == 0 ? Strings.T("summary.storageAll") : string.Join(", ", _agent.StorageFolders));
                 yield return Strings.T("summary.updates") + ":  " + Strings.T(_agent.DisableRemoteUpdate ? "summary.updatesOff" : "summary.updatesOn");
+                if (!_agent.Management)
+                {
+                    yield return Strings.T("summary.cluster") + ":  " + Strings.T(_agent.ClusterAccess == "Full" ? "summary.clusterFull" : "summary.clusterNone");
+                }
             }
             yield return SetupEngine.InstallPath;
         }

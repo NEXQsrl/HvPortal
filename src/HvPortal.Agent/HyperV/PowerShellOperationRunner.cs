@@ -289,6 +289,21 @@ public sealed class PowerShellOperationRunner
                 case HvOperation.ListNetAdapters:
                 case HvOperation.GetHostHealth:
                     return null;
+                // Protocol 11: failover clusters, only on the host the agent runs on (not through a management agent).
+                case HvOperation.GetClusterStatus:
+                    return files is { IsLocal: false } ? "not_supported_on_remote_hosts" : null;
+                case HvOperation.SetClusterNodeMaintenance:
+                    if (files is { IsLocal: false })
+                    {
+                        return "not_supported_on_remote_hosts";
+                    }
+                    return HvOperations.FromElement<ClusterNodeMaintenanceRequest>(args) is { } maintenance ? OperationValidation.Validate(maintenance) : "invalid_arguments";
+                case HvOperation.MoveClusterVm:
+                    if (files is { IsLocal: false })
+                    {
+                        return "not_supported_on_remote_hosts";
+                    }
+                    return HvOperations.FromElement<MoveClusterVmRequest>(args) is { } moveCluster ? OperationValidation.Validate(moveCluster) : "invalid_arguments";
                 case HvOperation.NewFolder:
                     return HvOperations.FromElement<NewFolderRequest>(args) is { } nf ? OperationValidation.Validate(nf) : "invalid_arguments";
                 case HvOperation.MoveVm:
@@ -428,6 +443,11 @@ public sealed class PowerShellOperationRunner
                     if (n.Location is { } location)
                     {
                         HostFolderBrowser.CheckFolder(location, mustExist: false, files);
+                    }
+                    // Protocol 11: a highly available VM goes on a real cluster shared volume of this host.
+                    if (n.HighlyAvailable && (files is { IsLocal: false } || n.Location is null || SharedVolumes.RootOf(n.Location) is null))
+                    {
+                        return "ha_requires_shared_volume";
                     }
                     if (n.IsoPath is { Length: > 0 } iso)
                     {

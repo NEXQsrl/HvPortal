@@ -21,6 +21,7 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
     public DbSet<VmTemplate> VmTemplates => Set<VmTemplate>();
     public DbSet<HostVmGroupLink> HostVmGroupLinks => Set<HostVmGroupLink>();
     public DbSet<ManagedHost> Hosts => Set<ManagedHost>();
+    public DbSet<HostCluster> Clusters => Set<HostCluster>();
     public DbSet<ManagementAgent> ManagementAgents => Set<ManagementAgent>();
     public DbSet<AgentCertificate> AgentCertificates => Set<AgentCertificate>();
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
@@ -228,6 +229,17 @@ public sealed class PortalDbContext(DbContextOptions<PortalDbContext> options) :
             e.Property(x => x.StorageFoldersJson).HasMaxLength(4000);
             e.Property(x => x.BackupStagingPath).HasMaxLength(260);
             e.Property(x => x.AgentLastUpdateResult).HasMaxLength(500);
+            e.HasIndex(x => x.ClusterId);
+        });
+        m.Entity<HostCluster>(e =>
+        {
+            e.HasIndex(x => x.Name).IsUnique();
+            e.Property(x => x.Name).HasMaxLength(64);
+            e.Property(x => x.Description).HasMaxLength(1000);
+            e.Property(x => x.WindowsName).HasMaxLength(255);
+            e.Property(x => x.LastStatusJson).HasMaxLength(256000);
+            e.Property(x => x.LastStatusLevel).HasMaxLength(16);
+            e.Property(x => x.LastStatusError).HasMaxLength(2000);
         });
         m.Entity<ManagementAgent>().Property(x => x.LastUpdateResult).HasMaxLength(500);
         m.Entity<PortalNetwork>(e =>

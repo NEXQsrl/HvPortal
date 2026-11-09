@@ -23,6 +23,7 @@ import { GuideConnect, GuideEntra, GuideHome, GuideLayout, GuideRemove, GuideTro
 import { TopicGuidePage } from './pages/guide/TopicGuides';
 import { GroupPage, InventoryHome } from './pages/inventory/GroupPage';
 import { HostPage } from './pages/inventory/HostPage';
+import { ClusterPage } from './pages/inventory/ClusterPage';
 import { VmPage } from './pages/inventory/VmPage';
 import { JobDetailPage, JobsPage } from './pages/JobsPage';
 import { NetworkPage, StoragePage } from './pages/ResourcesPages';
@@ -67,6 +68,7 @@ function Gate() {
             <Route path="/vms/:id" element={<VmPage />} />
             <Route path="/hosts" element={<Navigate to="/inventory?view=hosts" replace />} />
             <Route path="/hosts/:id" element={<HostPage />} />
+            <Route path="/clusters/:id" element={<ClusterPage />} />
             <Route path="/groups/:id" element={<GroupPage />} />
             <Route path="/networks" element={<NetworkPage />} />
             <Route path="/storage" element={<StoragePage />} />

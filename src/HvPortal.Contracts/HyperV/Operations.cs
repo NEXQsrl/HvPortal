@@ -89,6 +89,15 @@ public enum HvOperation
     SetVmResourceMetering,
     /// <summary>Protocol 10. Reset-VMResourceMetering on one VM (VmRef): the counters of Measure-VM start again from zero.</summary>
     ResetVmResourceMetering,
+    /// <summary>
+    /// Protocol 11. The failover cluster of the host (nodes, quorum and witness, networks, shared volumes, Storage Spaces
+    /// Direct, roles, failed resources). Read-only (ClusterStatusReport); any node can answer for the whole cluster.
+    /// </summary>
+    GetClusterStatus,
+    /// <summary>Protocol 11. Put a cluster node in maintenance (drain + storage maintenance) or bring it back (ClusterNodeMaintenanceRequest).</summary>
+    SetClusterNodeMaintenance,
+    /// <summary>Protocol 11. Move a clustered VM to another node of its cluster (MoveClusterVmRequest).</summary>
+    MoveClusterVm,
 }
 
 public static class HvOperations
@@ -205,6 +214,12 @@ public sealed record NewVmRequest
     public IReadOnlyList<string> TemplateRoots { get; init; } = [];
     /// <summary>Gateway only: virtual size (GB, rounded up) of the template disks after the first, counted by the folder quotas.</summary>
     public int TemplateExtraDiskGb { get; init; }
+    /// <summary>
+    /// Protocol 11. Make the new VM a role of the host's failover cluster (Add-ClusterVirtualMachineRole), so that it is
+    /// restarted on another node when its node fails. Its files must be on a cluster shared volume (Location). Older
+    /// agents would create a VM that is not highly available, so the gateway never sends it to them.
+    /// </summary>
+    public bool HighlyAvailable { get; init; }
 }
 
 /// <summary>Protocol 8. <see cref="Folder"/> = &lt;template library&gt;\&lt;template id&gt;, set by the gateway; must be inside one of <see cref="Roots"/>.</summary>
@@ -385,7 +400,8 @@ public sealed record HvOperationOutcome
     public JsonElement? Result { get; init; }
 }
 
-public sealed record NewVmResult(Guid VmId, string Name, string? ConfigurationLocation, string? DiskPath, string? Warning);
+/// <summary>HighlyAvailable (protocol 11): the VM was made a role of the cluster (null when it was not asked).</summary>
+public sealed record NewVmResult(Guid VmId, string Name, string? ConfigurationLocation, string? DiskPath, string? Warning, bool? HighlyAvailable = null);
 
 public sealed record HostDefaults(string? VirtualHardDiskPath, string? VirtualMachinePath, int LogicalProcessorCount, long MemoryCapacityBytes,
     IReadOnlyList<string> SupportedVersions, string? DefaultVersion);

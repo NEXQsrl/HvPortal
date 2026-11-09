@@ -1,12 +1,16 @@
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
 import { get } from '@/api/client';
 import type { Group, GroupsResponse } from '@/api/ops-types';
+import type { ClusterSummary } from '@/api/cluster-types';
 import type { Host, Vm } from '@/api/types';
 import { useLive, useLoad } from '@/lib/hooks';
 
 interface Inventory {
   hosts: Host[];
   vms: Vm[];
+  /** Failover clusters with at least one node the user can see (ADR-041). */
+  clusters: ClusterSummary[];
+  clusterById: Map<string, ClusterSummary>;
   groups: Group[];
   canManageGroups: boolean;
   loading: boolean;
@@ -31,7 +35,8 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   const hosts = useLoad(() => get<Host[]>('/api/v1/hosts'));
   const vms = useLoad(() => get<Vm[]>('/api/v1/vms'));
   const groups = useLoad(() => get<GroupsResponse>('/api/v1/groups'));
-  const reloadInventory = useCallback(() => { hosts.reload(); vms.reload(); }, [hosts.reload, vms.reload]);
+  const clusters = useLoad(() => get<ClusterSummary[]>('/api/v1/clusters').catch(() => [] as ClusterSummary[]));
+  const reloadInventory = useCallback(() => { hosts.reload(); vms.reload(); clusters.reload(); }, [hosts.reload, vms.reload, clusters.reload]);
   const reloadGroups = useCallback(() => { groups.reload(); vms.reload(); }, [groups.reload, vms.reload]);
   useLive(reloadInventory, ['inventoryChanged']);
   useLive(reloadGroups, ['groupsChanged']);
@@ -40,6 +45,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     const h = hosts.data ?? [];
     const v = vms.data ?? [];
     const g = groups.data?.groups ?? [];
+    const c = clusters.data ?? [];
     const vmById = new Map(v.map((x) => [x.id, x]));
     const hostById = new Map(h.map((x) => [x.id, x]));
     const groupById = new Map(g.map((x) => [x.id, x]));
@@ -48,11 +54,13 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     return {
       hosts: h,
       vms: v,
+      clusters: c,
+      clusterById: new Map(c.map((x) => [x.id, x])),
       groups: g,
       canManageGroups: groups.data?.canManage ?? false,
       loading: (hosts.loading && !hosts.data) || (vms.loading && !vms.data),
       error: hosts.error ?? vms.error ?? groups.error,
-      reload: () => { hosts.reload(); vms.reload(); groups.reload(); },
+      reload: () => { hosts.reload(); vms.reload(); groups.reload(); clusters.reload(); },
       vmById,
       hostById,
       groupById,
@@ -68,7 +76,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       },
       childrenOf: (parentId) => g.filter((x) => x.parentId === parentId).sort((a, b) => a.name.localeCompare(b.name)),
     };
-  }, [hosts.data, vms.data, groups.data, hosts.loading, vms.loading, hosts.error, vms.error, groups.error, hosts.reload, vms.reload, groups.reload]);
+  }, [hosts.data, vms.data, groups.data, clusters.data, hosts.loading, vms.loading, hosts.error, vms.error, groups.error, hosts.reload, vms.reload, groups.reload, clusters.reload]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -329,7 +329,8 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 {
                     _paths[newId] = req.Location + @"\" + req.Name;
                 }
-                return Ok(new NewVmResult(newId, req.Name, req.Location is null ? @"D:\VMs" : req.Location + @"\" + req.Name, @"D:\VHDs\" + req.Name + ".vhdx", null), "created");
+                return Ok(new NewVmResult(newId, req.Name, req.Location is null ? @"D:\VMs" : req.Location + @"\" + req.Name, @"D:\VHDs\" + req.Name + ".vhdx", null,
+                    req.HighlyAvailable ? true : null), req.HighlyAvailable ? ["created", "highly-available"] : ["created"]);
             case HvOperation.NewTemplate:
                 var nt = HvOperations.FromElement<NewTemplateRequest>(command.OperationArgs)!;
                 if (OperationValidation.Validate(nt) is { } invalidTemplate)
@@ -509,10 +510,66 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 Meters[rr.VmId] = NewMeter(rr.VmId);
                 MeteringResets.Enqueue(rr.VmId);
                 return Ok(new { reset = true }, "reset");
+            // ---- protocol 11: failover clusters (simulated; the real cmdlets are in the real-host test plan)
+            case HvOperation.GetClusterStatus:
+                if (ClusterStatusFails.TryGetValue(hostId, out var clusterError))
+                {
+                    return new HvOperationOutcome { Ok = false, Error = clusterError };
+                }
+                return Cluster is { } report
+                    ? Ok(report with { ReadByNode = ClusterNodeHosts.FirstOrDefault(kv => kv.Value == hostId).Key ?? "NODE" })
+                    : new HvOperationOutcome { Ok = false, Error = "access_denied: the cluster cannot be read with the agent account." };
+            case HvOperation.SetClusterNodeMaintenance:
+                var maintenance = HvOperations.FromElement<ClusterNodeMaintenanceRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(maintenance) is { } badMaintenance)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = badMaintenance };
+                }
+                MaintenanceRequests.Enqueue((hostId, maintenance));
+                var newState = maintenance.Action == MaintenanceActions.Enter ? "Paused" : "Up";
+                if (Cluster is { } current)
+                {
+                    Cluster = current with
+                    {
+                        Nodes = current.Nodes.Select(n => string.Equals(n.Name, maintenance.NodeName, StringComparison.OrdinalIgnoreCase)
+                            ? n with { State = newState, DrainStatus = maintenance.Action == MaintenanceActions.Enter ? "Completed" : n.DrainStatus } : n).ToList(),
+                    };
+                }
+                return Ok(new ClusterNodeMaintenanceResult
+                {
+                    NodeName = maintenance.NodeName, State = newState, DrainStatus = maintenance.Action == MaintenanceActions.Enter ? "Completed" : null,
+                    StorageMaintenance = maintenance.StorageMaintenance && Cluster?.Storage?.S2dEnabled == true && maintenance.Action == MaintenanceActions.Enter,
+                }, maintenance.Action == MaintenanceActions.Enter ? "drained" : "resumed");
+            case HvOperation.MoveClusterVm:
+                var clusterMove = HvOperations.FromElement<MoveClusterVmRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(clusterMove) is { } badClusterMove)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = badClusterMove };
+                }
+                if (!_vms.TryGetValue(clusterMove.VmId, out var clusterVm) || clusterVm.HostId != hostId)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = "VM not found on this host." };
+                }
+                if (ClusterNodeHosts.TryGetValue(clusterMove.NodeName, out var nodeHost))
+                {
+                    _vms[clusterMove.VmId] = clusterVm with { HostId = nodeHost };
+                }
+                return Ok(new MoveVmResult(clusterMove.VmId, clusterVm.Name, clusterMove.NodeName, null, clusterVm.State.ToString()), "moved");
             default:
                 return new HvOperationOutcome { Ok = false, Error = "Unsupported operation." };
         }
     }
+
+    /// <summary>Cluster report returned by GetClusterStatus (null = the agent cannot read the cluster).</summary>
+    public ClusterStatusReport? Cluster { get; set; }
+
+    /// <summary>Hosts whose GetClusterStatus fails with this error (another node must answer).</summary>
+    public ConcurrentDictionary<Guid, string> ClusterStatusFails { get; } = new();
+
+    /// <summary>Cluster node name -> host (MoveClusterVm moves the VM there; ReadByNode).</summary>
+    public ConcurrentDictionary<string, Guid> ClusterNodeHosts { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public ConcurrentQueue<(Guid SentTo, ClusterNodeMaintenanceRequest Request)> MaintenanceRequests { get; } = new();
 
     /// <summary>Simulated resource metering (Hyper-V VM id -> Measure-VM totals of this moment; present = metering on).</summary>
     public ConcurrentDictionary<Guid, VmMetricsSample> Meters { get; } = new();

@@ -5,7 +5,8 @@ namespace HvPortal.Agent.HyperV;
 /// <summary>
 /// Read-only folder browser for the portal's VM-location and ISO pickers (operation BrowseFolders), and the file-system
 /// checks applied to a requested VM location. Only local fixed drives of the host; hidden, system and reparse-point
-/// folders (junctions, symbolic links, mount points) are neither listed nor accepted; top-level system folders are
+/// folders (junctions, symbolic links, mount points) are neither listed nor accepted, except the mount points of the
+/// cluster shared volumes of the local host (SharedVolumes, protocol 11); top-level system folders are
 /// excluded (HostPaths.BlockedRootFolders). Nothing is created or modified. Paths in and out are host-local; for a
 /// remote host (management agent) <see cref="HostFileAccess"/> maps them to the administrative shares.
 /// </summary>
@@ -20,6 +21,38 @@ public static class HostFolderBrowser
         AttributesToSkip = Excluded,
         ReturnSpecialDirectories = false,
     };
+
+    /// <summary>Only to find the mount points of cluster shared volumes in &lt;drive&gt;:\ClusterStorage (see SharedVolumes).</summary>
+    private static readonly EnumerationOptions MountPoints = new()
+    {
+        IgnoreInaccessible = true,
+        RecurseSubdirectories = false,
+        AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
+        ReturnSpecialDirectories = false,
+    };
+
+    /// <summary>
+    /// Sub-folders of a folder (hidden, system and reparse-point folders left out), plus, in &lt;drive&gt;:\ClusterStorage of the
+    /// local host, the mount points of the cluster shared volumes (protocol 11).
+    /// </summary>
+    internal static IEnumerable<DirectoryInfo> Subfolders(DirectoryInfo dir, HostFileAccess fs)
+    {
+        foreach (var d in dir.EnumerateDirectories("*", Options))
+        {
+            yield return d;
+        }
+        if (!fs.IsLocal || !SharedVolumes.IsClusterStorageFolder(dir.FullName))
+        {
+            yield break;
+        }
+        foreach (var d in dir.EnumerateDirectories("*", MountPoints))
+        {
+            if ((d.Attributes & FileAttributes.ReparsePoint) != 0 && SharedVolumes.IsRoot(d.FullName))
+            {
+                yield return d;
+            }
+        }
+    }
 
     public static FolderListing Browse(FolderBrowseRequest request, HostFileAccess? access = null)
     {
@@ -36,7 +69,7 @@ public static class HostFolderBrowser
             var top = atRoot || fs.IsStorageRoot(path);
             var truncated = false;
             var folders = new List<FolderEntry>();
-            foreach (var d in dir.EnumerateDirectories("*", Options))
+            foreach (var d in Subfolders(dir, fs))
             {
                 if ((atRoot && HostPaths.IsBlockedRootFolder(d.Name)) || d.Name.StartsWith('$'))
                 {
@@ -73,7 +106,7 @@ public static class HostFolderBrowser
                 Parent = top ? null : fs.ToHost(dir.Parent!.FullName),
                 Folders = folders.OrderBy(f => f.Name, StringComparer.CurrentCultureIgnoreCase).ToList(),
                 Isos = isos.OrderBy(f => f.Path, StringComparer.CurrentCultureIgnoreCase).ToList(),
-                FreeBytes = fs.FreeSpace(path[..3]),
+                FreeBytes = fs.FreeSpaceOf(path),
                 Truncated = truncated,
             };
         });
@@ -151,7 +184,9 @@ public static class HostFolderBrowser
             }
             while (current is { Parent: not null })
             {
-                if (current.Exists && (current.Attributes & Excluded) != 0)
+                // The mount point of a cluster shared volume is the only reparse point accepted (SharedVolumes).
+                if (current.Exists && (current.Attributes & Excluded) != 0
+                    && !((current.Attributes & Excluded) == FileAttributes.ReparsePoint && fs.IsLocal && SharedVolumes.IsRoot(current.FullName)))
                 {
                     throw new HostPathException("Hidden or system folders, junctions and symbolic links cannot be used.");
                 }

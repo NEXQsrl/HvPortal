@@ -91,9 +91,11 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
   VM): assigned at Global scope it may create VMs on every host. Where that matters use a custom role without
   `vm.create` (restores as a new VM are then refused) — on a narrower scope `backup.manage` and the backup area, which
   need Global, are not available.
-- Scopes: Global, Host, Logical group, VM (Cluster, Network, Backup repository, Template are modeled for later).
-- **Evaluation**: default deny; effective scopes of a VM = VM + its host + each logical group containing it **and
-  that group's ancestors** + Global;
+- Scopes: Global, Cluster (v0.9.0), Host, Logical group, VM (Network, Backup repository, Template are modeled for later).
+  A host inherits the assignments of its cluster; `hosts.maintenance` (Global/Cluster/Host) puts cluster nodes in
+  maintenance (ADR-041).
+- **Evaluation**: default deny; effective scopes of a VM = VM + its host + the host's cluster + each logical group
+  containing it **and that group's ancestors** + Global; of a host = host + its cluster + Global;
   any applicable **Deny wins** over any Allow regardless of level; platform permissions only from Global assignments;
   disabled users have no permissions. Evaluated fresh per request and **again at job execution**.
 - Unauthorized VMs return **404** (indistinguishable from nonexistent); denied actions return 403 and are audited.

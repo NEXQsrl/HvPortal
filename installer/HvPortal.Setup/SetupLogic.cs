@@ -247,10 +247,21 @@ namespace HvPortal.Setup
         public List<string>? StorageFolders { get; set; }
         /// <summary>No updater task: the agent can only be updated by hand (Install-Agent -DisableRemoteUpdate).</summary>
         public bool DisableRemoteUpdate { get; set; }
+        /// <summary>
+        /// Node of a failover cluster (Install-Agent -ClusterAccess): "Full", "ReadOnly" or "None" (removes the access).
+        /// Null = not passed (nothing changes).
+        /// </summary>
+        public string? ClusterAccess { get; set; }
+
+        public static readonly string[] ClusterAccessValues = { "Full", "ReadOnly", "None" };
 
         public List<string> Validate()
         {
             var errors = new List<string>();
+            if (ClusterAccess != null && (Management || Array.IndexOf(ClusterAccessValues, ClusterAccess) < 0))
+            {
+                errors.Add("err.cluster");
+            }
             if (StorageFolders != null && (StorageFolders.Count > 16 || StorageFolders.Any(f => !SetupRules.IsStorageFolder(f))))
             {
                 errors.Add("err.storage");
@@ -306,20 +317,25 @@ namespace HvPortal.Setup
             {
                 p["DisableRemoteUpdate"] = true;
             }
+            if (ClusterAccess != null && !Management)
+            {
+                p["ClusterAccess"] = ClusterAccess;
+            }
             return p;
         }
     }
 
     /// <summary>
     /// Connection data copied from the portal (Add host / New management agent): either the one-line setup string
-    /// "HVPORTAL-SETUP gateway=... ca=... token=... role=host|management" or the PowerShell command of the guide.
+    /// "HVPORTAL-SETUP gateway=... ca=... token=... role=host|management [cluster=full]" or the PowerShell command of the guide.
     /// </summary>
     public static class PortalData
     {
         public const string Prefix = "HVPORTAL-SETUP";
 
-        public static string Format(string gateway, string caSha256, string token, bool management) =>
-            Prefix + " gateway=" + gateway + " ca=" + caSha256 + " token=" + token + " role=" + (management ? "management" : "host");
+        public static string Format(string gateway, string caSha256, string token, bool management, bool clusterNode = false) =>
+            Prefix + " gateway=" + gateway + " ca=" + caSha256 + " token=" + token + " role=" + (management ? "management" : "host")
+            + (clusterNode && !management ? " cluster=full" : "");
 
         public static bool TryParse(string? text, out AgentSetupOptions options)
         {
@@ -330,6 +346,7 @@ namespace HvPortal.Setup
             }
             string? gateway = null, ca = null, token = null;
             var management = false;
+            string? cluster = null;
             var start = text.IndexOf(Prefix, StringComparison.OrdinalIgnoreCase);
             if (start >= 0)
             {
@@ -346,6 +363,8 @@ namespace HvPortal.Setup
                     else if (key == "ca") ca = value;
                     else if (key == "token") token = value;
                     else if (key == "role") management = value.Equals("management", StringComparison.OrdinalIgnoreCase);
+                    else if (key == "cluster") cluster = value.Equals("full", StringComparison.OrdinalIgnoreCase) ? "Full"
+                        : value.Equals("readonly", StringComparison.OrdinalIgnoreCase) ? "ReadOnly" : null;
                 }
             }
             else
@@ -355,6 +374,8 @@ namespace HvPortal.Setup
                 ca = Regex.Match(text, @"-CaSha256\s+(\S+)", RegexOptions.IgnoreCase).Groups[1].Value;
                 token = Regex.Match(text, @"HVP_ENROLLMENT_TOKEN\s*=\s*'([^']+)'", RegexOptions.IgnoreCase).Groups[1].Value;
                 management = Regex.IsMatch(text, @"-Management\b", RegexOptions.IgnoreCase);
+                var access = Regex.Match(text, @"-ClusterAccess\s+(Full|ReadOnly)\b", RegexOptions.IgnoreCase);
+                cluster = !access.Success ? null : access.Groups[1].Value.Equals("full", StringComparison.OrdinalIgnoreCase) ? "Full" : "ReadOnly";
             }
             var url = SetupRules.NormalizeGatewayUrl(gateway);
             var fingerprint = SetupRules.NormalizeFingerprint(ca);
@@ -362,7 +383,7 @@ namespace HvPortal.Setup
             {
                 return false;
             }
-            options = new AgentSetupOptions { Gateway = url, CaSha256 = fingerprint, Token = token!, Management = management };
+            options = new AgentSetupOptions { Gateway = url, CaSha256 = fingerprint, Token = token!, Management = management, ClusterAccess = management ? null : cluster };
             return true;
         }
     }

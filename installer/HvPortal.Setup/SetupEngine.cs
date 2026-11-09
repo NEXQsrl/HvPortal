@@ -47,6 +47,22 @@ namespace HvPortal.Setup
 
         public static bool HasPayload => Assembly.GetExecutingAssembly().GetManifestResourceNames().Contains("payload.zip");
 
+        /// <summary>The Cluster service runs: this machine is a node of a failover cluster (the agent may need access to it).</summary>
+        public static bool ClusterServiceRunning()
+        {
+            try
+            {
+                using (var service = new System.ServiceProcess.ServiceController("ClusSvc"))
+                {
+                    return service.Status == System.ServiceProcess.ServiceControllerStatus.Running;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                return false; // not installed
+            }
+        }
+
         // ------------------------------------------------------------------ existing installation
 
         public static bool ServiceExists(string name)

@@ -58,6 +58,8 @@ public interface IRealtimeNotifier
     Task JobChangedAsync(Job job);
     /// <summary>Group tree or membership changed (affects visibility): every client re-reads groups and inventory.</summary>
     Task GroupsChangedAsync();
+    /// <summary>Clusters or their nodes changed (ADR-041): every client re-reads hosts and clusters.</summary>
+    Task ClustersChangedAsync();
 }
 
 public sealed class RealtimeNotifier(IHubContext<EventsHub> hub, ConnectedUsers users, IServiceScopeFactory scopes, ILogger<RealtimeNotifier> logger,
@@ -101,6 +103,18 @@ public sealed class RealtimeNotifier(IHubContext<EventsHub> hub, ConnectedUsers 
         catch (Exception ex)
         {
             logger.LogDebug(ex, "Realtime groups notification failed");
+        }
+    }
+
+    public async Task ClustersChangedAsync()
+    {
+        try
+        {
+            await hub.Clients.All.SendAsync("inventoryChanged", new { clusters = true });
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Realtime clusters notification failed");
         }
     }
 

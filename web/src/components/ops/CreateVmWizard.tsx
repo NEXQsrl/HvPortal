@@ -66,8 +66,22 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
     if (template) return [{ id: template.hostId, displayName: template.hostName }];
     return [...own, ...viaGroup];
   }, [inv.hosts, folder.data, template]);
+  // Failover clusters (ADR-041): hosts grouped by cluster in the picker; a node in maintenance is not offered.
+  const nodeState = (id: string) => inv.hostById.get(id)?.clusterFacts?.nodeState ?? null;
+  const freeMemory = (id: string) => inv.hostById.get(id)?.hardware?.freePhysicalMemoryBytes ?? null;
+  const hostGroups = useMemo(() => {
+    const groups: { clusterId: string | null; name: string; hosts: typeof hosts }[] = [];
+    for (const c of inv.clusters) {
+      const members = hosts.filter((h) => inv.hostById.get(h.id)?.clusterId === c.id);
+      if (members.length > 0) groups.push({ clusterId: c.id, name: c.name, hosts: members });
+    }
+    const others = hosts.filter((h) => !groups.some((g) => g.hosts.includes(h)));
+    if (others.length > 0) groups.push({ clusterId: null, name: '', hosts: others });
+    return groups;
+  }, [hosts, inv.clusters, inv.hostById]);
   const [step, setStep] = useState(0);
   const [hostId, setHostId] = useState(initialHost && hosts.some((h) => h.id === initialHost) ? initialHost : hosts[0]?.id ?? '');
+  const [ha, setHa] = useState(true);
   useEffect(() => {
     if (hosts.length > 0 && !hosts.some((h) => h.id === hostId)) setHostId(hosts[0]!.id);
   }, [hosts, hostId]);
@@ -109,7 +123,10 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
       if (cancelled) return;
       setDefaults(d);
       // A group that restricts storage: the VM goes into one of its folders (the first one by default).
-      setSpec((s) => ({ ...s, networkId: undefined, switchName: d.switches.includes(s.switchName ?? '') ? s.switchName : d.switches[0] ?? '', location: d.storageRoots?.[0] ?? '' }));
+      // A node of a cluster: a highly available VM goes on the shared volume with the most free space.
+      const csv = d.cluster?.highlyAvailable ? bestSharedVolume(d.cluster.sharedVolumes, d.storageRoots ?? []) : null;
+      setSpec((s) => ({ ...s, networkId: undefined, switchName: d.switches.includes(s.switchName ?? '') ? s.switchName : d.switches[0] ?? '',
+        location: csv && ha ? csv : d.storageRoots?.[0] ?? '' }));
     }).catch((e) => { if (!cancelled) setLoadError(e); });
     setSpec((s) => ({ ...s, location: '', isoPath: '' }));
     setLocationFree(null);
@@ -125,7 +142,15 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
     || spec.memoryMinimumMb! > spec.memoryStartupMb || spec.memoryMaximumMb! < spec.memoryStartupMb)) ? t('wiz.memoryInvalid') : null;
   const location = spec.location?.trim() ? normalizeFolder(spec.location) : '';
   const locationCode = location ? validateLocation(location) : null;
-  const locationError = locationCode ? t(('wiz.' + locationCode) as TKey) : null;
+  const clusterInfo = defaults?.cluster ?? null;
+  const highlyAvailable = !!clusterInfo?.highlyAvailable && ha && !template;
+  const onSharedVolume = !!location && (clusterInfo?.sharedVolumes ?? []).some((v) => location.toLowerCase() === v.name.toLowerCase() || location.toLowerCase().startsWith(v.name.toLowerCase() + '\\'));
+  const locationError = locationCode ? t(('wiz.' + locationCode) as TKey) : highlyAvailable && !onSharedVolume ? t('wiz.haNeedsCsv') : null;
+  const currentHost = inv.hostById.get(hostId);
+  const suggested = currentHost?.clusterId
+    ? hosts.filter((h) => inv.hostById.get(h.id)?.clusterId === currentHost.clusterId && nodeState(h.id) !== 'Paused' && inv.hostById.get(h.id)?.connected)
+      .sort((a, b) => (freeMemory(b.id) ?? 0) - (freeMemory(a.id) ?? 0))[0]
+    : undefined;
   const diskError = tpl
     ? (!Number.isInteger(spec.diskSizeGb) || spec.diskSizeGb < tpl.bootDiskGb || spec.diskSizeGb > 65536 ? t('tpl.wiz.diskMin', { gb: tpl.bootDiskGb }) : null)
     : spec.diskSizeGb !== 0 && (!Number.isInteger(spec.diskSizeGb) || spec.diskSizeGb < 1 || spec.diskSizeGb > 65536) ? t('wiz.diskInvalid') : null;
@@ -173,7 +198,8 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
     enableTpm: spec.generation === 2 && spec.enableTpm,
     memoryMinimumMb: spec.dynamicMemory ? spec.memoryMinimumMb : undefined,
     memoryMaximumMb: spec.dynamicMemory ? spec.memoryMaximumMb : undefined,
-  }), [spec, name, location, vlan, defaults?.vlanSupported]);
+    highlyAvailable: highlyAvailable || undefined,
+  }), [spec, name, location, vlan, defaults?.vlanSupported, highlyAvailable]);
 
   const create = async () => {
     setBusy(true);
@@ -196,11 +222,44 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
           <Input id="wiz-name" value={spec.name} maxLength={100} onChange={(e) => set({ name: e.target.value })} autoFocus />
         </Field>
         {tpl && <Notice kind="info">{t('tpl.wiz.notice')}</Notice>}
-        <Field label={t('wiz.host')} htmlFor="wiz-host">
+        <Field label={currentHost?.clusterId ? t('wiz.clusterNode') : t('wiz.host')} htmlFor="wiz-host" hint={currentHost?.clusterId ? t('wiz.clusterNodeHint') : undefined}>
           <NativeSelect id="wiz-host" value={hostId} disabled={!!template} onChange={(e) => setHostId(e.target.value)}>
-            {hosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)}
+            {hostGroups.length === 1 && hostGroups[0]!.clusterId === null
+              ? hosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)
+              : hostGroups.map((g) => (
+                <optgroup key={g.clusterId ?? 'standalone'} label={g.clusterId ? `${t('cl.cluster')} ${g.name}` : t('cl.standalone')}>
+                  {g.hosts.map((h) => {
+                    const state = nodeState(h.id);
+                    return (
+                      <option key={h.id} value={h.id} disabled={state === 'Paused' && h.id !== hostId}>
+                        {h.displayName}{g.clusterId ? ` — ${t('wiz.nodeInfo', { state: t(('cl.state.' + (state && ['Up', 'Down', 'Paused', 'Joining'].includes(state) ? state : 'Unknown')) as TKey), free: formatBytes(freeMemory(h.id)) })}` : ''}
+                      </option>
+                    );
+                  })}
+                </optgroup>
+              ))}
           </NativeSelect>
+          {suggested && suggested.id !== hostId && !template && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {t('wiz.nodeSuggested', { node: suggested.displayName })}
+              <Button type="button" size="xs" variant="outline" onClick={() => setHostId(suggested.id)}>{t('wiz.useSuggested')}</Button>
+            </div>
+          )}
         </Field>
+        {currentHost?.clusterId && !template && defaults && (
+          clusterInfo?.highlyAvailable ? (
+            <div className="space-y-1 rounded-lg border p-3">
+              <label className="flex items-start gap-2 text-sm">
+                <Switch checked={ha} className="mt-0.5" onCheckedChange={(c) => {
+                  setHa(c);
+                  const csv = bestSharedVolume(clusterInfo.sharedVolumes, defaults.storageRoots ?? []);
+                  if (c && csv && !onSharedVolume) { set({ location: csv }); setLocationFree(null); }
+                }} />
+                <span><span className="font-medium">{haLabel(ha, clusterInfo.name, t)}</span><span className="block text-xs text-muted-foreground">{t('wiz.haHelp')}</span></span>
+              </label>
+            </div>
+          ) : <Notice kind="warn">{t('wiz.haUnavailable', { reason: clusterInfo?.error ?? (clusterInfo?.sharedVolumes.length === 0 ? t('cl.csv.none') : '—') })}</Notice>
+        )}
         {!template && (available.data?.length ?? 0) > 0 && (
           <Field label={t('tpl.wiz.source')} htmlFor="wiz-source" hint={t('tpl.help')}>
             <NativeSelect id="wiz-source" value={tpl?.id ?? ''} onChange={(e) => chooseTemplate(available.data?.find((x) => x.id === e.target.value) ?? null)}>
@@ -417,6 +476,7 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
       <KeyValue items={[
         [t('cfg.name'), name || '—'],
         [t('wiz.host'), host?.displayName],
+        ...(clusterInfo ? [[t('cl.cluster'), `${clusterInfo.name} · ${highlyAvailable ? t('cl.vm.ha') : t('cl.vm.notHa')}`] as [string, string]] : []),
         [t('wiz.group'), groupId ? inv.groupPath(groupId).map((g) => g.name).join(' / ') : t('wiz.noGroup')],
         ...(tpl ? [[t('tpl.wiz.template'), tpl.name] as [string, string]] : []),
         [t('wiz.generation'), spec.generation === 2 ? 'Gen 2 (UEFI)' : 'Gen 1 (BIOS)'],
@@ -482,4 +542,16 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
       </DialogContent>
     </Dialog>
   );
+}
+
+/** The cluster shared volume with the most free space (inside the folder's storage roots when they restrict it). */
+function bestSharedVolume(volumes: { name: string; freeBytes: number | null }[], roots: string[]): string | null {
+  if (roots.length > 0) {
+    return roots.find((r) => volumes.some((v) => r.toLowerCase() === v.name.toLowerCase() || r.toLowerCase().startsWith(v.name.toLowerCase() + '\\'))) ?? null;
+  }
+  return [...volumes].sort((a, b) => (b.freeBytes ?? 0) - (a.freeBytes ?? 0))[0]?.name ?? null;
+}
+
+function haLabel(on: boolean, cluster: string, t: (k: TKey, v?: Record<string, string | number>) => string) {
+  return on ? t('wiz.ha', { name: cluster }) : t('wiz.haNo');
 }

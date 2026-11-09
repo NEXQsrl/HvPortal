@@ -69,12 +69,18 @@ public sealed class JobService
     public const string AgentUpdateJobType = "agent.update";
     /// <summary>Resource metering of a VM on (Enable) or off (Disable), ADR-039.</summary>
     public const string MeteringJobType = "vm.metering";
+    /// <summary>A node of a failover cluster put in maintenance ("Enter") or brought back ("Exit"), ADR-041. Target = the node.</summary>
+    public const string MaintenanceJobType = "host.maintenance";
+    /// <summary>vm.migrate operation: a clustered VM moved to another node of its cluster (Move-ClusterVirtualMachineRole).</summary>
+    public const string ClusterNodeMoveOperation = "ClusterNode";
 
     /// <summary>Typed Hyper-V operation executed by a job of the given type/operation (null for power/delete jobs).</summary>
     public static HvOperation? HvOperationFor(string type, string operation) => (type, operation) switch
     {
         (MigrateJobType, "Host") => HvOperation.MoveVm,
         (MigrateJobType, "Storage") => HvOperation.MoveVmStorage,
+        (MigrateJobType, ClusterNodeMoveOperation) => HvOperation.MoveClusterVm,
+        (MaintenanceJobType, "Enter" or "Exit") => HvOperation.SetClusterNodeMaintenance,
         (BackupJobType, "Backup") => HvOperation.BackupVm,
         (BackupVerifyJobType, "Verify") => HvOperation.VerifyBackup,
         (BackupRemoveJobType, "Delete") => HvOperation.RemoveBackup,
@@ -100,10 +106,11 @@ public sealed class JobService
     /// </summary>
     /// <summary>
     /// BackupPointId: restore point of a backup/verify/delete/restore job (target, credentials and folder are re-stamped
-    /// from it at execution). DestinationHostId: host of a VM move. UpdateVersion: agent update jobs.
+    /// from it at execution). DestinationHostId: host of a VM move. UpdateVersion: agent update jobs. ClusterId: cluster of
+    /// a node maintenance (one maintenance at a time per cluster).
     /// </summary>
     public sealed record OperationParameters(JsonElement Args, Guid? GroupId = null, IReadOnlyList<string>? Permissions = null,
-        Guid? BackupPointId = null, Guid? DestinationHostId = null, string? UpdateVersion = null);
+        Guid? BackupPointId = null, Guid? DestinationHostId = null, string? UpdateVersion = null, Guid? ClusterId = null);
 
     /// <summary>
     /// Update of an agent (no Hyper-V operation): the agent downloads the package from the agent port, checks it and hands it

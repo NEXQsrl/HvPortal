@@ -169,6 +169,26 @@ afterwards. Repository passwords are write-only.
 | GET `/api-tokens` · POST `/api-tokens` `{name, expiresInDays?, scopes?: ["backup.read"]}` · POST `/api-tokens/{id}/revoke` | read-only tokens for monitoring; the token (`hvp_` + 40 characters) is returned **once** by POST. 400 `invalid_token_name`, `invalid_scope`, `invalid_expiry`; 409 `too_many_tokens` (100) | `settings.manage` (+ recent re-authentication to create); audited |
 | GET `/public/backup/status` · GET `/public/backup/runs?since=` | public read-only API: overall status, jobs with last run, VMs with newest point (names only) · runs since a time (default 24 h, max 500) | `Authorization: Bearer hvp_...` with scope `backup.read` only (no cookie, no CSRF); 401 `invalid_token` (audited `api_tokens.use`); rate limit 120/min per address (429) |
 
+## Endpoints added in v0.9.0 (agent protocol 11, failover clusters, ADR-041)
+
+| Method / path | What | Authorization |
+|---|---|---|
+| GET `/clusters` | clusters with at least one node the user can see; `status` only for who reads the cluster | `inventory.read` (cluster, or a node) |
+| POST `/clusters` | `{name, description, newNodes[], hostIds[]}`: cluster + pending hosts with their enrollment (`-ClusterAccess Full`) | `hosts.manage` + recent re-authentication |
+| GET `/clusters/{id}` | nodes (state, agent, memory, VMs, mismatches), last stored status: report, issues, capacity | `inventory.read` on the **cluster** (404 otherwise) |
+| GET `/clusters/{id}/status` | same, read live through the first node agent that answers (120 s per node), stored | `inventory.read` on the cluster |
+| PUT `/clusters/{id}` | rename, description | `hosts.manage` |
+| POST `/clusters/{id}/nodes` | `{hostId}` existing host or `{displayName}` new pending host (enrollment returned) | `hosts.manage` + recent re-authentication |
+| POST `/clusters/{id}/nodes/{hostId}/remove` | the host becomes standalone (nothing changes in Windows) | `hosts.manage` + recent re-authentication |
+| POST `/clusters/{id}/delete` | hosts stay as standalone hosts, role assignments on the cluster deleted | `hosts.manage` + recent re-authentication |
+| GET `/hosts/{id}/maintenance?action=Enter` (or `Exit`) | live check: `allowed`, `blocking[]`, `warnings[]`, `s2d` | `hosts.maintenance` on the node |
+| POST `/hosts/{id}/maintenance` | `{action, storageMaintenance, failback, acknowledgeWarnings, idempotencyKey}` → job `host.maintenance`; 409 `maintenance_blocked` / `maintenance_warnings` | `hosts.maintenance` on the node |
+
+Also: `POST /hosts/{id}/vms` accepts `vm.highlyAvailable` (location on a CSV of the node); `POST /vms/{id}/move` between
+two nodes of the same cluster queues `vm.migrate` operation `ClusterNode`; hosts carry `clusterId`, `clusterName`,
+`clusterFacts`, `clusterMismatch`, `canMaintain`; VMs carry `isClustered`; `/hosts/{id}/defaults` carries `cluster`;
+role assignments accept `scopeType: Cluster`.
+
 ## Example (PowerShell)
 
 ```powershell

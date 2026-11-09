@@ -264,6 +264,33 @@ public sealed class ManagedHost
     /// <summary>From the agent's Hello (protocol 9): the updater task is registered on the host.</summary>
     public bool? AgentUpdaterInstalled { get; set; }
     public string? AgentLastUpdateResult { get; set; }
+    /// <summary>
+    /// The failover cluster the host is a node of (ADR-041), chosen by a host administrator; null = standalone host.
+    /// Checked against what the agent reads on the host (ClusterFacts): a mismatch is shown, never fixed silently.
+    /// </summary>
+    public Guid? ClusterId { get; set; }
+}
+
+/// <summary>
+/// A failover cluster (ADR-041): the hosts of the portal that are nodes of the same Windows failover cluster. Every node
+/// has its own agent; cluster-wide reads and operations go through any connected node, so the portal keeps managing the
+/// cluster while a node or its agent is down.
+/// </summary>
+public sealed class HostCluster
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public required string Name { get; set; }
+    public string? Description { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    /// <summary>Name of the cluster in Windows, from the first node whose agent read it (null until then).</summary>
+    public string? WindowsName { get; set; }
+    /// <summary>Last cluster status read (ClusterStatusReport as JSON) by the monitor or by a user, with time, node and level.</summary>
+    public string? LastStatusJson { get; set; }
+    public DateTimeOffset? LastStatusAt { get; set; }
+    /// <summary>Ok, Warning, Critical, Unknown (see ClusterRules.Evaluate).</summary>
+    public string? LastStatusLevel { get; set; }
+    /// <summary>Why the last read failed on every node (null when it worked).</summary>
+    public string? LastStatusError { get; set; }
 }
 
 public enum TemplateStatus
@@ -413,6 +440,8 @@ public sealed class VirtualMachine
     public DateTimeOffset? StateChangedAt { get; set; }
     public bool IsMissing { get; set; }
     public DateTimeOffset? MissingSince { get; set; }
+    /// <summary>Protocol 11: the VM is a role of the failover cluster of its host (highly available). Null = not known (standalone or older agent).</summary>
+    public bool? IsClustered { get; set; }
 }
 
 /// <summary>Operation history (not security audit): discoveries, removals, out-of-portal changes.</summary>

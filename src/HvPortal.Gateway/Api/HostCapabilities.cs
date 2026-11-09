@@ -49,11 +49,31 @@ public static class HostCapabilities
             new("vm.console", ops ? "available" : "unavailable", opsNote ?? "Hypervisor screen capture + keyboard/mouse (not RDP)."),
             new("vm.groups.native", ops && AgentAtLeast(facts?.AgentVersion, 0, 3, 2) ? "available" : "unavailable",
                 ops && !AgentAtLeast(facts?.AgentVersion, 0, 3, 2) ? "Update the agent to 0.3.2 or later." : "Portal groups mirrored as Hyper-V VM groups (Get-VMGroup)."),
-            new("cluster", facts?.ClusterServicePresent == true ? "detected (management in Milestone 3)" : "not detected"),
-            new("storage-spaces-direct", datacenter ? "edition allows (Milestone 4)" : "not available in this edition"),
+            ClusterCapability(facts),
+            new("storage-spaces-direct", datacenter ? "edition allows" : "not available in this edition",
+                datacenter ? "Status, pool, volumes, disks and repair jobs read through the cluster page (read-only); creating pools and volumes is not managed." : null),
             new("shielded-vms", datacenter ? "edition allows (not managed)" : "not available in this edition"),
         };
         return new Evaluation(edition, platform, support, caps);
+    }
+
+    /// <summary>Failover cluster (ADR-041): what the agent of the host reads about its cluster.</summary>
+    private static Capability ClusterCapability(HostFacts? facts)
+    {
+        if (facts?.ClusterServicePresent != true)
+        {
+            return new("cluster", "not detected");
+        }
+        if (!AgentAtLeast(facts.AgentVersion, 0, 9))
+        {
+            return new("cluster", "detected", "Update the agent to 0.9.0 or later to manage the cluster.");
+        }
+        return facts.Cluster switch
+        {
+            null => new("cluster", "detected", "The Cluster service is installed but not running."),
+            { Error: { } error } => new("cluster", "unavailable", error),
+            { } c => new("cluster", "available", $"Node {c.NodeName} of cluster {c.Name}: status, node maintenance, highly available VMs."),
+        };
     }
 
     internal static bool AgentAtLeast(string? version, int major, int minor, int patch = 0)

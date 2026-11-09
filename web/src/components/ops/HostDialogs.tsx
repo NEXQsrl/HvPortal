@@ -1,6 +1,7 @@
-import { Network, Server } from 'lucide-react';
+import { Boxes, Network, Server } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { get, patch, post, put } from '@/api/client';
+import type { ClusterNodeEnrollment } from '@/api/cluster-types';
 import type { EnrollmentInfo, GatewayConnection, Host, ManagementAgent } from '@/api/types';
 import { AgentSetupGuide } from '@/components/AgentSetupGuide';
 import { Loading, Notice } from '@/components/common';
@@ -16,8 +17,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { useI18n } from '@/i18n';
 import { useLoad } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
+import { ClusterHostFields, createClusterNodes, newNodeNames, type ClusterFieldsValue } from './ClusterDialogs';
 
-type Mode = 'agent' | 'remote';
+type Mode = 'agent' | 'remote' | 'cluster';
 
 /** Same rules as RemoteHosts on the server (the server re-validates). */
 const COMPUTER = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
@@ -82,9 +84,11 @@ function RemoteHostFields({ value, onChange, agents, passwordRequired }: {
   );
 }
 
-export function AddHostDialog({ onCreated, onRemoteCreated, onNewManagementAgent, onClose }: {
+export function AddHostDialog({ onCreated, onRemoteCreated, onClusterCreated, onNewManagementAgent, onClose }: {
   onCreated: (info: EnrollmentInfo, hostId: string) => void;
   onRemoteCreated: (hostId: string) => void;
+  /** Failover cluster (ADR-041): the cluster and the enrollments of its new nodes (each one gets its own agent). */
+  onClusterCreated: (clusterId: string, name: string, nodes: ClusterNodeEnrollment[]) => void;
   onNewManagementAgent: () => void;
   onClose: () => void;
 }) {
@@ -97,9 +101,20 @@ export function AddHostDialog({ onCreated, onRemoteCreated, onNewManagementAgent
   const [remote, setRemote] = useState<RemoteFields>({ agentId: '', computer: '', user: '', password: '', https: false });
   const fields = { ...remote, agentId: remote.agentId || usable[0]?.id || '' };
   const remoteInvalid = mode === 'remote' && (!fields.agentId || remoteProblem(fields, true) !== null);
+  const inv = useInventory();
+  const [cluster, setCluster] = useState<ClusterFieldsValue>({ target: 'new', name: '', nodesText: '', hostIds: [] });
+  const clusterNodes = newNodeNames(cluster.nodesText);
+  const clusterInvalid = mode === 'cluster' && ((clusterNodes.length === 0 && cluster.hostIds.length === 0)
+    || new Set(clusterNodes.map((n) => n.toLowerCase())).size !== clusterNodes.length);
+  const needsName = mode !== 'cluster' || cluster.target === 'new';
   return (
-    <ActionDialog title={t('host.add')} confirmLabel={t('host.create')} wide disabled={!name.trim() || remoteInvalid} onClose={onClose}
+    <ActionDialog title={t('host.add')} confirmLabel={t('host.create')} wide disabled={(needsName && !name.trim()) || remoteInvalid || clusterInvalid} onClose={onClose}
       onConfirm={async () => {
+        if (mode === 'cluster') {
+          const r = await createClusterNodes(cluster, name.trim(), description.trim(), inv.clusters);
+          onClusterCreated(r.clusterId, r.name, r.nodes);
+          return;
+        }
         if (mode === 'agent') {
           const r = await post<{ hostId: string; enrollment: EnrollmentInfo }>('/api/v1/hosts', { displayName: name.trim() });
           if (description.trim()) await patch(`/api/v1/hosts/${r.hostId}`, { description });
@@ -114,24 +129,30 @@ export function AddHostDialog({ onCreated, onRemoteCreated, onNewManagementAgent
         onRemoteCreated(r.hostId);
       }}>
       <Field label={t('host.connectionMode')}>
-        <RadioGroup value={mode} onValueChange={(v) => setMode(v as Mode)} className="grid gap-2 sm:grid-cols-2">
-          {(['agent', 'remote'] as const).map((m) => (
+        <RadioGroup value={mode} onValueChange={(v) => setMode(v as Mode)} className="grid gap-2 sm:grid-cols-3">
+          {(['agent', 'cluster', 'remote'] as const).map((m) => (
             <label key={m} className={cn('flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm has-[[data-state=checked]]:border-primary/50 has-[[data-state=checked]]:bg-primary/5')}>
               <RadioGroupItem value={m} className="mt-0.5" />
               <span className="space-y-0.5">
-                <span className="flex items-center gap-1.5 font-medium">{m === 'agent' ? <Server className="size-3.5" /> : <Network className="size-3.5" />}{t(m === 'agent' ? 'host.modeAgent' : 'host.modeRemote')}</span>
-                <span className="block text-xs text-muted-foreground">{t(m === 'agent' ? 'host.modeAgentHelp' : 'host.modeRemoteHelp')}</span>
+                <span className="flex items-center gap-1.5 font-medium">{m === 'agent' ? <Server className="size-3.5" /> : m === 'cluster' ? <Boxes className="size-3.5" /> : <Network className="size-3.5" />}
+                  {t(m === 'agent' ? 'host.modeAgent' : m === 'cluster' ? 'host.modeCluster' : 'host.modeRemote')}</span>
+                <span className="block text-xs text-muted-foreground">{t(m === 'agent' ? 'host.modeAgentHelp' : m === 'cluster' ? 'host.modeClusterHelp' : 'host.modeRemoteHelp')}</span>
               </span>
             </label>
           ))}
         </RadioGroup>
       </Field>
-      <Field label={t('host.name')} htmlFor="host-name">
-        <Input id="host-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} autoFocus />
-      </Field>
-      <Field label={t('common.description')} htmlFor="host-desc">
-        <Textarea id="host-desc" rows={2} maxLength={1000} value={description} onChange={(e) => setDescription(e.target.value)} />
-      </Field>
+      {needsName && (
+        <>
+          <Field label={t(mode === 'cluster' ? 'cl.add.name' : 'host.name')} htmlFor="host-name">
+            <Input id="host-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} autoFocus />
+          </Field>
+          <Field label={t('common.description')} htmlFor="host-desc">
+            <Textarea id="host-desc" rows={2} maxLength={1000} value={description} onChange={(e) => setDescription(e.target.value)} />
+          </Field>
+        </>
+      )}
+      {mode === 'cluster' && <ClusterHostFields value={cluster} onChange={setCluster} />}
       {mode === 'remote' && (agents.loading && !agents.data ? <Loading /> : usable.length === 0 ? (
         <Notice kind="warn" title={t('remote.noAgents')}>
           <p className="text-xs">{t('remote.noAgentsHelp')}</p>
@@ -170,7 +191,7 @@ export function EnrollmentDialog({ info, hostId, onClose }: { info: EnrollmentIn
   const host = inv.hostById.get(hostId) ?? null;
   return (
     <GuideDialog title={t('host.enrollTitle') + (host ? ` — ${host.displayName}` : '')} info={info} onClose={onClose}>
-      {(connection) => <AgentSetupGuide connection={connection} token={info.token} expiresAt={info.expiresAt} host={host} />}
+      {(connection) => <AgentSetupGuide connection={connection} token={info.token} expiresAt={info.expiresAt} host={host} clusterNode={!!info.clusterNode || !!host?.clusterId} />}
     </GuideDialog>
   );
 }
@@ -185,7 +206,7 @@ export function ManagementEnrollmentDialog({ info, agent, connected, onClose }: 
   );
 }
 
-function GuideDialog({ title, info, onClose, children }: {
+export function GuideDialog({ title, info, onClose, children }: {
   title: string; info: EnrollmentInfo; onClose: () => void;
   children: (connection: GatewayConnection) => ReactNode;
 }) {

@@ -137,7 +137,7 @@ public static class AdminEndpoints
             scope = await ResolveScopeAsync(req.ScopeType ?? ScopeType.Global, req.ScopeId, db, http.RequestAborted);
             if (scope is null)
             {
-                return ApiSupport.BadRequest("invalid_scope", "Supported scopes in this version: Global, Host, Vm, Group (existing resources only).");
+                return ApiSupport.BadRequest("invalid_scope", "Supported scopes: Global, Cluster, Host, Vm, Group (existing resources only).");
             }
             if (!await access.HoldsAllAsync(actor, role.Permissions.Select(p => p.Permission), scope.Value, http.RequestAborted))
             {
@@ -451,6 +451,7 @@ public static class AdminEndpoints
         var hostNames = await db.Hosts.AsNoTracking().ToDictionaryAsync(x => x.Id.ToString("D"), x => x.DisplayName, http.RequestAborted);
         var vmNames = await db.VirtualMachines.AsNoTracking().ToDictionaryAsync(x => x.Id.ToString("D"), x => x.Name, http.RequestAborted);
         var groupNames = await db.LogicalGroups.AsNoTracking().ToDictionaryAsync(x => x.Id.ToString("D"), x => x.Name, http.RequestAborted);
+        var clusterNames = await db.Clusters.AsNoTracking().ToDictionaryAsync(x => x.Id.ToString("D"), x => x.Name, http.RequestAborted);
         return Results.Ok(list.OrderBy(a => a.PrincipalId).Select(a => new
         {
             a.Id,
@@ -466,6 +467,7 @@ public static class AdminEndpoints
                 ScopeType.Host => hostNames.GetValueOrDefault(a.ScopeId),
                 ScopeType.Vm => vmNames.GetValueOrDefault(a.ScopeId),
                 ScopeType.Group => groupNames.GetValueOrDefault(a.ScopeId),
+                ScopeType.Cluster => clusterNames.GetValueOrDefault(a.ScopeId),
                 _ => a.ScopeId,
             },
             effect = a.Effect.ToString(),
@@ -497,7 +499,7 @@ public static class AdminEndpoints
         var scope = await ResolveScopeAsync(req.ScopeType, req.ScopeId, db, http.RequestAborted);
         if (scope is null)
         {
-            return ApiSupport.BadRequest("invalid_scope", "Supported scopes in this version: Global, Host, Vm, Group (existing resources only).");
+            return ApiSupport.BadRequest("invalid_scope", "Supported scopes: Global, Cluster, Host, Vm, Group (existing resources only).");
         }
         if (!Enum.IsDefined(req.Effect))
         {
@@ -583,6 +585,8 @@ public static class AdminEndpoints
                 return ResourceRef.Vm(v);
             case ScopeType.Group when Guid.TryParse(id, out var g) && await db.LogicalGroups.AnyAsync(x => x.Id == g, ct):
                 return ResourceRef.Group(g);
+            case ScopeType.Cluster when Guid.TryParse(id, out var c) && await db.Clusters.AnyAsync(x => x.Id == c, ct):
+                return ResourceRef.Cluster(c);
             default:
                 return null;
         }

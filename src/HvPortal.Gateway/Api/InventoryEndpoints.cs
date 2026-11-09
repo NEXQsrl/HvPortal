@@ -43,9 +43,10 @@ public static class InventoryEndpoints
     // ------------------------------------------------------------------ hosts
 
     private static object HostDto(ManagedHost h, bool connected, int vmCount, DateTimeOffset now, bool canCreateVm = false,
-        bool showRemote = false, string? managementAgentName = null, bool canManageNetworks = false)
+        bool showRemote = false, string? managementAgentName = null, bool canManageNetworks = false, HostCluster? cluster = null, bool canMaintain = false)
     {
         var facts = h.HostFactsJson is null ? null : JsonSerializer.Deserialize<HostFacts>(h.HostFactsJson);
+        var clusterFacts = facts?.Cluster;
         var eval = HostCapabilities.Evaluate(facts, h.Access);
         return new
         {
@@ -107,7 +108,46 @@ public static class InventoryEndpoints
             remote = h.ConnectionMode == HostConnectionMode.Remote && showRemote
                 ? new { computerName = h.RemoteComputerName, userName = h.RemoteUserName, useHttps = h.RemoteUseHttps, credentialUpdatedAt = h.RemoteCredentialUpdatedAt }
                 : null,
+            // Failover cluster (ADR-041): the cluster of the portal the host belongs to, and what its agent reads on the host.
+            clusterId = h.ClusterId,
+            clusterName = cluster?.Name,
+            clusterFacts = clusterFacts is null ? null : new
+            {
+                clusterFacts.Name, clusterFacts.NodeName, clusterFacts.NodeState, clusterFacts.DrainStatus, clusterFacts.Error,
+                sharedVolumes = clusterFacts.SharedVolumes,
+            },
+            // The Windows cluster of the host differs from the one of the portal (or the host is in none): shown, never fixed silently.
+            clusterMismatch = ClusterMismatch(h, cluster, facts),
+            // Agent 0.9.0+ (protocol 11) on a node of a cluster of the portal, hosts.maintenance on the host.
+            canMaintain = canMaintain && h.ClusterId is not null && h.Status == HostStatus.Active,
         };
+    }
+
+    /// <summary>
+    /// "not_clustered": in a cluster of the portal but its agent reports no cluster; "other_cluster": its agent reports another
+    /// Windows cluster; "unassigned": its agent reports a cluster but the host is not in a cluster of the portal. Null otherwise
+    /// (or not known yet: older agent, cluster not readable).
+    /// </summary>
+    internal static string? ClusterMismatch(ManagedHost h, HostCluster? cluster, HostFacts? facts)
+    {
+        if (facts is null || !HostCapabilities.AgentAtLeast(facts.AgentVersion, 0, 9))
+        {
+            return null;
+        }
+        var reported = facts.Cluster;
+        if (h.ClusterId is null)
+        {
+            return reported?.Name is { Length: > 0 } ? "unassigned" : null;
+        }
+        if (reported is null)
+        {
+            return facts.ClusterServicePresent ? null : "not_clustered";
+        }
+        if (reported.Error is not null || reported.Name is null || cluster?.WindowsName is null)
+        {
+            return null;
+        }
+        return string.Equals(reported.Name, cluster.WindowsName, StringComparison.OrdinalIgnoreCase) ? null : "other_cluster";
     }
 
     /// <summary>
@@ -136,6 +176,7 @@ public static class InventoryEndpoints
             .Select(g => new { g.Key, n = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.n, http.RequestAborted);
         var now = time.GetUtcNow();
         var agentNames = await ManagementAgentNamesAsync(db, http.RequestAborted);
+        var clusters = await db.Clusters.AsNoTracking().ToDictionaryAsync(c => c.Id, http.RequestAborted);
         var result = new List<object>();
         foreach (var h in hosts)
         {
@@ -144,7 +185,9 @@ public static class InventoryEndpoints
                 result.Add(HostDto(h, agents.IsConnected(h.Id), counts.GetValueOrDefault(h.Id), now,
                     await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(h.Id), http.RequestAborted),
                     manageAll, h.ManagementAgentId is { } ma ? agentNames.GetValueOrDefault(ma) : null,
-                    await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Host(h.Id), http.RequestAborted)));
+                    await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Host(h.Id), http.RequestAborted),
+                    h.ClusterId is { } cid ? clusters.GetValueOrDefault(cid) : null,
+                    await access.HasAsync(uid, Permissions.HostsMaintenance, ResourceRef.Host(h.Id), http.RequestAborted)));
             }
         }
         return Results.Ok(result);
@@ -164,9 +207,11 @@ public static class InventoryEndpoints
             : null;
         var count = await db.VirtualMachines.CountAsync(v => v.HostId == id && !v.IsMissing, http.RequestAborted);
         var events = await db.InventoryEvents.AsNoTracking().Where(e => e.HostId == id).OrderByDescending(e => e.Id).Take(50).ToListAsync(http.RequestAborted);
+        var cluster = h.ClusterId is { } clusterId ? await db.Clusters.AsNoTracking().FirstOrDefaultAsync(c => c.Id == clusterId, http.RequestAborted) : null;
         return Results.Ok(new { host = HostDto(h, agents.IsConnected(id), count, time.GetUtcNow(),
             await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted), manageAll, agentName,
-            await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Host(id), http.RequestAborted)), events });
+            await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Host(id), http.RequestAborted), cluster,
+            await access.HasAsync(uid, Permissions.HostsMaintenance, ResourceRef.Host(id), http.RequestAborted)), events });
     }
 
     /// <summary>Connection facts an agent needs: names valid in the gateway certificate, port, CA pin, reachability.</summary>
@@ -193,7 +238,7 @@ public static class InventoryEndpoints
         name is "localhost" or "::1" or "[::1]" || (System.Net.IPAddress.TryParse(name, out var ip) && System.Net.IPAddress.IsLoopback(ip));
 
     internal static object EnrollmentInfo(HttpContext http, InternalCertificateAuthority ca, GatewayOptions options, string token, DateTimeOffset expires,
-        bool management = false)
+        bool management = false, bool clusterNode = false)
     {
         var c = GatewayConnectionInfo(http, ca, options);
         var url = c.GatewayAgentUrl;
@@ -208,8 +253,11 @@ public static class InventoryEndpoints
             listensOnNetwork = c.ListensOnNetwork,
             bindAddress = c.BindAddress,
             command = $"$env:HVP_ENROLLMENT_TOKEN = '<token>'; .\\Install-Agent.ps1 -Source ..\\agent -Gateway {url} -CaSha256 {ca.CaFingerprintSha256}"
-                      + (management ? " -Management" : ""),
+                      + (management ? " -Management" : "")
+                      // A node of a failover cluster: the agent account also gets access to the cluster (ADR-041).
+                      + (clusterNode ? " -ClusterAccess Full" : ""),
             management,
+            clusterNode,
             note = "The token is shown only once and expires quickly. Verify the CA fingerprint out of band.",
         };
     }
@@ -387,6 +435,8 @@ public static class InventoryEndpoints
             v.StateChangedAt,
             v.IsMissing,
             v.MissingSince,
+            // Protocol 11: a role of the failover cluster of its host (highly available); null = not known.
+            v.IsClustered,
             allowedOperations = connected && !v.IsMissing ? allowed.ToArray() : [],
             // Hyper-V notes of the VM (written on the host through a configuration job).
             canAnnotate = canAnnotate && !v.IsMissing,

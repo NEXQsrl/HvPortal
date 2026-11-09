@@ -24,8 +24,10 @@ public static class AgentProtocol
     /// 9 = v0.7.0: host health, VM move (host / storage), new folders, allowed storage folders of the host, VLAN of new
     ///     and added network adapters, backups and restores, update of the agent sent by the gateway (UpdateAgent).
     /// 10 = v0.8.0: resource use history of VMs (GetVmMetrics, SetVmResourceMetering, ResetVmResourceMetering).
+    /// 11 = v0.9.0: failover clusters (HostFacts.Cluster, GetClusterStatus, SetClusterNodeMaintenance, MoveClusterVm,
+    ///     NewVm.HighlyAvailable) and VM folders on cluster shared volumes.
     /// </summary>
-    public const int Version = 10;
+    public const int Version = 11;
 
     /// <summary>Agent port: the agent package, for agents updating themselves (mutual TLS, same checks as the channel).</summary>
     public const string PackagePath = "/agent/v1/package";
@@ -33,7 +35,8 @@ public static class AgentProtocol
     /// <summary>Agent version shipped with each protocol (messages for agents that are too old).</summary>
     public static string MinimumAgentFor(int protocol) => protocol switch
     {
-        >= 10 => "0.8.0",
+        >= 11 => "0.9.0",
+        10 => "0.8.0",
         9 => "0.7.0",
         8 => "0.6.0",
         7 => "0.5.0",
@@ -58,6 +61,16 @@ public static class AgentProtocol
         if (command.Kind is AgentCommandKind.DeleteVm && command.DeleteDisks == true)
         {
             return 9;
+        }
+        if (command.Operation is >= HvOperation.GetClusterStatus)
+        {
+            return 11;
+        }
+        // An older agent would ignore the flag and create a VM that is not highly available.
+        if (command.Operation is HvOperation.NewVm && command.OperationArgs is { ValueKind: JsonValueKind.Object } haArgs
+            && haArgs.TryGetProperty("highlyAvailable", out var ha) && ha.ValueKind == JsonValueKind.True)
+        {
+            return 11;
         }
         if (command.Operation is >= HvOperation.GetVmMetrics)
         {

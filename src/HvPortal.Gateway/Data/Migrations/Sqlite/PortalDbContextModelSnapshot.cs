@@ -585,6 +585,51 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.ToTable("GroupNetworks");
                 });
 
+            modelBuilder.Entity("HvPortal.Gateway.Data.HostCluster", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LastStatusAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LastStatusError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastStatusJson")
+                        .HasMaxLength(256000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastStatusLevel")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("WindowsName")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("Clusters");
+                });
+
             modelBuilder.Entity("HvPortal.Gateway.Data.HostVmGroupLink", b =>
                 {
                     b.Property<Guid>("Id")
@@ -908,6 +953,9 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasMaxLength(260)
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid?>("ClusterId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ConnectionMode")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -1005,6 +1053,8 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ClusterId");
 
                     b.HasIndex("DisplayName")
                         .IsUnique();
@@ -1560,6 +1610,9 @@ namespace HvPortal.Gateway.Data.Migrations.Sqlite
                     b.Property<string>("HyperVNotes")
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool?>("IsClustered")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsCritical")
                         .HasColumnType("INTEGER");

@@ -42,6 +42,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         builder.UseSetting("Gateway:VmGroups:SyncEnabled", "false");
         builder.UseSetting("Gateway:Backup:SchedulerEnabled", "false");
         builder.UseSetting("Gateway:Metrics:CollectorEnabled", "false");
+        builder.UseSetting("Gateway:Clusters:MonitorEnabled", "false");
         builder.UseSetting("Gateway:PackagesDirectory", PackagesDirectory);
         foreach (var (key, value) in ExtraSettings)
         {

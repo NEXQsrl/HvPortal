@@ -112,7 +112,8 @@ group was requested, the created VM is placed after it appears in inventory.
 `AgentLastUpdateResult` (migration `BackupsNetworksAgentUpdates`). Notification settings are a `Settings` row.
 
 VM identity: portal id (GUID) + unique `(HostId, HyperVId)`. Hyper-V ids are not globally unique (`Import-VM -Copy`
-can keep the id). In clusters (M3) a VM moving between nodes will be re-homed by Hyper-V id within the cluster.
+can keep the id). In clusters (v0.9.0, ADR-041) a VM moved by the cluster between nodes is re-homed by Hyper-V id
+within the cluster (same portal record); `Clusters` holds the clusters of the portal, `Hosts.ClusterId` their nodes.
 
 ## Three separate records
 

@@ -438,7 +438,11 @@ public static class VmOperationsEndpoints
             return error;
         }
         // Names already used on the host (the wizard warns early). A folder user learns only the names of VMs they can see.
-        var hostVms = await db.VirtualMachines.AsNoTracking().Where(v => v.HostId == id && !v.IsMissing).Select(v => new { v.Id, v.Name }).ToListAsync(http.RequestAborted);
+        // In a cluster the role of a highly available VM is named after it: names are checked on every node.
+        var nameHosts = host.ClusterId is { } nameCluster
+            ? await db.Hosts.AsNoTracking().Where(h => h.ClusterId == nameCluster).Select(h => h.Id).ToListAsync(http.RequestAborted)
+            : [id];
+        var hostVms = await db.VirtualMachines.AsNoTracking().Where(v => nameHosts.Contains(v.HostId) && !v.IsMissing).Select(v => new { v.Id, v.Name }).ToListAsync(http.RequestAborted);
         var onHost = await access.HasAsync(http.User.UserId(), Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted);
         var seen = onHost ? null : await access.FilterVmsAsync(http.User.UserId(), Permissions.InventoryRead, hostVms.Select(v => v.Id), http.RequestAborted);
         var existingNames = hostVms.Where(v => seen is null || seen.Contains(v.Id)).Select(v => v.Name).ToList();
@@ -462,6 +466,8 @@ public static class VmOperationsEndpoints
             storageRoots,
             isoLibrary = OperationPolicy.IsoRoots(host),
             existingNames,
+            // Failover cluster of the host (ADR-041): highly available VMs on its shared volumes (agent 0.9.0+, cluster readable).
+            cluster = await ClusterOfAsync(db, agents, host, http.RequestAborted),
             options = new
             {
                 startActions = OperationValidation.StartActions,
@@ -469,6 +475,25 @@ public static class VmOperationsEndpoints
                 secureBootTemplates = OperationValidation.SecureBootTemplates,
             },
         });
+    }
+
+    private static async Task<object?> ClusterOfAsync(PortalDbContext db, IAgentDispatcher agents, ManagedHost host, CancellationToken ct)
+    {
+        if (host.ClusterId is not { } clusterId || await db.Clusters.AsNoTracking().FirstOrDefaultAsync(c => c.Id == clusterId, ct) is not { } cluster)
+        {
+            return null;
+        }
+        var facts = Clusters.ClusterService.FactsOf(host)?.Cluster;
+        var ready = agents.ProtocolVersionOf(host.Id) >= Clusters.ClusterService.Protocol && facts is { Error: null };
+        return new
+        {
+            cluster.Id,
+            cluster.Name,
+            highlyAvailable = ready && facts!.SharedVolumes.Count > 0,
+            sharedVolumes = facts?.SharedVolumes ?? [],
+            nodeState = facts?.NodeState,
+            error = facts?.Error ?? (agents.ProtocolVersionOf(host.Id) is > 0 and < Clusters.ClusterService.Protocol ? "agent_outdated" : null),
+        };
     }
 
     private static async Task<(bool Full, HashSet<string> VisibleNames, Dictionary<Guid, Guid> PortalIds, IResult? Error)> HostVisibilityAsync(
@@ -774,6 +799,40 @@ public static class VmOperationsEndpoints
 
     // ------------------------------------------------------------------ VM creation
 
+    /// <summary>
+    /// A highly available VM (ADR-041): the host is a node of a cluster of the portal with agent 0.9.0+, the cluster is
+    /// readable by its agent, the VM goes on one of the cluster shared volumes the node reports, and its name is not used
+    /// on another node (the cluster role is named after the VM).
+    /// </summary>
+    private static async Task<IResult?> CheckHighlyAvailableAsync(PortalDbContext db, IAgentDispatcher agents, ManagedHost host, NewVmRequest spec, CancellationToken ct)
+    {
+        if (host.ClusterId is not { } clusterId)
+        {
+            return ApiSupport.BadRequest("not_in_cluster", "Highly available VMs need a host that is a node of a cluster in the portal.");
+        }
+        if (agents.IsConnected(host.Id) && agents.ProtocolVersionOf(host.Id) < Clusters.ClusterService.Protocol)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Highly available VMs need agent 0.9.0 or later on this node. Update the agent.");
+        }
+        var facts = Clusters.ClusterService.FactsOf(host)?.Cluster;
+        if (facts is null || facts.Error is not null)
+        {
+            return ApiSupport.Conflict("cluster_unreadable", facts?.Error ?? "The agent of this node has not read the cluster yet.");
+        }
+        var root = ClusterNames.SharedVolumeRoot(spec.Location);
+        if (root is null || !facts.SharedVolumes.Any(v => string.Equals(v.Name, root, StringComparison.OrdinalIgnoreCase)))
+        {
+            return ApiSupport.BadRequest("ha_requires_shared_volume",
+                "A highly available VM must be stored on a cluster shared volume of this node (" + string.Join(", ", facts.SharedVolumes.Select(v => v.Name)) + ").");
+        }
+        var nodes = await db.Hosts.AsNoTracking().Where(h => h.ClusterId == clusterId).Select(h => h.Id).ToListAsync(ct);
+        if (await db.VirtualMachines.AnyAsync(v => nodes.Contains(v.HostId) && !v.IsMissing && v.Name == spec.Name, ct))
+        {
+            return ApiSupport.Conflict("vm_name_exists", "A VM with this name already exists on a node of the cluster.");
+        }
+        return null;
+    }
+
     private static async Task<IResult> CreateVmAsync(Guid id, CreateVmRequest req, HttpContext http, PortalDbContext db, AccessEvaluator access,
         JobService jobs, IAgentDispatcher agents, GroupPolicyService policies)
     {
@@ -864,6 +923,10 @@ public static class VmOperationsEndpoints
         {
             return ApiSupport.BadRequest("iso_outside_library", "The ISO must be inside one of the host's ISO library folders (Host > Settings).");
         }
+        if (spec.HighlyAvailable && await CheckHighlyAvailableAsync(db, agents, host, spec, http.RequestAborted) is { } haError)
+        {
+            return haError;
+        }
         if (spec.SwitchName is { Length: > 0 } sw && !SwitchNames(host).Contains(sw, StringComparer.Ordinal))
         {
             return ApiSupport.BadRequest("unknown_switch");
@@ -893,6 +956,7 @@ public static class VmOperationsEndpoints
         {
             spec.Name, template = template?.Name, spec.Generation, spec.ProcessorCount, spec.MemoryStartupMb, spec.DynamicMemory, spec.DiskSizeGb, spec.DiskFixed,
             spec.SwitchName, spec.VlanId, spec.NetworkId, spec.IsoPath, spec.SecureBootTemplate, spec.EnableTpm, spec.StartAfterCreate, spec.Location, req.GroupId,
+            spec.HighlyAvailable,
         };
         return await QueueAsync(http, jobs, new JobService.OperationJobSpec(JobService.CreateJobType, template is null ? "New" : "FromTemplate", ScopeType.Host, id,
             spec.Name, id, Permissions.VmCreate, new JobService.OperationParameters(HvOperations.ToElement(spec), req.GroupId, extra), timeout,

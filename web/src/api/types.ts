@@ -128,6 +128,15 @@ export interface Host {
   /** The updater task is registered on the host (updates from the portal possible for signed builds). */
   updaterInstalled?: boolean | null;
   lastUpdateResult?: string | null;
+  /** Failover cluster of the portal the host is a node of (null = standalone). */
+  clusterId?: string | null;
+  clusterName?: string | null;
+  /** What the agent (0.9.0+) reads on the host about its Windows cluster. */
+  clusterFacts?: import('./cluster-types').ClusterFacts | null;
+  /** other_cluster | not_clustered | unassigned: the Windows cluster of the host and the portal disagree. */
+  clusterMismatch?: string | null;
+  /** hosts.maintenance on this node of a cluster. */
+  canMaintain?: boolean;
 }
 
 export interface ManagementAgent {
@@ -198,6 +207,8 @@ export interface Vm {
   canApplyCheckpoint: boolean;
   /** vm.migrate on the VM and agent 0.7.0+ on its host. */
   canMigrate?: boolean;
+  /** Role of the failover cluster of its host (highly available); null = not known. */
+  isClustered?: boolean | null;
   /** backup.run on the VM and agent 0.7.0+ on its host. */
   canBackup?: boolean;
   /** backup.restore on the VM. */
@@ -312,6 +323,8 @@ export interface EnrollmentInfo {
   note: string;
   /** Token of a management agent (install with -Management). */
   management?: boolean;
+  /** Token of a node of a failover cluster (install with -ClusterAccess Full). */
+  clusterNode?: boolean;
 }
 
 /** Graphical setup of the agent served by the gateway (present only when the release provides it). */

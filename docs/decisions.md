@@ -98,6 +98,96 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-041 Failover clusters: one agent per node, cluster read through any node (agent protocol 11)
+- **Context**: Hyper-V hosts are often nodes of a failover cluster, also in a workgroup (DNS administrative access
+  point) and with Storage Spaces Direct. Administrators want the portal to keep working when a node or its agent is
+  down, to see whether the cluster is healthy (nodes, quorum and witness, storage, free space, capacity left if a node
+  is lost), to put a node in maintenance safely and to choose the node of a new VM. Until 0.8.1 the agent only
+  *detected* the Cluster service; a VM moved by the cluster appeared as a new VM on the other node.
+- **Decision**:
+  - *Model*: a cluster of the portal (`HostCluster`, `ManagedHost.ClusterId`) groups hosts that are nodes of the same
+    Windows cluster. **Every node keeps its own agent** (the existing enrollment, mTLS, least privilege). Nothing about
+    a standalone host changes: no cluster, no new call, same pages. A host can be in one cluster only; hosts reached
+    through a management agent cannot be nodes (they do not read clusters). Creating clusters and choosing their nodes
+    needs `hosts.manage` + recent re-authentication; removing a node or deleting the cluster never changes Windows
+    (hosts stay as standalone hosts; role assignments on the cluster are deleted with it).
+  - *Agent HA*: cluster-wide reads and operations go to **any connected node agent** with protocol 11
+    (`ClusterService`: the node itself first when it is the target, otherwise nodes that are Up first). A node that does
+    not answer (channel lost, timeout, error) is skipped and the next one is asked; the nodes tried are returned to the
+    UI. Node maintenance is sent to the node's own agent, or through another node when that agent is not connected.
+  - *Inventory* (every 30 s, WMI, read-only, constant WQL): `HostFacts.Cluster` = cluster name, this node's name, state
+    and drain status (`root\MSCluster`: `MSCluster_Cluster`, `MSCluster_Node`), the VMs that are cluster roles
+    (`MSCluster_Resource` of type *Virtual Machine*, `PrivateProperties.VmID`) and the cluster shared volumes
+    (`Win32_Volume` with file system CSVFS). An error (typically access denied) is reported as such, never guessed.
+  - *Status* (`GetClusterStatus`, fixed script, FailoverClusters/Storage modules, read-only, each section read on its
+    own): nodes (state, drain, votes, storage maintenance), quorum and witness (type, state, share or storage account
+    name, **never the cloud witness key**), cluster networks, shared volumes (size, free, owner, Direct/redirected
+    access on the reading node, maintenance), Storage Spaces Direct (state, cache, pools, virtual disks, physical disks,
+    running storage jobs), roles (with the VM id of VM roles) and failed resources. `GET /clusters/{id}/status` reads
+    it live (120 s per node); `ClusterMonitor` reads every cluster every `Gateway:Clusters:MonitorIntervalSeconds` (120)
+    and stores the last report and level on the cluster record (tree badge, page opened instantly).
+  - *Rules* (`ClusterRules`, pure, unit tested; the status is never better than what was read): node down, majority of
+    nodes down, paused/joining nodes, failed drain, disks left in storage maintenance; two-node cluster without witness,
+    witness not online (critical with two nodes); network down/partitioned; CSV not online, redirected access, in
+    maintenance, under 10 % / 5 % free; S2D pool read-only or not healthy, virtual disks not healthy, physical disks not
+    healthy or retired, repair jobs running, unallocated pool space under the recommended reserve (one capacity disk per
+    node, up to four); failed roles and resources; unreadable sections (Unknown); nodes without an agent in the portal,
+    agents disconnected or older than 0.9.0, hosts of the portal cluster that Windows does not list. Each problem has a
+    code with parameters (translated in the UI, with what to do) and an English message (API, notifications).
+  - *Capacity*: memory and vCPU totals of the nodes; **one node lost**: for each node, the memory of its running
+    highly available VMs must fit in the free memory of the other nodes that are up, minus 2 GB per host; vCPU per
+    logical processor with the largest node stopped flagged above 4:1. VMs that are not highly available are not
+    counted (they do not move); a VM whose cluster flag is unknown is counted (safe side); unknown free memory = not
+    computed.
+  - *Maintenance* (`POST /hosts/{id}/maintenance {action: Enter|Exit, storageMaintenance, failback,
+    acknowledgeWarnings}`, permission `hosts.maintenance` on the node, scopes Global/Cluster/Host, job
+    `host.maintenance`, one at a time per cluster): before queuing, the cluster is read live and **blocked** when the
+    node is not Up, another node is not Up, the cluster has one node, S2D repair jobs run, a virtual disk or pool is not
+    healthy, a CSV is not online, the witness is not online on a two-node cluster, or the highly available VMs of the
+    node do not fit in the free memory of the others; **warnings** (VMs not highly available that will not move, failed
+    roles, unknown memory) must be acknowledged. The job reads the cluster again and re-checks everything before
+    sending. The script runs `Suspend-ClusterNode -Drain -Wait` and then, with S2D, `Enable-StorageMaintenanceMode` on
+    the node's storage scale unit; Exit runs `Disable-StorageMaintenanceMode` **before** `Resume-ClusterNode -Failback
+    Immediate|NoFailback` (Microsoft's procedure). A failed drain fails the job with the state left (node paused) said
+    in the message; storage maintenance that cannot be set leaves the job Succeeded with a warning and the command to
+    run. The portal never forces a drain, evicts, stops or restarts a node.
+  - *VMs*: the wizard lists hosts by cluster with node state and free memory (paused nodes not offered) and suggests
+    the node with most free memory. `NewVm.HighlyAvailable` (protocol 11) adds `Add-ClusterVirtualMachineRole` after
+    the VM is created and configured; the location must be on a CSV that the node reports (checked by the gateway, by
+    the shared validation and by the agent on the file system); names are unique across the nodes (the role is named
+    after the VM). If the role cannot be added the VM exists, is **not** highly available, and the job message says so
+    (`highlyAvailable: false` in the result). A move between two nodes of the same cluster uses
+    `Move-ClusterVirtualMachineRole` (live when running, quick otherwise, files stay on the cluster storage), only for
+    highly available VMs.
+  - *Re-homing*: when a node reports a VM whose record belongs to another node of the same cluster and that node no
+    longer reports it (missing there, not in its latest inventory, or its inventory is stale), the record moves to the
+    reporting node (same portal id, groups, assignments, history; events `vm.moved_out`/`vm.moved_in`). While both nodes
+    report it (live migration in progress) no second record is created.
+  - *CSV paths*: shared volumes are mount points (reparse points), which the folder rules refuse everywhere. The only
+    exception: a folder exactly `<drive>:\ClusterStorage\<name>` whose volume Windows reports as CSVFS
+    (`GetVolumeInformation` in the agent, `Win32_Volume` in the script). They are listed in the folder pickers and the
+    file explorer; free space is the volume's.
+  - *RBAC*: Cluster scope implemented: a host inherits the assignments of its cluster, a VM those of its host's
+    cluster. The cluster status (nodes, storage, quorum, capacity) needs `inventory.read` on the cluster; who sees only
+    some nodes or VMs sees the cluster in the tree without its status.
+  - *Access of the agent*: the virtual account `NT SERVICE\HvPortalAgent` is not an administrator; reading the cluster
+    needs cluster access. `Install-Agent.ps1 -ClusterAccess Full|ReadOnly|None` runs `Grant-ClusterAccess` /
+    `Remove-ClusterAccess` for the service account (the setup offers it, pre-checked when the Cluster service runs or the
+    data from the portal ask for it; enrollment commands of cluster nodes include `-ClusterAccess Full`). Service SIDs
+    are derived from the service name, so the same account is valid on every node; with `-ServiceAccount` (local users,
+    different SIDs per node) it must be granted on each node.
+  - *Notifications*: `cluster.status` when the level gets worse or is back to Ok (setting *Cluster problems*, on by
+    default).
+- **Consequences**: no new inbound port, no credentials stored; with every agent down the cluster is shown as not
+  readable (never as healthy). The S2D storage cmdlets may need administrator rights that the agent account does not
+  have: those sections then appear as not read (Unknown). The FailoverClusters PowerShell module must be installed on
+  the nodes (`RSAT-Clustering-PowerShell`). Draining a node with many VMs can take hours (job timeout 4 h). Cluster
+  creation, quorum changes, CSV/pool provisioning, node eviction and cluster-aware updating are not done by the portal.
+- **Alternatives**: one "cluster agent" talking to the cluster name (single point of failure, credentials or Kerberos
+  across nodes, impossible without AD); a management agent per cluster with stored credentials (ADR-022: no
+  credentials needed here since every node has its agent).
+- Not validated on a real cluster: real-host plan V72–V80.
+
 ## ADR-040 License: PolyForm Shield License 1.0.0 (source available)
 - **Context**: NEXQ wants HvPortal to be free for everyone, companies included, with public source code, but does not
   want third parties to resell it, and wants a recognized license rather than a custom one. The earlier proposal

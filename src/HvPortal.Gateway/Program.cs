@@ -111,6 +111,9 @@ namespace HvPortal.Gateway
 
             builder.Services.AddScoped<AccessEvaluator>();
             builder.Services.AddScoped<HvPortal.Gateway.Quotas.GroupPolicyService>();
+            builder.Services.AddScoped<HvPortal.Gateway.Clusters.ClusterService>();
+            builder.Services.AddSingleton<HvPortal.Gateway.Clusters.ClusterMonitor>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<HvPortal.Gateway.Clusters.ClusterMonitor>());
             builder.Services.AddScoped<LoginThrottleService>();
             builder.Services.AddScoped<SettingsStore>();
             builder.Services.AddScoped<SessionService>();
@@ -286,6 +289,7 @@ namespace HvPortal.Gateway
             // v0.7.0: networks with VLAN, host health, VM move, agent updates, backups, notifications, API tokens.
             NetworkEndpoints.Map(app);
             HostOperationsEndpoints.Map(app);
+            ClusterEndpoints.Map(app);
             AgentUpdateEndpoints.Map(app);
             HvPortal.Gateway.VmBackup.BackupEndpoints.Map(app);
             HvPortal.Gateway.VmBackup.BackupFileEndpoints.Map(app);

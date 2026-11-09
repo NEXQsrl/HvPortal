@@ -9,6 +9,7 @@ public readonly record struct ResourceRef(ScopeType Type, string Id)
     public static ResourceRef Vm(Guid id) => new(ScopeType.Vm, id.ToString("D"));
     public static ResourceRef Host(Guid id) => new(ScopeType.Host, id.ToString("D"));
     public static ResourceRef Group(Guid id) => new(ScopeType.Group, id.ToString("D"));
+    public static ResourceRef Cluster(Guid id) => new(ScopeType.Cluster, id.ToString("D"));
     public override string ToString() => Type == ScopeType.Global ? "global" : $"{Type.ToString().ToLowerInvariant()}:{Id}";
 }
 
@@ -16,8 +17,8 @@ public readonly record struct ResourceRef(ScopeType Type, string Id)
 /// RBAC evaluation. Rules (see docs/security-model.md#rbac):
 ///  1. Default deny.
 ///  2. The effective scopes of a resource are the resource itself plus its ancestors:
-///     VM -> Host -> Global, and VM -> each logical Group containing it -> that group's ancestor groups -> Global.
-///     Group -> ancestor groups -> Global. Host -> Global.
+///     VM -> Host -> Cluster of the host (ADR-041) -> Global, and VM -> each logical Group containing it -> that group's
+///     ancestor groups -> Global. Group -> ancestor groups -> Global. Host -> its Cluster -> Global. Cluster -> Global.
 ///  3. An assignment applies if its scope is one of the effective scopes and its role contains the permission.
 ///  4. Any applicable Deny wins over any Allow, regardless of level.
 ///  5. Platform permissions (Permissions.Definition.Scopes == [Global]) are only granted by Global assignments.
@@ -32,6 +33,7 @@ public sealed class AccessEvaluator
     private Dictionary<Guid, Guid>? _vmHosts;
     private ILookup<Guid, Guid>? _vmGroups;
     private Dictionary<Guid, Guid?>? _groupParents;
+    private Dictionary<Guid, Guid>? _hostClusters;
 
     /// <summary>Maximum folder depth considered (defense against corrupt data; the API refuses deeper trees and cycles).</summary>
     public const int MaxGroupDepth = 16;
@@ -145,9 +147,14 @@ public sealed class AccessEvaluator
                 var list = new List<ResourceRef> { ResourceRef.Global };
                 AddGroupChain(list, groupId);
                 return list;
+            case ScopeType.Host when Guid.TryParse(resource.Id, out var hostId):
+                // A node inherits the assignments of its cluster (ADR-041).
+                await EnsureTopologyAsync(ct);
+                return _hostClusters!.TryGetValue(hostId, out var clusterId)
+                    ? [resource, ResourceRef.Cluster(clusterId), ResourceRef.Global]
+                    : [resource, ResourceRef.Global];
             default:
-                // Host, Group, Network, BackupRepository, Template: the resource itself and Global.
-                // Cluster -> Host inheritance arrives with cluster support (Milestone 3).
+                // Cluster, Network, BackupRepository, Template: the resource itself and Global.
                 return [resource, ResourceRef.Global];
         }
     }
@@ -158,6 +165,10 @@ public sealed class AccessEvaluator
         if (_vmHosts!.TryGetValue(vmId, out var hostId))
         {
             scopes.Add(ResourceRef.Host(hostId));
+            if (_hostClusters!.TryGetValue(hostId, out var clusterId))
+            {
+                scopes.Add(ResourceRef.Cluster(clusterId));
+            }
         }
         foreach (var g in _vmGroups![vmId])
         {
@@ -256,6 +267,7 @@ public sealed class AccessEvaluator
         _vmHosts = await _db.VirtualMachines.AsNoTracking().ToDictionaryAsync(v => v.Id, v => v.HostId, ct);
         _vmGroups = (await _db.LogicalGroupMembers.AsNoTracking().ToListAsync(ct)).ToLookup(m => m.VmId, m => m.GroupId);
         _groupParents = await _db.LogicalGroups.AsNoTracking().ToDictionaryAsync(g => g.Id, g => g.ParentId, ct);
+        _hostClusters = await _db.Hosts.AsNoTracking().Where(h => h.ClusterId != null).ToDictionaryAsync(h => h.Id, h => h.ClusterId!.Value, ct);
     }
 
     /// <summary>Drops cached topology and assignments (after membership or tree changes within the same request).</summary>
@@ -264,6 +276,7 @@ public sealed class AccessEvaluator
         _vmHosts = null;
         _vmGroups = null;
         _groupParents = null;
+        _hostClusters = null;
         _cache.Clear();
     }
 }

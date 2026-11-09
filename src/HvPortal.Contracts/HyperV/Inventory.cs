@@ -34,8 +34,10 @@ public sealed record HostFacts
     public long? TotalPhysicalMemoryBytes { get; init; }
     public long? FreePhysicalMemoryBytes { get; init; }
     public string? HyperVServiceState { get; init; }
-    /// <summary>True when the Cluster service (ClusSvc) is installed. Cluster management is Milestone 3.</summary>
+    /// <summary>True when the Cluster service (ClusSvc) is installed.</summary>
     public bool ClusterServicePresent { get; init; }
+    /// <summary>Protocol 11: the failover cluster of the host, when the Cluster service runs (null otherwise and with older agents).</summary>
+    public ClusterFacts? Cluster { get; init; }
     public required string AgentVersion { get; init; }
 
     public string? CpuName { get; init; }

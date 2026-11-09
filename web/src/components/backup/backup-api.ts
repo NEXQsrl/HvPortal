@@ -174,6 +174,8 @@ export interface NotificationSettings {
   webhooks: { name: string; url: string; format: string }[];
   restoreTestFailed: boolean;
   agentsOutdated: boolean;
+  /** A failover cluster gets worse or is back to normal (ADR-041). */
+  clusterProblems?: boolean;
 }
 
 export interface ApiTokenRow {

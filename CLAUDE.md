@@ -93,7 +93,7 @@ Three .NET projects plus the SPA:
 Key cross-cutting flows:
 - **Commands are typed and closed.** There is no "run script/WQL/path" command anywhere; adding a capability means a
   new `HvOperation` value + argument record + validation in Contracts + a branch in the script/agent + gateway endpoint.
-- **Protocol versioning.** `AgentProtocol.Version` (currently 9) is announced in `AgentHello`.
+- **Protocol versioning.** `AgentProtocol.Version` (currently 11) is announced in `AgentHello`.
   `AgentProtocol.RequiredVersion(command)` is checked in `AgentConnectionManager.SendAsync` (and mirrored in
   `FakeAgentDispatcher`): never send a command an older agent cannot parse or would silently misinterpret. Bump it
   when adding enum values or semantics-changing fields. Product version is in `Directory.Build.props` (+ `web/package.json`).
@@ -108,6 +108,9 @@ Key cross-cutting flows:
   only where those limits allow (`HoldsViaGroupAsync`); every creation/resize is checked at request time **and** in
   `JobRunner.ApplyFolderLimitsAsync`, which also re-stamps the VM location and the new-disk folder. Any new operation
   that creates or grows something inside a group must go through this service.
+- **Failover clusters** (ADR-041, `Clusters/`, `Api/ClusterEndpoints`): every node keeps its own agent; cluster reads
+  and node maintenance go through any connected node agent (`ClusterService`). Standalone hosts (`ClusterId` null) must
+  behave exactly as before. Cluster status, capacity and maintenance checks are pure rules in `ClusterRules`.
 - **VM templates** (ADR-028, `Templates/TemplateRules`, `Api/TemplateEndpoints`): a template is a copy of the disks of
   a VM that is off, in `<template library of the host>\<template id>`; VMs are created from it through the normal
   creation job (`NewVm.TemplateDisks`). Library, folder and disk paths always come from the gateway's records and are

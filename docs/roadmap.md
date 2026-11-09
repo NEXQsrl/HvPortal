@@ -134,8 +134,10 @@ Agent protocol 9 (agent 0.7.0). Nothing that touches Hyper-V has run on a real h
 - Named-pipe local transport (optional), WebAuthn/passkeys.
 
 ## Milestone 3
-- Failover clusters (`root\MSCluster`): nodes, CSV, quorum, owner resolution per operation, drain/maintenance,
-  live and storage migration (standalone hosts: done in 0.7.0).
+- Failover clusters: done in 0.9.0 (ADR-041): agent on every node with failover between agents, status (nodes, quorum
+  and witness, networks, CSV, S2D, roles), capacity with one node lost, node maintenance (drain + S2D storage
+  maintenance), highly available VMs, moves between nodes, re-homing after failover. Next: validation on a real cluster
+  (V72–V80), cluster-aware updating orchestration, CSV/pool provisioning, eviction/joining of nodes.
 - Templates, next steps (the base is in 0.6.0): versions, generalized images, unique identities, secure first-boot injection, no embedded secrets, copy between hosts.
 - Notifications, next steps (e-mail + webhooks are in 0.7.0): retry and queue, de-duplication, SSRF protection
   (allow-list, no private ranges unless allowed, DNS re-resolution checks), encrypted webhook addresses.

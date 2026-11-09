@@ -35,9 +35,18 @@ public sealed class GatewayOptions
     public VmGroupOptions VmGroups { get; set; } = new();
     public BackupOptions Backup { get; set; } = new();
     public MetricsOptions Metrics { get; set; } = new();
+    public ClusterOptions Clusters { get; set; } = new();
 }
 
 /// <summary>Resource use history of VMs (ADR-039).</summary>
+public sealed class ClusterOptions
+{
+    /// <summary>Reads every failover cluster periodically (ADR-041). Disabled only in tests that drive it explicitly.</summary>
+    public bool MonitorEnabled { get; set; } = true;
+    /// <summary>Seconds between two reads of each cluster (30-3600).</summary>
+    public int MonitorIntervalSeconds { get; set; } = 120;
+}
+
 public sealed class MetricsOptions
 {
     /// <summary>Collects samples of the VMs with resource metering on. Disabled only in tests that drive it explicitly.</summary>

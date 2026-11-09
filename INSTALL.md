@@ -17,7 +17,7 @@ backups and live migration. [docs/install.md](docs/install.md) is the reference 
 - [2. Install the gateway](#2-install-the-gateway)
 - [3. First access](#3-first-access)
 - [4. Portal certificate and names](#4-portal-certificate-and-names)
-- [5. Install the agent on each Hyper-V host](#5-install-the-agent-on-each-hyper-v-host)
+- [5. Install the agent on each Hyper-V host](#5-install-the-agent-on-each-hyper-v-host) (5i: failover clusters)
 - [6. Microsoft Entra ID sign-in (optional)](#6-microsoft-entra-id-sign-in-optional)
 - [7. Before the first backup](#7-before-the-first-backup)
 - [8. Before moving VMs between hosts](#8-before-moving-vms-between-hosts)
@@ -398,6 +398,28 @@ configuration are in [docs/install.md](docs/install.md) (management agents secti
 
 The agent on the host remains the recommended mode, because it stores no credentials. Some features need it: for
 example, browsing the files of a restore point needs a host with its own agent.
+
+### 5i. Failover clusters (also workgroup clusters, with or without Storage Spaces Direct)
+
+Install the agent on **every node**: the portal reads the cluster and runs node maintenance through any node whose
+agent is connected, so it keeps working when a node or its agent is down.
+
+1. **Inventory > Add host > Failover cluster**: give the cluster a name and list the nodes (one per line, e.g. `HV01`,
+   `HV02`), or tick hosts already in the portal. Each new node gets its own token and installation guide; the list
+   shows each node as *connected* as soon as its agent enrolls.
+2. On each node install the agent with the command of its guide, which includes **`-ClusterAccess Full`** (in the
+   graphical setup: *Node of a failover cluster*). This runs `Grant-ClusterAccess` for the agent service account: the
+   agent stays out of *Administrators*. `-ClusterAccess ReadOnly` is enough to see the status; maintenance and highly
+   available VMs need `Full`. On an existing agent: `.\Install-Agent.ps1 -Source ..\agent -ClusterAccess Full`, or on
+   one node `Grant-ClusterAccess -User 'NT SERVICE\HvPortalAgent' -Full`.
+3. The nodes need the Failover Clustering PowerShell module (`Install-WindowsFeature RSAT-Clustering-PowerShell`).
+4. Highly available VMs are created on a cluster shared volume (`C:\ClusterStorage\...`). If the agent is restricted
+   with `-StorageFolders`, include the CSV folders (e.g. `C:\ClusterStorage\Volume1`).
+
+The cluster page shows the problems with what to do, the capacity if a node is lost, nodes (with *Enter/Exit
+maintenance*), storage (CSV, Storage Spaces Direct pools, volumes, disks, repair jobs), quorum and witness, networks and
+roles. Maintenance is refused when the cluster cannot do without the node (another node down or paused, repair jobs
+running, witness offline on two nodes, VMs that would not fit). See ADR-041 in [docs/decisions.md](docs/decisions.md).
 
 ## 6. Microsoft Entra ID sign-in (optional)
 

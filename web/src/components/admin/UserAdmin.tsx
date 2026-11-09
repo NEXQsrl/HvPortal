@@ -29,9 +29,10 @@ export function ScopeFields({ scopeType, scopeId, onChange, idPrefix }: { scopeT
     <>
       <Field label={t('roles.scope')} htmlFor={`${idPrefix}-scope`}>
         <NativeSelect id={`${idPrefix}-scope`} value={scopeType} onChange={(e) => onChange(e.target.value, '')}>
-          <option value="Global">{t('users.scopeGlobal')}</option><option value="Host">Host</option><option value="Group">{t('group.title')}</option><option value="Vm">VM</option>
+          <option value="Global">{t('users.scopeGlobal')}</option>{inv.clusters.length > 0 && <option value="Cluster">{t('scope.Cluster')}</option>}<option value="Host">Host</option><option value="Group">{t('group.title')}</option><option value="Vm">VM</option>
         </NativeSelect>
       </Field>
+      {scopeType === 'Cluster' && <NativeSelect aria-label={t('scope.Cluster')} value={scopeId} onChange={(e) => onChange('Cluster', e.target.value)}><option value="" />{inv.clusters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</NativeSelect>}
       {scopeType === 'Host' && <NativeSelect aria-label="Host" value={scopeId} onChange={(e) => onChange('Host', e.target.value)}><option value="" />{inv.hosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)}</NativeSelect>}
       {scopeType === 'Vm' && <NativeSelect aria-label="VM" value={scopeId} onChange={(e) => onChange('Vm', e.target.value)}><option value="" />{inv.vms.map((v) => <option key={v.id} value={v.id}>{v.name} ({v.hostName})</option>)}</NativeSelect>}
       {scopeType === 'Group' && <GroupPickerList value={scopeId || null} onChange={(g) => onChange('Group', g ?? '')} />}

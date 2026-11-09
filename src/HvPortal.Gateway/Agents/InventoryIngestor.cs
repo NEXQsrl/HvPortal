@@ -11,6 +11,9 @@ namespace HvPortal.Gateway.Agents;
 /// in the operation history (InventoryEvents).
 /// VMs are never deleted from the portal automatically: a VM absent from a complete snapshot is flagged
 /// "missing" so that permissions and history are preserved.
+/// Failover clusters (ADR-041): a VM the cluster moved to another node (failover, drain, live migration) keeps its
+/// Hyper-V id; when a node reports a VM whose record belongs to another node of the same cluster, and that node no
+/// longer reports it (or its inventory is stale), the record follows the VM (groups, permissions, history kept).
 /// </summary>
 public sealed class InventoryIngestor
 {
@@ -48,6 +51,16 @@ public sealed class InventoryIngestor
         });
         host.MachineName = Truncate(inv.Host.ComputerName, 63);
         host.DnsHostName = Truncate(inv.Host.DnsHostName, 255);
+        var clusterFacts = inv.Host.Cluster is { Error: null } cf ? cf : null;
+        if (host.ClusterId is { } ownCluster && clusterFacts?.Name is { Length: > 0 } windowsName)
+        {
+            // The first node that reads its cluster names it; a different name later is shown as a mismatch, never overwritten.
+            var cluster = await _db.Clusters.FirstOrDefaultAsync(c => c.Id == ownCluster, ct);
+            if (cluster is not null && cluster.WindowsName is null)
+            {
+                cluster.WindowsName = Truncate(windowsName, 255);
+            }
+        }
 
         if (inv.Access != HyperVAccessStatus.Ok)
         {
@@ -57,6 +70,8 @@ public sealed class InventoryIngestor
         }
 
         var existing = await _db.VirtualMachines.Where(v => v.HostId == hostId).ToDictionaryAsync(v => v.HyperVId, ct);
+        var clustered = clusterFacts?.ClusteredVmIds.ToHashSet();
+        var otherNodes = await OtherNodesAsync(host, ct);
         var activeJobTargets = (await _db.Jobs.AsNoTracking()
             .Where(j => j.HostId == hostId && (j.Status == JobStatus.Running || j.Status == JobStatus.Reconciling))
             .Select(j => j.TargetId).ToListAsync(ct)).ToHashSet();
@@ -69,6 +84,19 @@ public sealed class InventoryIngestor
                 continue;
             }
             var name = Truncate(v.Name, 256) ?? v.VmId.ToString("D");
+            if (!existing.ContainsKey(v.VmId) && otherNodes.Count > 0)
+            {
+                if (await FollowClusterMoveAsync(hostId, v.VmId, otherNodes, now, ct) is { } moved)
+                {
+                    existing[v.VmId] = moved;
+                }
+                else if ((clustered?.Contains(v.VmId) ?? true) && await StillOnOtherNodeAsync(v.VmId, otherNodes, ct))
+                {
+                    // Live migration of a clustered VM in progress: both nodes report it for a moment. No second record.
+                    // (A VM that is not a role of the cluster, e.g. an imported copy with the same id, is recorded as before.)
+                    continue;
+                }
+            }
             if (!existing.TryGetValue(v.VmId, out var vm))
             {
                 vm = new VirtualMachine { HostId = hostId, HyperVId = v.VmId, Name = name, FirstSeenAt = now, StateChangedAt = now };
@@ -127,6 +155,15 @@ public sealed class InventoryIngestor
             vm.LastSeenAt = now;
             vm.IsMissing = false;
             vm.MissingSince = null;
+            // Protocol 11: role of the cluster (highly available) or not; unknown when the cluster could not be read.
+            if (clustered is not null)
+            {
+                vm.IsClustered = clustered.Contains(v.VmId);
+            }
+            else if (!inv.Host.ClusterServicePresent)
+            {
+                vm.IsClustered = false;
+            }
             // CPU and memory readings of VMs with resource metering on (resource use history, ADR-039).
             _metrics?.Observe(vm.Id, v, now);
         }
@@ -141,6 +178,47 @@ public sealed class InventoryIngestor
             }
         }
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>The other nodes of the host's cluster in the portal (with the time of their last inventory).</summary>
+    private async Task<Dictionary<Guid, DateTimeOffset?>> OtherNodesAsync(ManagedHost host, CancellationToken ct) =>
+        host.ClusterId is { } clusterId
+            ? await _db.Hosts.AsNoTracking().Where(h => h.ClusterId == clusterId && h.Id != host.Id).ToDictionaryAsync(h => h.Id, h => h.LastInventoryAt, ct)
+            : [];
+
+    /// <summary>
+    /// The record of a VM that another node of the cluster had, when that node no longer has it: missing there, not in
+    /// that node's latest inventory, or that node's inventory is stale (node or agent down). Moved to this host.
+    /// </summary>
+    private async Task<VirtualMachine?> FollowClusterMoveAsync(Guid hostId, Guid hyperVId, Dictionary<Guid, DateTimeOffset?> otherNodes, DateTimeOffset now,
+        CancellationToken ct)
+    {
+        var ids = otherNodes.Keys.ToList();
+        var candidates = await _db.VirtualMachines.Where(v => v.HyperVId == hyperVId && ids.Contains(v.HostId)).ToListAsync(ct);
+        foreach (var record in candidates.OrderBy(c => c.IsMissing ? 0 : 1).ThenByDescending(c => c.LastSeenAt))
+        {
+            var lastInventory = otherNodes[record.HostId];
+            var stale = lastInventory is null || now - lastInventory > Api.InventoryEndpoints.StaleAfter;
+            var notReportedThere = lastInventory is { } at && record.LastSeenAt < at;
+            if (!record.IsMissing && !stale && !notReportedThere)
+            {
+                continue;
+            }
+            var from = record.HostId;
+            record.HostId = hostId;
+            record.IsMissing = false;
+            record.MissingSince = null;
+            Event(from, record.Id, "vm.moved_out", $"{record.Name} (cluster)", now);
+            Event(hostId, record.Id, "vm.moved_in", $"{record.Name} (cluster)", now);
+            return record;
+        }
+        return null;
+    }
+
+    private async Task<bool> StillOnOtherNodeAsync(Guid hyperVId, Dictionary<Guid, DateTimeOffset?> otherNodes, CancellationToken ct)
+    {
+        var ids = otherNodes.Keys.ToList();
+        return await _db.VirtualMachines.AnyAsync(v => v.HyperVId == hyperVId && ids.Contains(v.HostId) && !v.IsMissing, ct);
     }
 
     private void Event(Guid hostId, Guid vmId, string kind, string details, DateTimeOffset at) =>

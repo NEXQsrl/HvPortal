@@ -21,6 +21,10 @@
     VM locations, new disks, ISO/template libraries, backup folders). Missing folders are created. Enforced by the agent;
     the portal cannot change it. Without the parameter an upgrade keeps the current list; -StorageFolders '' removes
     the restriction (every local fixed drive, system folders excluded).
+  - -ClusterAccess Full|ReadOnly|None: node of a failover cluster (also workgroup clusters). Full / ReadOnly give the
+    service account access to the cluster (Grant-ClusterAccess; the cluster stores it once for all nodes): ReadOnly is
+    enough for the status in the portal, Full is needed for node maintenance and highly available VMs. None removes it
+    (Remove-ClusterAccess). Without the parameter nothing changes. Nothing else of the cluster is changed.
   - Updates from the portal: a scheduled task "\HvPortal\HvPortal Agent Update" (SYSTEM) is registered; the agent
     service may only start it. It installs a package downloaded by the agent only when the package's signed catalog is
     signed by the same certificate as the installed agent (unsigned builds are never installed this way).
@@ -40,7 +44,8 @@ param(
     [switch]$Management,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$')][string]$ServiceAccount,
     [string[]]$StorageFolders,
-    [switch]$DisableRemoteUpdate
+    [switch]$DisableRemoteUpdate,
+    [ValidateSet('Full', 'ReadOnly', 'None')][string]$ClusterAccess
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
@@ -154,6 +159,31 @@ if (-not $Management) {
 } else {
     Write-Host 'Management agent: remote hosts need WMI/DCOM (TCP 135 + dynamic RPC), WinRM (5985, or 5986 with -UseHttps in the portal) and SMB (445) from this server.'
     Write-Host 'Workgroup hosts over WinRM HTTP: add them to TrustedHosts on this server, e.g. Set-Item WSMan:\localhost\Client\TrustedHosts -Value "hv01,hv02" -Concatenate'
+}
+
+# Failover cluster node (ADR-041): access of the service account to the cluster, only when asked. Not fatal: the agent
+# works without it (the portal then shows the cluster as not readable, with the command to run).
+if ($ClusterAccess -and -not $Management) {
+    $clusSvc = Get-Service ClusSvc -ErrorAction SilentlyContinue
+    if (-not $clusSvc -or $clusSvc.Status -ne 'Running') {
+        Write-Warning "-ClusterAccess ignored: the Cluster service does not run on this machine (not a node of a failover cluster)."
+    } else {
+        try {
+            Import-Module FailoverClusters -ErrorAction Stop
+            if ($ClusterAccess -eq 'None') {
+                Remove-ClusterAccess -User $runAs -ErrorAction Stop | Out-Null
+                Write-Host "Access of $runAs to the cluster removed."
+            } elseif ($ClusterAccess -eq 'Full') {
+                Grant-ClusterAccess -User $runAs -Full -ErrorAction Stop | Out-Null
+                Write-Host "Full access to the cluster granted to $runAs (status, node maintenance, highly available VMs)."
+            } else {
+                Grant-ClusterAccess -User $runAs -ReadOnly -ErrorAction Stop | Out-Null
+                Write-Host "Read-only access to the cluster granted to $runAs (status only)."
+            }
+        } catch {
+            Write-Warning "Cluster access not changed: $($_.Exception.Message). Run as administrator on a node: Grant-ClusterAccess -User '$runAs' -$(if ($ClusterAccess -eq 'None') { 'ReadOnly' } else { $ClusterAccess })"
+        }
+    }
 }
 
 if ($Gateway -and $CaSha256 -and $EnrollmentToken) {

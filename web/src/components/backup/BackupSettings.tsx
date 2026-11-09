@@ -24,7 +24,7 @@ interface HookRow { key: number; name: string; format: string; url: string; mask
 
 interface EmailDraft { enabled: boolean; host: string; port: number; security: string; userName: string; password: string; removePassword: boolean; hasPassword: boolean; from: string; to: string }
 
-interface Draft { email: EmailDraft; hooks: HookRow[]; restoreTestFailed: boolean; agentsOutdated: boolean }
+interface Draft { email: EmailDraft; hooks: HookRow[]; restoreTestFailed: boolean; agentsOutdated: boolean; clusterProblems: boolean }
 
 let hookSeq = 0;
 
@@ -37,6 +37,7 @@ function draftOf(s: NotificationSettings): Draft {
     hooks: s.webhooks.map((w) => ({ key: ++hookSeq, name: w.name, format: w.format, url: '', masked: w.url, storedName: w.name })),
     restoreTestFailed: s.restoreTestFailed,
     agentsOutdated: s.agentsOutdated,
+    clusterProblems: s.clusterProblems ?? true,
   };
 }
 
@@ -96,6 +97,7 @@ export function NotificationSettingsSection() {
         webhooks: d.hooks.map((h) => ({ name: h.name.trim(), url: h.url.trim() || h.masked || '', format: h.format })),
         restoreTestFailed: d.restoreTestFailed,
         agentsOutdated: d.agentsOutdated,
+        clusterProblems: d.clusterProblems,
       };
       settings.setData(await put<NotificationSettings>('/api/v1/settings/notifications', body));
       setDraft(null);
@@ -195,6 +197,10 @@ export function NotificationSettingsSection() {
         <label className="flex items-start gap-2 text-sm">
           <Switch checked={d.agentsOutdated} onCheckedChange={(v) => set({ agentsOutdated: v })} className="mt-0.5" />
           <span>{t('bk.notif.agentsOutdated')}</span>
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <Switch checked={d.clusterProblems} onCheckedChange={(v) => set({ clusterProblems: v })} className="mt-0.5" />
+          <span>{t('bk.notif.clusterProblems')}</span>
         </label>
       </Section>
 

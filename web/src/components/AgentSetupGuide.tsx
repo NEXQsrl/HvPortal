@@ -13,8 +13,9 @@ import { NativeSelect } from './ui/native-select';
  * Step-by-step agent installation guide. With a token it is "live": ready-to-paste commands, countdown, host status.
  * In the enrollment dialog troubleshooting is shown inline; on the guide pages it links to its own page.
  * management: the agent goes on a management server (no Hyper-V) and reaches remote hosts with stored credentials.
+ * clusterNode: a node of a failover cluster: the agent account also gets access to the cluster (-ClusterAccess Full).
  */
-export function AgentSetupGuide({ connection, token, expiresAt, host, troubleshooting = 'inline', management = false, managementConnected }: {
+export function AgentSetupGuide({ connection, token, expiresAt, host, troubleshooting = 'inline', management = false, managementConnected, clusterNode = false }: {
   connection: GatewayConnection;
   token?: string;
   expiresAt?: string;
@@ -22,6 +23,7 @@ export function AgentSetupGuide({ connection, token, expiresAt, host, troublesho
   troubleshooting?: 'inline' | 'link';
   management?: boolean;
   managementConnected?: boolean;
+  clusterNode?: boolean;
 }) {
   const { t, fmtDate } = useI18n();
   const [name, setName] = useState(connection.preferredName);
@@ -39,7 +41,7 @@ export function AgentSetupGuide({ connection, token, expiresAt, host, troublesho
   // Until the gateway has said whether it provides the setup file, no method is shown as chosen (no flip afterwards).
   const deciding = chosen === null && pkg.loading && !pkg.data;
   // One line read by the setup ("Paste from the portal"): gateway address, CA fingerprint, one-time token, role.
-  const setupData = `HVPORTAL-SETUP gateway=${url} ca=${connection.caFingerprintSha256} token=${tokenValue} role=${management ? 'management' : 'host'}`;
+  const setupData = `HVPORTAL-SETUP gateway=${url} ca=${connection.caFingerprintSha256} token=${tokenValue} role=${management ? 'management' : 'host'}${clusterNode ? ' cluster=full' : ''}`;
   const gatewayName = (
     <div className="grid max-w-md gap-1.5">
       <label htmlFor="gw-name" className="text-xs font-medium text-muted-foreground">{t('guide.s4.name')}</label>
@@ -104,6 +106,7 @@ export function AgentSetupGuide({ connection, token, expiresAt, host, troublesho
             {tokenNotice}
             <div className="text-xs text-muted-foreground">{t('guide.x3.data')}</div>
             <Command text={setupData} />
+            {clusterNode && <Notice kind="info">{t('cl.enroll.clusterAccess')}</Notice>}
             <p className="text-xs text-muted-foreground">{t('guide.x3.manual')}</p>
           </Step>
           {verifyStep(4)}
@@ -129,7 +132,8 @@ export function AgentSetupGuide({ connection, token, expiresAt, host, troublesho
         </Step>
         <Step n={5} title={t('guide.s5.title')}>
           {tokenNotice}
-          <Command text={`cd ${folder}\\installer\n$env:HVP_ENROLLMENT_TOKEN = '${tokenValue}'\n.\\Install-Agent.ps1 -Source ..\\agent -Gateway ${url} -CaSha256 ${connection.caFingerprintSha256}${management ? ' -Management' : ''}`} />
+          <Command text={`cd ${folder}\\installer\n$env:HVP_ENROLLMENT_TOKEN = '${tokenValue}'\n.\\Install-Agent.ps1 -Source ..\\agent -Gateway ${url} -CaSha256 ${connection.caFingerprintSha256}${management ? ' -Management' : ''}${clusterNode ? ' -ClusterAccess Full' : ''}`} />
+          {clusterNode && <Notice kind="info">{t('cl.enroll.clusterAccess')}</Notice>}
           <p className="text-muted-foreground">{t('guide.s5.what')}</p>
           <div className="text-xs text-muted-foreground">{t('host.fingerprint')}</div>
           <code className="secret block rounded-md border bg-muted px-2 py-1 font-mono text-xs break-all">{connection.caFingerprintSha256}</code>

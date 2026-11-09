@@ -23,7 +23,7 @@ public sealed partial class JobRunner
     /// <summary>Jobs that may run for hours: they have their own concurrency budget (MaxConcurrentLongJobs).</summary>
     internal static bool IsLongJob(string type) =>
         type is JobService.BackupJobType or JobService.BackupVerifyJobType or JobService.RestoreJobType or JobService.RestoreDiskJobType
-            or JobService.MigrateJobType or JobService.AgentUpdateJobType or JobService.TemplateCaptureJobType;
+            or JobService.MigrateJobType or JobService.AgentUpdateJobType or JobService.TemplateCaptureJobType or JobService.MaintenanceJobType;
 
     private static async Task<ResourceRef> BackupResourceAsync(PortalDbContext db, Guid pointId, CancellationToken ct)
     {
@@ -38,7 +38,7 @@ public sealed partial class JobRunner
         var user = job.RequestedByUserId;
         switch (op)
         {
-            case HvOperation.MoveVm when parameters.DestinationHostId is { } destination:
+            case HvOperation.MoveVm or HvOperation.MoveClusterVm when parameters.DestinationHostId is { } destination:
                 return await access.HasAsync(user, Permissions.VmCreate, ResourceRef.Host(destination), ct);
             case HvOperation.RestoreBackup when job.Operation is "NewVm" or "Test":
                 return await access.HasAsync(user, Permissions.VmCreate, ResourceRef.Host(job.TargetId), ct);

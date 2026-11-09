@@ -1,4 +1,4 @@
-import { ChevronDown, Clock, Cpu, FolderOpen, MemoryStick, Monitor, Plus, RefreshCw, Server, Trash2 } from 'lucide-react';
+import { Boxes, ChevronDown, Clock, Cpu, FolderOpen, MemoryStick, Monitor, Plus, RefreshCw, Server, Trash2, Wrench } from 'lucide-react';
 import { useCallback, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { get, put } from '@/api/client';
@@ -6,7 +6,7 @@ import type { HostDiskRow, IsosResponse, SwitchInfo } from '@/api/ops-types';
 import type { Host, InventoryEvent } from '@/api/types';
 import { ActionsButton } from '@/components/actions';
 import { AgentUpdateNotice } from '@/components/AgentUpdateNotice';
-import { ErrorAlert, HostIcon, KeyValue, Loading, Meter, Notice, PageHeader, Section, StatCard, StatusBadge } from '@/components/common';
+import { CopyButton, ErrorAlert, HostIcon, KeyValue, Loading, Meter, Notice, PageHeader, Section, StatCard, StatusBadge } from '@/components/common';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { DeleteSwitchDialog, NewSwitchDialog } from '@/components/ops/NetworkDialogs';
 import { useOps } from '@/components/ops/OperationsProvider';
@@ -52,6 +52,12 @@ export function HostPage() {
         badges={<>
           <StatusBadge tone={h.connected ? 'ok' : 'danger'}>{h.connected ? t('host.online') : t('host.offline')}</StatusBadge>
           {h.access && <StatusBadge tone={h.access === 'Ok' ? 'ok' : 'danger'} title={h.accessMessage ?? ''}>Hyper-V: {h.access}</StatusBadge>}
+          {h.clusterId && (
+            <Link to={`/clusters/${h.clusterId}`} className="rounded-full focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none">
+              <StatusBadge tone="muted"><Boxes />{t('cl.member', { name: h.clusterName ?? '' })}</StatusBadge>
+            </Link>
+          )}
+          {h.clusterFacts?.nodeState === 'Paused' && <StatusBadge tone="warn"><Wrench />{t('cl.state.Paused')}</StatusBadge>}
         </>}
         subtitle={[h.dnsHostName ?? h.machineName, h.platform, h.edition].filter(Boolean).join(' · ')}
         actions={<>
@@ -63,6 +69,22 @@ export function HostPage() {
         </TabsList>
       </PageHeader>
       <AgentUpdateNotice host={h} className="mx-4 mt-3" />
+      {(h.clusterMismatch || (h.clusterId && h.clusterFacts?.error)) && (
+        <div className="space-y-2 px-4 pt-3">
+          {h.clusterMismatch && <Notice kind="warn">{t(('cl.mismatch.' + h.clusterMismatch) as TKey, { name: h.clusterFacts?.name ?? '?' })}</Notice>}
+          {h.clusterId && h.clusterFacts?.error && (
+            h.clusterFacts.error.startsWith('access_denied') ? (
+              <Notice kind="warn" title={t('cl.accessFix')}>
+                <div className="mt-1 flex items-center gap-2">
+                  <code className="flex-1 rounded border bg-muted px-2 py-1 font-mono text-xs break-all">Grant-ClusterAccess -User 'NT SERVICE\HvPortalAgent' -Full</code>
+                  <CopyButton text={"Grant-ClusterAccess -User 'NT SERVICE\\HvPortalAgent' -Full"} />
+                </div>
+                <p className="mt-1 text-xs">{t('cl.accessFixNote')}</p>
+              </Notice>
+            ) : <Notice kind="warn">{h.clusterFacts.error}</Notice>
+          )}
+        </div>
+      )}
       {(h.stale && h.status === 'Active') || (h.access && h.access !== 'Ok') || h.partial ? (
         <div className="space-y-2 px-4 pt-3">
           {h.stale && h.status === 'Active' && <Notice kind="warn">{t('stale.banner')}</Notice>}

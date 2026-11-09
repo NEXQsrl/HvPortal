@@ -1,4 +1,4 @@
-import { ChevronRight, ChevronsDownUp, FolderPlus, Monitor, Plus, Search, Server, X } from 'lucide-react';
+import { Boxes, ChevronRight, ChevronsDownUp, FolderPlus, Monitor, Plus, Search, Server, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { Group } from '@/api/ops-types';
@@ -20,7 +20,7 @@ import { useInventory } from './InventoryProvider';
 interface Node {
   key: string;
   /** hostsRoot / groupsRoot / allVms are the three top-level sections. */
-  kind: 'hostsRoot' | 'groupsRoot' | 'allVms' | 'host' | 'group' | 'vm' | 'ungrouped';
+  kind: 'hostsRoot' | 'groupsRoot' | 'allVms' | 'cluster' | 'host' | 'group' | 'vm' | 'ungrouped';
   label: string;
   depth: number;
   hasChildren: boolean;
@@ -84,17 +84,34 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
     out.push({ key: 'hosts', kind: 'hostsRoot', label: t('tree.hosts'), depth: 0, hasChildren: inv.hosts.length > 0, path: '/inventory?view=hosts',
       icon: <Server className="size-4 text-muted-foreground" />, badge: count(inv.hosts.length), section: true });
     if (isOpen('hosts')) {
-      for (const h of inv.hosts) {
-        const vms = inv.vms.filter((v) => v.hostId === h.id).sort((a, b) => a.name.localeCompare(b.name));
-        const visibleVms = vms.filter((v) => matches(v.name) || matches(v.notes));
-        if (q && !matches(h.displayName) && visibleVms.length === 0) continue;
-        const key = `host:${h.id}`;
+      const hostNodes = (hosts: typeof inv.hosts, depth: number) => {
+        for (const h of hosts) {
+          const vms = inv.vms.filter((v) => v.hostId === h.id).sort((a, b) => a.name.localeCompare(b.name));
+          const visibleVms = vms.filter((v) => matches(v.name) || matches(v.notes));
+          if (q && !matches(h.displayName) && visibleVms.length === 0) continue;
+          const key = `host:${h.id}`;
+          const paused = h.clusterFacts?.nodeState === 'Paused';
+          out.push({
+            key, kind: 'host', label: h.displayName, depth, hasChildren: vms.length > 0, path: `/hosts/${h.id}`,
+            icon: <HostIcon connected={h.connected} access={h.access} />, badge: count(vms.length), sub: paused ? '⏸' : undefined,
+          });
+          if (isOpen(key)) for (const v of (q && !matches(h.displayName) ? visibleVms : vms)) out.push(vmNode(v, depth + 1));
+        }
+      };
+      // Failover clusters (ADR-041): cluster -> nodes -> VMs; standalone hosts as before.
+      for (const c of inv.clusters) {
+        const nodes = inv.hosts.filter((h) => h.clusterId === c.id);
+        const clusterVms = inv.vms.filter((v) => nodes.some((h) => h.id === v.hostId));
+        if (q && !matches(c.name) && !nodes.some((h) => matches(h.displayName)) && !clusterVms.some((v) => matches(v.name) || matches(v.notes))) continue;
+        const key = `cluster:${c.id}`;
+        const tone = c.status === 'Critical' ? 'text-destructive' : c.status === 'Warning' ? 'text-warning' : c.status === 'Ok' ? 'text-success' : 'text-muted-foreground';
         out.push({
-          key, kind: 'host', label: h.displayName, depth: 1, hasChildren: vms.length > 0, path: `/hosts/${h.id}`,
-          icon: <HostIcon connected={h.connected} access={h.access} />, badge: count(vms.length),
+          key, kind: 'cluster', label: c.name, depth: 1, hasChildren: nodes.length > 0, path: c.can.readStatus ? `/clusters/${c.id}` : null,
+          icon: <Boxes className={cn('size-4', tone)} />, badge: count(clusterVms.length),
         });
-        if (isOpen(key)) for (const v of (q && !matches(h.displayName) ? visibleVms : vms)) out.push(vmNode(v, 2));
+        if (isOpen(key)) hostNodes(nodes, 2);
       }
+      hostNodes(inv.hosts.filter((h) => !h.clusterId || !inv.clusterById.has(h.clusterId)), 1);
     }
 
     // ---- Groups
@@ -137,12 +154,17 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
   // Selection follows the route; reveal the selected object in the tree (a VM under its host, a group in its folders).
   const selectedPath = location.pathname + location.search;
   useEffect(() => {
-    const m = /^\/(vms|hosts|groups)\/([0-9a-f-]{36})/.exec(location.pathname);
+    const m = /^\/(vms|hosts|groups|clusters)\/([0-9a-f-]{36})/.exec(location.pathname);
     if (!m) return;
     const [, kind, id] = m;
     const add: string[] = [];
-    if (kind === 'vms') { const vm = inv.vmById.get(id!); if (vm) add.push('hosts', `host:${vm.hostId}`); }
-    if (kind === 'hosts') add.push('hosts');
+    const clusterOf = (hostId: string) => inv.hostById.get(hostId)?.clusterId;
+    if (kind === 'vms') {
+      const vm = inv.vmById.get(id!);
+      if (vm) add.push('hosts', `host:${vm.hostId}`, ...(clusterOf(vm.hostId) ? [`cluster:${clusterOf(vm.hostId)}`] : []));
+    }
+    if (kind === 'hosts') add.push('hosts', ...(clusterOf(id!) ? [`cluster:${clusterOf(id!)}`] : []));
+    if (kind === 'clusters') add.push('hosts');
     if (kind === 'groups') add.push('groups', ...inv.groupPath(id!).slice(0, -1).map((g) => `group:${g.id}`));
     if (add.some((k) => !expanded.has(k))) setExpandedList([...new Set([...expandedList, ...add])]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -156,6 +178,7 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
   const actionsFor = (n: Node): Action[] =>
     n.kind === 'vm' && n.vm ? ops.vmActions(n.vm, { groupId: n.parentGroupId })
       : n.kind === 'host' ? (inv.hostById.get(n.key.slice(5)) ? ops.hostActions(inv.hostById.get(n.key.slice(5))!) : [])
+      : n.kind === 'cluster' ? (inv.clusterById.get(n.key.slice(8)) ? ops.clusterActions(inv.clusterById.get(n.key.slice(8))!) : [])
       : n.kind === 'group' && n.group ? ops.groupActions(n.group)
       : n.kind === 'groupsRoot' ? ops.groupActions(null)
       : n.kind === 'hostsRoot' && can('hosts.manage') ? [{ key: 'add-host', label: t('host.add'), icon: Plus, onSelect: () => ops.openAddHost() }]

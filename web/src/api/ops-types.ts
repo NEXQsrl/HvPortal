@@ -151,10 +151,17 @@ export interface HostDefaultsResponse {
   isoLibrary: string[];
   existingNames: string[];
   options: { startActions: string[]; checkpointTypes: string[]; secureBootTemplates: string[] };
+  /** Failover cluster of the host (ADR-041): highly available VMs on its shared volumes. Null for standalone hosts. */
+  cluster?: {
+    id: string; name: string; highlyAvailable: boolean; nodeState: string | null; error: string | null;
+    sharedVolumes: { name: string; label: string | null; fileSystem: string | null; sizeBytes: number | null; freeBytes: number | null }[];
+  } | null;
 }
 
 export interface NewVmSpec {
   name: string;
+  /** Role of the failover cluster of the host (agent 0.9.0+); location on a cluster shared volume. */
+  highlyAvailable?: boolean;
   /** Created from this template: its disks are copied (the gateway decides which files). */
   templateId?: string;
   generation: 1 | 2;

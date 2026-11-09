@@ -43,7 +43,8 @@ public sealed class CommandExecutor
             or HvOperation.MoveVm or HvOperation.MoveVmStorage or HvOperation.NewFolder
             or HvOperation.BackupVm or HvOperation.RemoveBackup or HvOperation.RestoreBackup or HvOperation.RestoreBackupDisk
             or HvOperation.MountBackupDisk or HvOperation.DismountBackupDisk
-            or HvOperation.SetVmResourceMetering or HvOperation.ResetVmResourceMetering,
+            or HvOperation.SetVmResourceMetering or HvOperation.ResetVmResourceMetering
+            or HvOperation.SetClusterNodeMaintenance or HvOperation.MoveClusterVm,
         _ => false,
     };
 
@@ -51,6 +52,8 @@ public sealed class CommandExecutor
     internal static bool CopiesDisks(AgentCommand command, HvOperation op) =>
         op is HvOperation.NewTemplate or HvOperation.BackupVm or HvOperation.VerifyBackup or HvOperation.RestoreBackup
             or HvOperation.RestoreBackupDisk or HvOperation.MountBackupDisk or HvOperation.MoveVm or HvOperation.MoveVmStorage
+            // Draining a cluster node live-migrates every role it owns, one after the other.
+            or HvOperation.SetClusterNodeMaintenance
         || (op == HvOperation.NewVm && command.OperationArgs is { ValueKind: System.Text.Json.JsonValueKind.Object } a
             && a.TryGetProperty("templateDisks", out var d) && d.ValueKind == System.Text.Json.JsonValueKind.Array && d.GetArrayLength() > 0);
 

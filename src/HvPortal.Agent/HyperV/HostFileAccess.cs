@@ -36,6 +36,10 @@ public abstract class HostFileAccess
 
     public abstract long? FreeSpace(string root);
 
+    /// <summary>Free space of the volume holding a folder: its cluster shared volume (local host, protocol 11) or its drive.</summary>
+    public long? FreeSpaceOf(string hostPath) =>
+        IsLocal && SharedVolumes.RootOf(hostPath) is { } csv ? SharedVolumes.FreeSpace(csv) : FreeSpace(hostPath[..3]);
+
     /// <summary>Allowed storage folders of the host (protocol 9); empty = every local fixed drive (system folders excluded).</summary>
     public abstract IReadOnlyList<string> StorageFolders { get; }
 

@@ -14,6 +14,10 @@
    - templates: a template is the folder <template library>\<template id (guid)> holding copies of virtual disks. The
      library folders come from the agent (validated like a VM location); NewTemplate only creates that folder,
      RemoveTemplate only deletes disk files directly inside it, NewVm only reads disks from it (they are copied).
+   - failover clusters (protocol 11): GetClusterStatus only reads; SetClusterNodeMaintenance only pauses/drains or resumes
+     the node named by the gateway (and sets/clears storage maintenance of that node's disks); MoveClusterVm only moves a
+     clustered VM by id; nothing evicts, stops or forces anything. Mount points of cluster shared volumes
+     (<drive>:\ClusterStorage\<name>, file system CSVFS) are the only reparse points accepted (Test-CsvRoot).
   Remote hosts (management agent): HvPortal.Remote.ps1 runs THIS file on the host with Invoke-Command -FilePath and passes
   the same JSON request as the only argument; the response is then written to the pipeline instead of the console.
 #>
@@ -73,7 +77,7 @@ function Test-IsoPath([string]$path, $roots) {
     if (-not $item -or $item.PSIsContainer) { throw "ISO file not found: $full" }
     $p = $item
     while ($p) {
-        if ($p.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'ISO paths through junctions or symbolic links are not allowed.' }
+        if (($p.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not (Test-CsvRoot $p)) { throw 'ISO paths through junctions or symbolic links are not allowed.' }
         $p = if ($p -is [IO.FileInfo]) { $p.Directory } else { $p.Parent }
     }
 }
@@ -81,9 +85,47 @@ function Test-IsoPath([string]$path, $roots) {
 function Assert-NoReparsePoint($item) {
     $p = $item
     while ($p) {
-        if ($p.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Paths through junctions or symbolic links are not allowed.' }
+        if (($p.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not (Test-CsvRoot $p)) { throw 'Paths through junctions or symbolic links are not allowed.' }
         $p = if ($p -is [IO.FileInfo]) { $p.Directory } else { $p.Parent }
     }
+}
+
+# Protocol 11. The mount point of a cluster shared volume (<drive>:\ClusterStorage\<name>, file system CSVFS according to
+# Win32_Volume) is the only reparse point accepted; a junction or link placed there is not a CSVFS volume.
+$script:CsvRoots = $null
+function Test-CsvRoot($item) {
+    if (-not ($item -is [IO.DirectoryInfo])) { return $false }
+    $full = $item.FullName.TrimEnd('\')
+    if ($full -notmatch '^[A-Za-z]:\\ClusterStorage\\[^\\]+$') { return $false }
+    if ($null -eq $script:CsvRoots) {
+        $script:CsvRoots = @(Get-CimInstance -ClassName Win32_Volume -Filter "FileSystem = 'CSVFS'" -ErrorAction SilentlyContinue |
+            ForEach-Object { ([string]$_.Name).TrimEnd('\') })
+    }
+    return [bool](@($script:CsvRoots) | Where-Object { $_ -ieq $full })
+}
+
+# A property of a cmdlet result by name, $null when this version of Windows does not have it.
+function Get-Opt($o, [string]$name) {
+    if ($null -eq $o) { return $null }
+    $p = $o.PSObject.Properties[$name]
+    if ($p) { return $p.Value }
+    return $null
+}
+
+function Get-OptInt($o, [string]$name) {
+    $v = Get-Opt $o $name
+    if ($null -eq $v -or "$v" -eq '') { return $null }
+    return [int]$v
+}
+
+# The storage fault domain (Storage Spaces Direct) of a cluster node, $null when there is none.
+function Get-NodeScaleUnit([string]$nodeName) {
+    return Get-StorageFaultDomain -Type StorageScaleUnit -ErrorAction Stop | Where-Object { "$($_.FriendlyName)" -ieq $nodeName } | Select-Object -First 1
+}
+
+function Test-InStorageMaintenance($unit) {
+    if (-not $unit) { return $false }
+    return [bool](@($unit.OperationalStatus) | ForEach-Object { "$_" } | Where-Object { $_ -match 'Maintenance' })
 }
 
 # <template library>\<guid>: returns the full path. The library folder is created only when asked (first template).
@@ -518,6 +560,7 @@ try {
             }
             [void]$applied.Add('created')
             $warning = $null
+            $ha = $null
             $vlanFailed = $false
             if ($null -ne $a.vlanId) {
                 # Protocol 9: VLAN of the portal network chosen in the wizard. On failure the adapter is disconnected and the
@@ -565,11 +608,29 @@ try {
                         [void]$applied.Add('tpm')
                     }
                 }
+                if ([bool]$a.highlyAvailable) {
+                    # Protocol 11: the VM becomes a role of the cluster (restarted on another node when its node fails).
+                    # A failure leaves a VM that works but is not highly available: said in the result, never hidden.
+                    try {
+                        Import-Module FailoverClusters -ErrorAction Stop
+                        Add-ClusterVirtualMachineRole -VMId $vm.Id -ErrorAction Stop | Out-Null
+                        [void]$applied.Add('highly-available')
+                        $ha = $true
+                    } catch {
+                        $ha = $false
+                        $haWarning = "The VM was created but it is NOT highly available: adding it to the cluster failed ($($_.Exception.Message)). Add it as a role in Failover Cluster Manager (or delete it and create it again)."
+                        $warning = $(if ($warning) { "$warning $haWarning" } else { $haWarning })
+                    }
+                }
                 if ([bool]$a.startAfterCreate -and -not $vlanFailed) { Start-VM -VM $vm; [void]$applied.Add('started') }
             } catch {
                 $warning = "The VM was created but its configuration is incomplete: $($_.Exception.Message)" + $(if ($warning) { " $warning" } else { '' })
             }
-            Write-Response $true @{ vmId = "$($vm.Id)"; name = $vm.Name; configurationLocation = $vm.ConfigurationLocation; diskPath = $diskPath; warning = $warning } $null $applied
+            if ([bool]$a.highlyAvailable -and $null -eq $ha) {
+                $ha = $false
+                $warning = "$warning The VM is NOT highly available (its configuration stopped before it could be added to the cluster).".Trim()
+            }
+            Write-Response $true @{ vmId = "$($vm.Id)"; name = $vm.Name; configurationLocation = $vm.ConfigurationLocation; diskPath = $diskPath; warning = $warning; highlyAvailable = $ha } $null $applied
         }
 
         'ListIsos' {
@@ -1143,6 +1204,238 @@ try {
             catch { throw "Move to $destination failed: $($_.Exception.Message) (live migration must be enabled on both hosts: Enable-VMMigration, authentication and networks; see Guide > Move VMs)." }
             [void]$applied.Add('moved')
             Write-Response $true @{ vmId = "$($vm.Id)"; name = $vm.Name; destinationHost = $destination; path = $path; state = $state } $null $applied
+        }
+
+        'GetClusterStatus' {
+            # Protocol 11, read-only. The failover cluster as seen from this node. Each section is read on its own: a
+            # section that fails is reported in errors, never guessed.
+            try { Import-Module FailoverClusters -ErrorAction Stop }
+            catch { throw "not_supported: the Failover Clustering PowerShell module is not installed on this node (Install-WindowsFeature RSAT-Clustering-PowerShell)." }
+            try { $cluster = Get-Cluster -ErrorAction Stop }
+            catch { throw "access_denied: the cluster cannot be read with the agent account ($($_.Exception.Message)). On one node: Grant-ClusterAccess -User 'NT SERVICE\HvPortalAgent' -ReadOnly (or -Full for maintenance and highly available VMs)." }
+            $errors = New-Object System.Collections.ArrayList
+            $s2dEnabled = ((Get-OptInt $cluster 'S2DEnabled') -eq 1)
+
+            # Storage Spaces Direct fault domains: which nodes have their disks in storage maintenance mode.
+            $storageMaintenance = @{}
+            if ($s2dEnabled) {
+                try {
+                    foreach ($u in @(Get-StorageFaultDomain -Type StorageScaleUnit -ErrorAction Stop)) { $storageMaintenance["$($u.FriendlyName)".ToUpperInvariant()] = (Test-InStorageMaintenance $u) }
+                } catch { [void]$errors.Add("storageMaintenance: $($_.Exception.Message)") }
+            }
+
+            $nodes = New-Object System.Collections.ArrayList
+            try {
+                foreach ($n in @(Get-ClusterNode -ErrorAction Stop)) {
+                    $key = "$($n.Name)".ToUpperInvariant()
+                    [void]$nodes.Add(@{
+                        name = "$($n.Name)"; state = "$($n.State)"; drainStatus = "$(Get-Opt $n 'DrainStatus')"
+                        nodeWeight = Get-OptInt $n 'NodeWeight'; dynamicWeight = Get-OptInt $n 'DynamicWeight'
+                        manufacturer = "$(Get-Opt $n 'Manufacturer')".Trim(); model = "$(Get-Opt $n 'Model')".Trim()
+                        storageMaintenance = $(if ($storageMaintenance.ContainsKey($key)) { [bool]$storageMaintenance[$key] } else { $null })
+                    })
+                }
+            } catch { [void]$errors.Add("nodes: $($_.Exception.Message)") }
+
+            $quorum = $null
+            try {
+                $q = Get-ClusterQuorum -ErrorAction Stop
+                $res = $q.QuorumResource
+                $witnessType = 'None'; $witnessName = $null; $witnessState = $null; $witnessTarget = $null
+                if ($res) {
+                    $witnessName = "$($res.Name)"; $witnessState = "$($res.State)"
+                    switch ("$($res.ResourceType)") {
+                        'File Share Witness' {
+                            $witnessType = 'FileShare'
+                            try { $witnessTarget = "$((Get-ClusterParameter -InputObject $res -Name SharePath -ErrorAction Stop).Value)" } catch { }
+                        }
+                        'Cloud Witness' {
+                            $witnessType = 'Cloud'
+                            # The storage account name only: the access key is never read.
+                            try { $witnessTarget = "$((Get-ClusterParameter -InputObject $res -Name AccountName -ErrorAction Stop).Value)" } catch { }
+                        }
+                        'Physical Disk' { $witnessType = 'Disk' }
+                        default { $witnessType = "$($res.ResourceType)" }
+                    }
+                }
+                $quorum = @{
+                    quorumType = "$($q.QuorumType)"; witnessType = $witnessType; witnessName = $witnessName; witnessState = $witnessState
+                    witnessTarget = $witnessTarget; dynamicQuorum = $(if ($null -ne (Get-Opt $cluster 'DynamicQuorum')) { (Get-OptInt $cluster 'DynamicQuorum') -eq 1 } else { $null })
+                    witnessDynamicWeight = Get-OptInt $cluster 'WitnessDynamicWeight'
+                }
+            } catch { [void]$errors.Add("quorum: $($_.Exception.Message)") }
+
+            $networks = New-Object System.Collections.ArrayList
+            try {
+                foreach ($n in @(Get-ClusterNetwork -ErrorAction Stop)) {
+                    [void]$networks.Add(@{ name = "$($n.Name)"; state = "$($n.State)"; role = "$($n.Role)"; address = "$(Get-Opt $n 'Address')" })
+                }
+            } catch { [void]$errors.Add("networks: $($_.Exception.Message)") }
+
+            $csvs = New-Object System.Collections.ArrayList
+            try {
+                $access = @{}
+                try {
+                    foreach ($st in @(Get-ClusterSharedVolumeState -Node $env:COMPUTERNAME -ErrorAction Stop)) { $access["$($st.Name)"] = "$($st.StateInfo)" }
+                } catch { [void]$errors.Add("sharedVolumeAccess: $($_.Exception.Message)") }
+                foreach ($c in @(Get-ClusterSharedVolume -ErrorAction Stop)) {
+                    $infos = @($c.SharedVolumeInfo)
+                    if ($infos.Count -eq 0) { $infos = @($null) }
+                    foreach ($info in $infos) {
+                        $part = Get-Opt $info 'Partition'
+                        [void]$csvs.Add(@{
+                            name = "$($c.Name)"; path = "$(Get-Opt $info 'FriendlyVolumeName')"; ownerNode = "$($c.OwnerNode)"; state = "$($c.State)"
+                            sizeBytes = $(if ($part) { [int64]$part.Size } else { $null }); freeBytes = $(if ($part) { [int64]$part.FreeSpace } else { $null })
+                            access = $access["$($c.Name)"]; maintenanceMode = $(if ($info) { [bool](Get-Opt $info 'MaintenanceMode') } else { $null })
+                        })
+                    }
+                }
+            } catch { [void]$errors.Add("sharedVolumes: $($_.Exception.Message)") }
+
+            $storage = $null
+            try {
+                $s2dState = $null; $cacheState = $null
+                $pools = New-Object System.Collections.ArrayList
+                $vdisks = New-Object System.Collections.ArrayList
+                $pdisks = New-Object System.Collections.ArrayList
+                $jobs = New-Object System.Collections.ArrayList
+                if ($s2dEnabled) {
+                    try {
+                        $s2d = Get-ClusterStorageSpacesDirect -ErrorAction Stop
+                        $s2dState = "$($s2d.State)"; $cacheState = "$(Get-Opt $s2d 'CacheState')"
+                    } catch { [void]$errors.Add("s2d: $($_.Exception.Message)") }
+                    try {
+                        foreach ($p in @(Get-StoragePool -IsPrimordial $false -ErrorAction Stop | Where-Object { "$($_.FriendlyName)" -notlike 'Primordial*' })) {
+                            [void]$pools.Add(@{
+                                name = "$($p.FriendlyName)"; healthStatus = ConvertTo-HealthName $p.HealthStatus
+                                operationalStatus = (@($p.OperationalStatus | ForEach-Object { ConvertTo-OperationalName $_ }) -join ', ')
+                                sizeBytes = [int64]$p.Size; allocatedBytes = [int64]$p.AllocatedSize; isReadOnly = [bool]$p.IsReadOnly
+                            })
+                            foreach ($d in @($p | Get-PhysicalDisk -ErrorAction SilentlyContinue | Select-Object -First 256)) {
+                                [void]$pdisks.Add(@{
+                                    name = "$($d.FriendlyName)"; serialNumber = "$($d.SerialNumber)".Trim(); mediaType = "$($d.MediaType)"; usage = "$($d.Usage)"
+                                    healthStatus = ConvertTo-HealthName $d.HealthStatus
+                                    operationalStatus = (@($d.OperationalStatus | ForEach-Object { ConvertTo-OperationalName $_ }) -join ', '); sizeBytes = [int64]$d.Size
+                                })
+                            }
+                        }
+                    } catch { [void]$errors.Add("storagePools: $($_.Exception.Message)") }
+                    try {
+                        foreach ($v in @(Get-VirtualDisk -ErrorAction Stop)) {
+                            [void]$vdisks.Add(@{
+                                name = "$($v.FriendlyName)"; healthStatus = ConvertTo-HealthName $v.HealthStatus
+                                operationalStatus = (@($v.OperationalStatus | ForEach-Object { ConvertTo-OperationalName $_ }) -join ', ')
+                                resiliency = "$($v.ResiliencySettingName)"; dataCopies = Get-OptInt $v 'NumberOfDataCopies'
+                                sizeBytes = [int64]$v.Size; footprintBytes = [int64](Get-Opt $v 'FootprintOnPool')
+                            })
+                        }
+                    } catch { [void]$errors.Add("virtualDisks: $($_.Exception.Message)") }
+                    try {
+                        foreach ($j in @(Get-StorageJob -ErrorAction Stop | Where-Object { "$($_.JobState)" -ne 'Completed' })) {
+                            [void]$jobs.Add(@{
+                                name = "$($j.Name)"; state = "$($j.JobState)"; percentComplete = Get-OptInt $j 'PercentComplete'
+                                bytesTotal = [int64](Get-Opt $j 'BytesTotal'); bytesProcessed = [int64](Get-Opt $j 'BytesProcessed')
+                            })
+                        }
+                    } catch { [void]$errors.Add("storageJobs: $($_.Exception.Message)") }
+                }
+                $storage = @{ s2dEnabled = $s2dEnabled; s2dState = $s2dState; cacheState = $cacheState; pools = @($pools); virtualDisks = @($vdisks)
+                    physicalDisks = @($pdisks); jobs = @($jobs) }
+            } catch { [void]$errors.Add("storage: $($_.Exception.Message)") }
+
+            $roles = New-Object System.Collections.ArrayList
+            $failed = New-Object System.Collections.ArrayList
+            try {
+                $resources = @(Get-ClusterResource -ErrorAction Stop)
+                $vmOfGroup = @{}
+                foreach ($r in @($resources | Where-Object { "$($_.ResourceType)" -eq 'Virtual Machine' })) {
+                    try { $vmOfGroup["$($r.OwnerGroup)"] = "$((Get-ClusterParameter -InputObject $r -Name VmID -ErrorAction Stop).Value)" } catch { }
+                }
+                foreach ($r in @($resources | Where-Object { "$($_.State)" -eq 'Failed' } | Select-Object -First 100)) {
+                    [void]$failed.Add(@{ name = "$($r.Name)"; resourceType = "$($r.ResourceType)"; state = "$($r.State)"; ownerGroup = "$($r.OwnerGroup)"; ownerNode = "$($r.OwnerNode)" })
+                }
+                foreach ($g in @(Get-ClusterGroup -ErrorAction Stop | Select-Object -First 2000)) {
+                    $type = "$($g.GroupType)"
+                    if ($type -eq 'Cluster' -or $type -eq 'AvailableStorage') { continue }
+                    $vmId = $vmOfGroup["$($g.Name)"]
+                    [void]$roles.Add(@{ name = "$($g.Name)"; groupType = $type; state = "$($g.State)"; ownerNode = "$($g.OwnerNode)"
+                        vmId = $(if ($vmId) { $vmId } else { $null }) })
+                }
+            } catch { [void]$errors.Add("roles: $($_.Exception.Message)") }
+
+            Write-Response $true @{
+                collectedUtc = (Get-Date).ToUniversalTime().ToString('o'); name = "$($cluster.Name)"; fqdn = "$(Get-Opt $cluster 'Fqdn')"
+                administrativeAccessPoint = "$(Get-Opt $cluster 'AdministrativeAccessPoint')"; domain = "$(Get-Opt $cluster 'Domain')"
+                readByNode = $env:COMPUTERNAME; nodes = @($nodes); quorum = $quorum; networks = @($networks); sharedVolumes = @($csvs)
+                storage = $storage; roles = @($roles); failedResources = @($failed); errors = @($errors)
+            } $null @()
+        }
+
+        'SetClusterNodeMaintenance' {
+            # Protocol 11. Enter: drain the node (its roles are moved to the other nodes by the cluster) and, with Storage
+            # Spaces Direct, put its disks in storage maintenance mode. Exit: storage maintenance off, then resume the node.
+            # The gateway checked quorum, capacity and storage before queuing the job.
+            Import-Module FailoverClusters -ErrorAction Stop
+            $nodeName = [string]$a.nodeName
+            $node = Get-ClusterNode -Name $nodeName -ErrorAction Stop
+            $cluster = Get-Cluster -ErrorAction Stop
+            $s2d = ((Get-OptInt $cluster 'S2DEnabled') -eq 1)
+            $storageDone = $false
+            $warning = $null
+            if ([string]$a.action -eq 'Enter') {
+                if ("$($node.State)" -eq 'Down') { throw "The node $nodeName is down: it cannot be drained." }
+                try { Suspend-ClusterNode -Name $nodeName -Drain -Wait -ErrorAction Stop | Out-Null }
+                catch { throw "Draining $nodeName failed: $($_.Exception.Message). Roles that could not be moved stay on the node: see Failover Cluster Manager." }
+                [void]$applied.Add('paused')
+                $node = Get-ClusterNode -Name $nodeName -ErrorAction Stop
+                if ("$(Get-Opt $node 'DrainStatus')" -eq 'Failed') {
+                    throw "The node $nodeName is paused but the drain failed: some roles are still on it. Move them or take the node out of maintenance."
+                }
+                [void]$applied.Add('drained')
+                if ($s2d -and [bool]$a.storageMaintenance) {
+                    try {
+                        $unit = Get-NodeScaleUnit $nodeName
+                        if (-not $unit) { throw "no storage fault domain named $nodeName" }
+                        if (-not (Test-InStorageMaintenance $unit)) { Enable-StorageMaintenanceMode -InputObject $unit -ErrorAction Stop }
+                        $storageDone = $true
+                        [void]$applied.Add('storage-maintenance')
+                    } catch {
+                        $warning = "The node is paused and drained, but its disks could not be put in storage maintenance mode ($($_.Exception.Message)). Do it before turning the server off: Get-StorageFaultDomain -Type StorageScaleUnit | Where-Object FriendlyName -eq '$nodeName' | Enable-StorageMaintenanceMode"
+                    }
+                }
+            } else {
+                if ($s2d -and [bool]$a.storageMaintenance) {
+                    try {
+                        $unit = Get-NodeScaleUnit $nodeName
+                        if (Test-InStorageMaintenance $unit) {
+                            Disable-StorageMaintenanceMode -InputObject $unit -ErrorAction Stop
+                            [void]$applied.Add('storage-maintenance-off')
+                        }
+                    } catch { throw "The disks of $nodeName could not be taken out of storage maintenance mode ($($_.Exception.Message)): the node was not resumed." }
+                }
+                if ("$($node.State)" -eq 'Paused') {
+                    $failback = $(if ([bool]$a.failback) { 'Immediate' } else { 'NoFailback' })
+                    try { Resume-ClusterNode -Name $nodeName -Failback $failback -ErrorAction Stop | Out-Null }
+                    catch { throw "Resuming $nodeName failed: $($_.Exception.Message)" }
+                    [void]$applied.Add('resumed')
+                }
+            }
+            $node = Get-ClusterNode -Name $nodeName -ErrorAction Stop
+            Write-Response $true @{ nodeName = "$($node.Name)"; state = "$($node.State)"; drainStatus = "$(Get-Opt $node 'DrainStatus')"
+                storageMaintenance = $storageDone; warning = $warning } $null $applied
+        }
+
+        'MoveClusterVm' {
+            # Protocol 11. A clustered VM to another node of the cluster: live migration when running, quick migration otherwise.
+            Import-Module FailoverClusters -ErrorAction Stop
+            $vm = Get-VmById $a.vmId
+            $nodeName = [string]$a.nodeName
+            if (-not $vm.IsClustered) { throw 'The VM is not a role of the cluster (not highly available): it cannot be moved with a cluster migration.' }
+            $type = $(if ("$($vm.State)" -eq 'Running') { 'Live' } else { 'Quick' })
+            try { Move-ClusterVirtualMachineRole -VMId $vm.Id -Node $nodeName -MigrationType $type -ErrorAction Stop | Out-Null }
+            catch { throw "Moving the VM to $nodeName failed: $($_.Exception.Message)" }
+            [void]$applied.Add('moved')
+            Write-Response $true @{ vmId = "$($vm.Id)"; name = $vm.Name; destinationHost = $nodeName; path = $vm.Path; state = "$($vm.State)" } $null $applied
         }
 
         'MoveVmStorage' {

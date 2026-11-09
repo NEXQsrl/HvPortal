@@ -193,7 +193,7 @@ public sealed class WmiHyperVHost : IHyperVHost
     {
         string computerName = _target.ComputerName ?? Environment.MachineName;
         string? dns = null, domain = null, caption = null, version = null, build = null, vmmsState = null;
-        bool partOfDomain = false, clusterPresent = false;
+        bool partOfDomain = false, clusterPresent = false, clusterRunning = false;
         uint? sku = null, productType = null;
         int? lp = null;
         long? totalMem = null, freeMem = null;
@@ -250,6 +250,7 @@ public sealed class WmiHyperVHost : IHyperVHost
                         else if (string.Equals(name, "ClusSvc", StringComparison.OrdinalIgnoreCase))
                         {
                             clusterPresent = true;
+                            clusterRunning = string.Equals(o["State"] as string, "Running", StringComparison.OrdinalIgnoreCase);
                         }
                     }
                 }
@@ -276,6 +277,8 @@ public sealed class WmiHyperVHost : IHyperVHost
             FreePhysicalMemoryBytes = freeMem,
             HyperVServiceState = vmmsState,
             ClusterServicePresent = clusterPresent,
+            // Protocol 11: only for the host the agent runs on (remote hosts of a management agent are not cluster-aware).
+            Cluster = clusterRunning && _target.IsLocal ? ClusterReader.Read(computerName, Connect, _logger) : null,
             AgentVersion = _agentVersion,
         };
     }

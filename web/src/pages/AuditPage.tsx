@@ -25,7 +25,7 @@ const CATEGORY_LABEL: Record<(typeof CATEGORIES)[number], TKey> = {
 };
 /** Action prefixes of each area (the API takes them separated by commas). */
 const CATEGORY_PREFIXES: Record<(typeof CATEGORIES)[number], string> = {
-  auth: 'auth.,mfa.,setup.,admin_cli.', users: 'users.', role: 'roles.,role_assignments.', groups: 'groups.', host: 'hosts.,host.,network.',
+  auth: 'auth.,mfa.,setup.,admin_cli.', users: 'users.', role: 'roles.,role_assignments.', groups: 'groups.', host: 'hosts.,host.,network.,clusters.',
   vm: 'vm.,vms.,console.', template: 'template.,templates.', settings: 'settings.,audit.,downloads.,jobs.,backup.,api_tokens.,notifications.', agent: 'agent.,agents.,management_agents.',
 };
 const OUTCOMES = ['Success', 'Failure', 'Denied'] as const;

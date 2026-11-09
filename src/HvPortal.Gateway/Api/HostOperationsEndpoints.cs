@@ -151,6 +151,34 @@ public static class HostOperationsEndpoints
         {
             return deniedDestination;
         }
+        // Inside a failover cluster (ADR-041): a highly available VM is moved by the cluster to the other node (its files
+        // stay on the cluster storage); Move-VM does not work on clustered VMs.
+        if (host.ClusterId is { } clusterId && destination.ClusterId == clusterId)
+        {
+            if (vm.IsClustered != true)
+            {
+                return ApiSupport.Conflict("vm_not_highly_available",
+                    "The VM is not highly available: inside a cluster only highly available VMs are moved between nodes by the portal. Make it highly available in Failover Cluster Manager.");
+            }
+            if (agents.ProtocolVersionOf(vm.HostId) < Clusters.ClusterService.Protocol)
+            {
+                return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Moving VMs inside a cluster needs agent 0.9.0 or later. Update the agent.");
+            }
+            if (Clusters.ClusterService.NodeNameOf(destination) is not { } nodeName)
+            {
+                return ApiSupport.Conflict("node_name_unknown", "The cluster node name of the destination is not known yet (no inventory from its agent).");
+            }
+            if (await policies.CheckMoveAsync(vm, destinationId, null, http.RequestAborted) is { } clusterViolation)
+            {
+                await http.WriteAuditAsync("vm.migrate.request", AuditOutcome.Denied, "vm", id.ToString("D"), new { reason = clusterViolation.Code, destinationId });
+                return ApiSupport.Conflict(clusterViolation.Code, clusterViolation.Message);
+            }
+            var clusterMove = new MoveClusterVmRequest { VmId = vm.HyperVId, NodeName = nodeName };
+            return await VmOperationsEndpoints.QueueAsync(http, jobs, new JobService.OperationJobSpec(JobService.MigrateJobType, JobService.ClusterNodeMoveOperation,
+                ScopeType.Vm, vm.Id, vm.Name, vm.HostId, Permissions.VmMigrate, new JobService.OperationParameters(HvOperations.ToElement(clusterMove), DestinationHostId: destinationId),
+                3600, $"Move {vm.Name} from {host.DisplayName} to {destination.DisplayName} (cluster)"), key, "vm.migrate.request",
+                new { mode = "cluster", destination = destination.DisplayName, destinationId });
+        }
         if (MigrationRules.DestinationName(destination) is not { } name)
         {
             return ApiSupport.Conflict("destination_unknown_name", "The DNS name of the destination host is not known yet (no inventory from it).");

@@ -1,8 +1,9 @@
-import { Archive, Camera, FolderInput, LayoutTemplate, MoveRight, FolderMinus, FolderPlus, Gauge, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save, Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
+import { Archive, Boxes, Camera, FolderInput, Wrench, LayoutTemplate, MoveRight, FolderMinus, FolderPlus, Gauge, KeyRound, Monitor, Network, Pause, Pencil, Play, Plus, Power, PowerOff, RefreshCw, RotateCcw, Save, Settings2, ShieldOff, SquareArrowOutUpRight, Trash2, Undo2 } from 'lucide-react';
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { del, patch, post } from '@/api/client';
+import { del, patch, post, put } from '@/api/client';
 import type { Accepted, Group, VmTemplate } from '@/api/ops-types';
+import type { ClusterNodeEnrollment, ClusterSummary } from '@/api/cluster-types';
 import { realtime } from '@/api/realtime';
 import type { EnrollmentInfo, Host, PowerOperation, Vm } from '@/api/types';
 import type { Action } from '@/components/actions';
@@ -17,6 +18,7 @@ import { CreateVmWizard } from './CreateVmWizard';
 import { GroupLimitsDialog } from '@/components/ops/GroupLimits';
 import { AddToGroupDialog, AddVmsDialog, MoveGroupDialog, NewGroupDialog } from './GroupDialogs';
 import { AddHostDialog, EnrollmentDialog, RemoteHostDialog, RevokeHostDialog } from './HostDialogs';
+import { AddClusterNodeDialog, ClusterEnrollmentDialog, MaintenanceDialog } from './ClusterDialogs';
 import { LiveManagementEnrollment, NewManagementAgentDialog } from './ManagementAgents';
 import { CaptureTemplateDialog } from './TemplateDialogs';
 import { CreateCheckpointDialog, EditNotesDialog, PowerDialog } from './VmDialogs';
@@ -51,12 +53,22 @@ type DialogState =
   | { kind: 'deleteGroup'; group: Group }
   | { kind: 'addVms'; group: Group }
   | { kind: 'moveVm'; vm: Vm }
-  | { kind: 'backupVm'; vm: Vm };
+  | { kind: 'backupVm'; vm: Vm }
+  | { kind: 'clusterEnroll'; name: string; nodes: ClusterNodeEnrollment[] }
+  | { kind: 'maintenance'; host: Host; action: 'Enter' | 'Exit' }
+  | { kind: 'addClusterNode'; cluster: { id: string; name: string } }
+  | { kind: 'editCluster'; cluster: { id: string; name: string; description: string | null } }
+  | { kind: 'deleteCluster'; cluster: { id: string; name: string }; nodes: number }
+  | { kind: 'removeClusterNode'; clusterId: string; host: { id: string; displayName: string } };
 
 interface Ops {
   vmActions: (vm: Vm, opts?: { groupId?: string; page?: boolean }) => Action[];
   powerActions: (vm: Vm) => Action[];
   hostActions: (host: Host, opts?: { page?: boolean }) => Action[];
+  /** Failover cluster (ADR-041): open, new VM, add node, rename, delete. */
+  clusterActions: (cluster: ClusterSummary | { id: string; name: string; description: string | null; can: { manage: boolean } }, opts?: { page?: boolean; nodes?: number; createVm?: boolean }) => Action[];
+  openMaintenance: (host: Host, action: 'Enter' | 'Exit') => void;
+  openRemoveClusterNode: (clusterId: string, host: { id: string; displayName: string }) => void;
   groupActions: (group: Group | null) => Action[];
   openCreateVm: (opts?: { hostId?: string; groupId?: string; template?: VmTemplate }) => void;
   openAddHost: () => void;
@@ -173,6 +185,15 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     const list: Action[] = [];
     if (!opts.page) list.push({ key: 'open', label: t('menu.open'), icon: SquareArrowOutUpRight, onSelect: () => navigate(`/hosts/${h.id}`) });
     if (h.canCreateVm) list.push({ key: 'new-vm', label: t('host.newVm'), icon: Plus, onSelect: () => setDialog({ kind: 'createVm', hostId: h.id }) });
+    if (h.clusterId && !opts.page) list.push({ key: 'cluster', label: t('cl.open'), icon: Boxes, onSelect: () => navigate(`/clusters/${h.clusterId}`) });
+    if (h.canMaintain) {
+      // Paused node: bring it back; otherwise put it in maintenance.
+      const paused = h.clusterFacts?.nodeState === 'Paused';
+      list.push({
+        key: 'maintenance', label: t(paused ? 'cl.maint.exit' : 'cl.maint.enter'), icon: Wrench, separatorBefore: true,
+        onSelect: () => setDialog({ kind: 'maintenance', host: h, action: paused ? 'Exit' : 'Enter' }),
+      });
+    }
     list.push({
       key: 'refresh', label: t('common.refresh'), icon: RefreshCw, disabled: !h.connected,
       onSelect: async () => { try { await post(`/api/v1/hosts/${h.id}/refresh`); inv.reload(); } catch (e) { fail(e); } },
@@ -195,6 +216,25 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     }
     return list;
   }, [t, navigate, manageHosts, inv, fail]);
+
+  const clusterActions = useCallback((c: { id: string; name: string; description?: string | null; can: { manage: boolean } },
+    opts: { page?: boolean; nodes?: number; createVm?: boolean } = {}): Action[] => {
+    const list: Action[] = [];
+    if (!opts.page) list.push({ key: 'open', label: t('cl.open'), icon: SquareArrowOutUpRight, onSelect: () => navigate(`/clusters/${c.id}`) });
+    const nodeIds = inv.hosts.filter((h) => h.clusterId === c.id && h.canCreateVm).map((h) => h.id);
+    if (opts.createVm ?? nodeIds.length > 0) {
+      list.push({ key: 'new-vm', label: t('cl.newVm'), icon: Plus, onSelect: () => setDialog({ kind: 'createVm', hostId: nodeIds[0] }) });
+    }
+    if (c.can.manage && manageHosts) {
+      list.push({ key: 'add-node', label: t('cl.addNode'), icon: Plus, separatorBefore: true, onSelect: () => setDialog({ kind: 'addClusterNode', cluster: c }) });
+      list.push({ key: 'edit', label: t('cl.edit'), icon: Pencil, onSelect: () => setDialog({ kind: 'editCluster', cluster: { id: c.id, name: c.name, description: c.description ?? null } }) });
+      list.push({
+        key: 'delete', label: t('cl.delete'), icon: Trash2, danger: true, separatorBefore: true,
+        onSelect: () => setDialog({ kind: 'deleteCluster', cluster: c, nodes: opts.nodes ?? inv.hosts.filter((h) => h.clusterId === c.id).length }),
+      });
+    }
+    return list;
+  }, [t, navigate, inv.hosts, manageHosts]);
 
   const groupActions = useCallback((g: Group | null): Action[] => {
     if (!manageGroups) {
@@ -226,8 +266,11 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     openManagementEnrollment: (info, agentId, name) => setDialog({ kind: 'enrollManagement', info, agentId, name }),
     onManagementAgentsChanged,
     openNewGroup: (parentId) => setDialog({ kind: 'newGroup', parentId }),
+    clusterActions,
+    openMaintenance: (host, action) => setDialog({ kind: 'maintenance', host, action }),
+    openRemoveClusterNode: (clusterId, host) => setDialog({ kind: 'removeClusterNode', clusterId, host }),
     openPower: (vm, op) => setDialog({ kind: 'power', vm, op }),
-  }), [vmActions, powerActions, hostActions, groupActions, queued, placeVms, moveGroup, openConsole, onManagementAgentsChanged]);
+  }), [vmActions, powerActions, hostActions, clusterActions, groupActions, queued, placeVms, moveGroup, openConsole, onManagementAgentsChanged]);
 
   const d = dialog;
   return (
@@ -248,6 +291,11 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
         <AddHostDialog onClose={() => setDialog((cur) => (cur?.kind === 'addHost' ? null : cur))}
           onCreated={(info, hostId) => { inv.reload(); setDialog({ kind: 'enroll', info, hostId }); }}
           onRemoteCreated={(hostId) => { inv.reload(); agentsChanged(); toast.success(t('remote.created')); navigate(`/hosts/${hostId}`); }}
+          onClusterCreated={(clusterId, name, nodes) => {
+            inv.reload();
+            navigate(`/clusters/${clusterId}`);
+            setDialog(nodes.length > 0 ? { kind: 'clusterEnroll', name, nodes } : null);
+          }}
           onNewManagementAgent={() => setDialog({ kind: 'newManagementAgent' })} />
       )}
       {d?.kind === 'remoteHost' && <RemoteHostDialog host={d.host} onClose={() => { close(); inv.reload(); agentsChanged(); }} />}
@@ -286,6 +334,27 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
       {d?.kind === 'addVms' && <AddVmsDialog group={d.group} onClose={() => { close(); inv.reload(); }} />}
       {d?.kind === 'moveVm' && <MoveVmDialog vm={d.vm} onQueued={queued} onClose={close} />}
       {d?.kind === 'backupVm' && <BackupNowDialog vm={d.vm} onQueued={queued} onClose={close} />}
+      {d?.kind === 'clusterEnroll' && <ClusterEnrollmentDialog clusterName={d.name} nodes={d.nodes} onClose={() => { close(); inv.reload(); }} />}
+      {d?.kind === 'maintenance' && <MaintenanceDialog host={d.host} action={d.action} onQueued={queued} onClose={close} />}
+      {d?.kind === 'addClusterNode' && (
+        <AddClusterNodeDialog cluster={d.cluster} onClose={() => setDialog((cur) => (cur?.kind === 'addClusterNode' ? null : cur))}
+          onEnroll={(node) => setDialog({ kind: 'clusterEnroll', name: d.cluster.name, nodes: [node] })} />
+      )}
+      {d?.kind === 'editCluster' && (
+        <EditDialog title={t('cl.editTitle', { name: d.cluster.name })} withName nameLabel={t('cl.add.name')} initialName={d.cluster.name} initialDescription={d.cluster.description}
+          onClose={close} onSave={async (name, description) => { await put(`/api/v1/clusters/${d.cluster.id}`, { name, description }); inv.reload(); }} />
+      )}
+      {d?.kind === 'deleteCluster' && (
+        <ConfirmTypedDialog title={t('cl.deleteTitle', { name: d.cluster.name })} name={d.cluster.name} confirmLabel={t('common.delete')} onClose={close}
+          impact={t('cl.deleteImpact', { n: d.nodes })}
+          onConfirm={async () => { await post(`/api/v1/clusters/${d.cluster.id}/delete`); inv.reload(); navigate('/inventory?view=hosts'); }} />
+      )}
+      {d?.kind === 'removeClusterNode' && (
+        <ActionDialog title={t('cl.node.removeTitle', { name: d.host.displayName })} confirmLabel={t('common.remove')} danger onClose={close}
+          onConfirm={async () => { await post(`/api/v1/clusters/${d.clusterId}/nodes/${d.host.id}/remove`); inv.reload(); }}>
+          <p className="text-sm text-muted-foreground">{t('cl.node.removeImpact')}</p>
+        </ActionDialog>
+      )}
     </Ctx.Provider>
   );
 }

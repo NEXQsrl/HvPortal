@@ -158,6 +158,15 @@ public sealed class SetupLogicTests
         Assert.Equal(("https://10.0.10.5:8444", ca, token, false), (b.Gateway, b.CaSha256, b.Token, b.Management));
         Assert.True(PortalData.TryParse(command + " -Management", out var c) && c.Management);
 
+        // Node of a failover cluster: the access of the agent to the cluster comes with the data (never for a management agent).
+        Assert.True(PortalData.TryParse(PortalData.Format("https://gw:8444", ca, token, management: false, clusterNode: true), out var d));
+        Assert.Equal("Full", d.ClusterAccess);
+        Assert.Equal("Full", d.ToParameters("src")["ClusterAccess"]);
+        Assert.True(PortalData.TryParse(command + " -ClusterAccess Full", out var e) && e.ClusterAccess == "Full");
+        Assert.True(PortalData.TryParse(command, out var f) && f.ClusterAccess is null && !f.ToParameters("src").ContainsKey("ClusterAccess"));
+        Assert.Contains("err.cluster", new AgentSetupOptions { Enroll = false, ClusterAccess = "Everything" }.Validate());
+        Assert.Contains("err.cluster", new AgentSetupOptions { Enroll = false, Management = true, ClusterAccess = "Full" }.Validate());
+
         foreach (var bad in new[] { null, "", "hello", "HVPORTAL-SETUP gateway=http://gw ca=" + ca + " token=" + token, "HVPORTAL-SETUP gateway=https://gw:8444 ca=12 token=" + token,
                      "HVPORTAL-SETUP gateway=https://gw:8444 ca=" + ca + " token=a;b", new string('x', 9000) })
         {
@@ -261,6 +270,14 @@ public sealed class SetupLogicTests
                 Gateway = "https://gw:8444", CaSha256 = new string('A', 64), Token = new string('t', 32), ForceReenroll = true, Management = true, ServiceAccount = "svc",
                 StorageFolders = [@"D:\VMs"], DisableRemoteUpdate = true,
             }.ToParameters("src");
+        if (component == "Agent")
+        {
+            // -ClusterAccess is sent for host agents only (a management agent is not a cluster node).
+            foreach (var (name, value) in new AgentSetupOptions { Enroll = false, ClusterAccess = "Full" }.ToParameters("src"))
+            {
+                sent[name] = value;
+            }
+        }
         foreach (var (name, value) in sent)
         {
             Assert.True(declared.TryGetValue(name, out var type), $"Install-{component}.ps1 has no parameter '{name}'.");

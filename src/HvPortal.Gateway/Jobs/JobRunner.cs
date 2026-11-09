@@ -169,6 +169,11 @@ public sealed partial class JobRunner : BackgroundService
         {
             return "agent-update:" + job.TargetId.ToString("N");
         }
+        // One node of a cluster in (or out of) maintenance at a time (ADR-041).
+        if (job.Type == JobService.MaintenanceJobType)
+        {
+            return "cluster-maintenance:" + (ReadParameters(job)?.ClusterId ?? job.TargetId).ToString("N");
+        }
         if (job.TargetType == ScopeType.Host && job.Type.StartsWith("backup.", StringComparison.Ordinal) && ReadParameters(job)?.BackupPointId is { } point)
         {
             return "backup-point:" + point.ToString("N");
@@ -248,6 +253,12 @@ public sealed partial class JobRunner : BackgroundService
                 return OperationValidation.Validate(rd) is null ? HvOperations.ToElement(rd) : null;
             case HvOperation.SetVmResourceMetering when vm is not null && HvOperations.FromElement<VmMeteringChange>(args) is { } mc:
                 return HvOperations.ToElement(mc with { VmId = vm.HyperVId });
+            // Protocol 11: node names were stamped from the portal's records just before (StampProtocol11Async).
+            case HvOperation.SetClusterNodeMaintenance when HvOperations.FromElement<ClusterNodeMaintenanceRequest>(args) is { } maintenance:
+                return OperationValidation.Validate(maintenance) is null ? HvOperations.ToElement(maintenance) : null;
+            case HvOperation.MoveClusterVm when vm is not null && HvOperations.FromElement<MoveClusterVmRequest>(args) is { } clusterMove:
+                var moveInCluster = clusterMove with { VmId = vm.HyperVId };
+                return OperationValidation.Validate(moveInCluster) is null ? HvOperations.ToElement(moveInCluster) : null;
             default:
                 return null;
         }
@@ -275,7 +286,9 @@ public sealed partial class JobRunner : BackgroundService
                 job.LeaseOwner = null;
                 job.NotBefore = _time.GetUtcNow().AddSeconds(2);
                 job.Attempt--;
-                job.ProgressMessage = job.TargetType == ScopeType.Host
+                job.ProgressMessage = job.Type == JobService.MaintenanceJobType
+                    ? "Waiting for the maintenance of another node of the same cluster."
+                    : job.TargetType == ScopeType.Host
                     ? "Waiting for another VM creation on the same host."
                     : "Waiting for another operation on the same VM.";
                 await db.SaveChangesAsync(ct);
@@ -391,6 +404,18 @@ public sealed partial class JobRunner : BackgroundService
                 parameters = parameters with { Args = stampedArgs };
             }
 
+            // Protocol 11: cluster node names from the portal's records, maintenance checks against the live cluster.
+            if (hvOperation is { } clusterOp && parameters is not null)
+            {
+                var (clusterError, clusterArgs) = await StampProtocol11Async(scope.ServiceProvider, db, clusterOp, parameters, vm, host, ct);
+                if (clusterError is not null)
+                {
+                    await FinalizeAsync(db, job, JobStatus.Failed, clusterError.Value.Message, clusterError.Value.Code, null);
+                    return;
+                }
+                parameters = parameters with { Args = clusterArgs };
+            }
+
             // Limits of the VM folders are checked again now (other operations may have used the quota meanwhile);
             // server-controlled fields decided by the limits (VM location, new disk folder) are re-stamped.
             if (hvOperation is { } limited && parameters is not null)
@@ -446,7 +471,18 @@ public sealed partial class JobRunner : BackgroundService
                 return;
             }
 
-            if (!_dispatcher.IsConnected(hostId))
+            // A cluster node is paused or resumed by its own agent or, when that one is not connected, by another node's (ADR-041).
+            var sendTo = hostId;
+            if (job.Type == JobService.MaintenanceJobType)
+            {
+                if (await ClusterExecutorAsync(db, host, ct) is not { } executor)
+                {
+                    await RetryOrFailUnreachableAsync(db, job, ct);
+                    return;
+                }
+                sendTo = executor;
+            }
+            if (!_dispatcher.IsConnected(sendTo))
             {
                 await RetryOrFailUnreachableAsync(db, job, ct);
                 return;
@@ -463,7 +499,7 @@ public sealed partial class JobRunner : BackgroundService
                 return;
             }
             await db.Entry(job).ReloadAsync(ct);
-            AddEvent(db, job, "dispatched", $"Sent to host {host.DisplayName}.");
+            AddEvent(db, job, "dispatched", sendTo == hostId ? $"Sent to host {host.DisplayName}." : $"Sent to another node of the cluster for {host.DisplayName}.");
             await db.SaveChangesAsync(ct);
             await _notifier.JobChangedAsync(job);
 
@@ -472,7 +508,7 @@ public sealed partial class JobRunner : BackgroundService
             AgentCommandResult result;
             try
             {
-                result = await _dispatcher.SendAsync(hostId, command, p => _ = ReportProgressAsync(job.Id, p),
+                result = await _dispatcher.SendAsync(sendTo, command, p => _ = ReportProgressAsync(job.Id, p),
                     TimeSpan.FromSeconds(job.TimeoutSeconds + 30), ct);
             }
             finally
@@ -510,6 +546,7 @@ public sealed partial class JobRunner : BackgroundService
             if (hvOperation is { } doneOp && parameters is not null)
             {
                 (status, code, message) = await ApplyProtocol9ResultAsync(db, doneOp, job, parameters, vm, hostId, status, code, result.Operation, message);
+                message = await ApplyProtocol11ResultAsync(db, doneOp, parameters, vm, status, result.Operation, message);
             }
             if (status == JobStatus.Succeeded && job.Type == JobService.MeteringJobType && vm is not null)
             {

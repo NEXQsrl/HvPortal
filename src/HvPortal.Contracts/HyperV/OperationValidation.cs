@@ -124,6 +124,8 @@ public static partial class OperationValidation
         if (r.AutomaticStartAction is not null && !StartActions.Contains(r.AutomaticStartAction)) return "invalid_start_action";
         if (r.Notes is { Length: > MaxNotes }) return "notes_too_long";
         if (HostPaths.ValidateLocation(r.Location) is { } loc) return loc;
+        // Protocol 11: a highly available VM must have its files where every node of the cluster reaches them.
+        if (r.HighlyAvailable && !ClusterNames.IsSharedVolumePath(r.Location)) return "ha_requires_shared_volume";
         if (r.IsoRoots.Count > 16 || r.IsoRoots.Any(x => x.Length > 260)) return "invalid_iso_roots";
         if (r.TemplateDisks.Count > 0)
         {

@@ -9,7 +9,7 @@ namespace HvPortal.Gateway.VmBackup;
 public static class NotificationEndpoints
 {
     public sealed record EmailBody(bool Enabled, string? Host, int Port, string? Security, string? UserName, string? Password, string? From, string[]? To);
-    public sealed record Body(EmailBody? Email, NotificationService.Webhook[]? Webhooks, bool RestoreTestFailed, bool AgentsOutdated);
+    public sealed record Body(EmailBody? Email, NotificationService.Webhook[]? Webhooks, bool RestoreTestFailed, bool AgentsOutdated, bool? ClusterProblems = null);
 
     public static void Map(WebApplication app)
     {
@@ -28,6 +28,7 @@ public static class NotificationEndpoints
         webhooks = s.Webhooks.Select(w => new { w.Name, url = w.Display, w.Format }),
         s.RestoreTestFailed,
         s.AgentsOutdated,
+        s.ClusterProblems,
     };
 
     /// <summary>Webhook addresses often carry a secret in the path or query: only the host and the start of the path are shown back.</summary>
@@ -84,6 +85,8 @@ public static class NotificationEndpoints
             Webhooks = hooks,
             RestoreTestFailed = body.RestoreTestFailed,
             AgentsOutdated = body.AgentsOutdated,
+            // Older clients do not send it: keep it on (the default).
+            ClusterProblems = body.ClusterProblems ?? true,
         };
         if (NotificationService.Validate(settings) is { } invalid)
         {

@@ -19,7 +19,7 @@ essere pronto in Hyper-V prima dei backup e della migrazione in tempo reale. Il 
 - [2. Installare il gateway](#2-installare-il-gateway)
 - [3. Primo accesso](#3-primo-accesso)
 - [4. Certificato del portale e nomi](#4-certificato-del-portale-e-nomi)
-- [5. Installare l'agent su ogni host Hyper-V](#5-installare-lagent-su-ogni-host-hyper-v)
+- [5. Installare l'agent su ogni host Hyper-V](#5-installare-lagent-su-ogni-host-hyper-v) (5i: cluster di failover)
 - [6. Accesso con Microsoft Entra ID (facoltativo)](#6-accesso-con-microsoft-entra-id-facoltativo)
 - [7. Prima del primo backup](#7-prima-del-primo-backup)
 - [8. Prima di spostare le VM tra host](#8-prima-di-spostare-le-vm-tra-host)
@@ -415,6 +415,30 @@ WinRM, WMI e SMB. La preparazione degli host e la configurazione di TrustedHosts
 
 L'agent sull'host resta la modalità consigliata, perché non conserva credenziali. Alcune funzioni lo richiedono: ad
 esempio, per sfogliare i file di un punto di ripristino serve un host con il proprio agent.
+
+### 5i. Cluster di failover (anche in workgroup, con o senza Storage Spaces Direct)
+
+Installa l'agent su **ogni nodo**: il portale legge il cluster ed esegue la manutenzione dei nodi tramite qualsiasi nodo
+il cui agent è connesso, quindi continua a funzionare quando un nodo o il suo agent sono fermi.
+
+1. **Inventario > Aggiungi host > Cluster di failover**: dai un nome al cluster ed elenca i nodi (uno per riga, ad
+   esempio `HV01`, `HV02`), oppure seleziona host già presenti nel portale. Ogni nuovo nodo riceve il proprio token e la
+   propria guida di installazione; l'elenco mostra ogni nodo come *connesso* appena il suo agent si registra.
+2. Su ogni nodo installa l'agent con il comando della sua guida, che include **`-ClusterAccess Full`** (nel setup
+   grafico: *Nodo di un cluster di failover*). Viene eseguito `Grant-ClusterAccess` per l'account del servizio
+   dell'agent, che resta fuori dagli *Administrators*. `-ClusterAccess ReadOnly` basta per vedere lo stato;
+   manutenzione e VM altamente disponibili richiedono `Full`. Su un agent già installato:
+   `.\Install-Agent.ps1 -Source ..\agent -ClusterAccess Full`, oppure su un nodo
+   `Grant-ClusterAccess -User 'NT SERVICE\HvPortalAgent' -Full`.
+3. Sui nodi serve il modulo PowerShell del Failover Clustering (`Install-WindowsFeature RSAT-Clustering-PowerShell`).
+4. Le VM altamente disponibili vengono create su un volume condiviso del cluster (`C:\ClusterStorage\...`). Se l'agent è
+   limitato con `-StorageFolders`, includi le cartelle dei CSV (ad esempio `C:\ClusterStorage\Volume1`).
+
+La pagina del cluster mostra i problemi con cosa fare, la capacità in caso di perdita di un nodo, i nodi (con *Metti in
+manutenzione / Esci dalla manutenzione*), lo storage (CSV, pool, volumi, dischi e riparazioni di Storage Spaces Direct),
+quorum e witness, reti e ruoli. La manutenzione viene rifiutata quando il cluster non può fare a meno del nodo (un
+altro nodo fermo o sospeso, riparazioni in corso, witness non disponibile con due nodi, VM che non ci starebbero).
+Vedi ADR-041 in [docs/decisions.md](docs/decisions.md).
 
 ## 6. Accesso con Microsoft Entra ID (facoltativo)
 

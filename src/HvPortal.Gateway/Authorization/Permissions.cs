@@ -32,6 +32,8 @@ public static class Permissions
     public const string JobsReadAll = "jobs.read.all";
     public const string JobsCancelAll = "jobs.cancel.all";
     public const string HostsManage = "hosts.manage";
+    /// <summary>Put cluster nodes in maintenance and bring them back (ADR-041).</summary>
+    public const string HostsMaintenance = "hosts.maintenance";
     public const string HostFilesRead = "host.files.read";
     public const string HostFilesWrite = "host.files.write";
     public const string UsersManage = "users.manage";
@@ -73,7 +75,8 @@ public static class Permissions
         new(GroupsManage, "Create, move and delete VM groups and their membership", GlobalOnly, true),
         new(JobsReadAll, "Read jobs of all users", GlobalOnly, true),
         new(JobsCancelAll, "Cancel jobs of all users", GlobalOnly, true),
-        new(HostsManage, "Enroll and revoke hosts", GlobalOnly, true, Privileged: true),
+        new(HostsManage, "Enroll and revoke hosts, create clusters and choose their nodes", GlobalOnly, true, Privileged: true),
+        new(HostsMaintenance, "Put nodes of a failover cluster in maintenance (their VMs are moved to the other nodes) and bring them back", HostScopes, true),
         new(HostFilesRead, "Browse host folders and download files (system folders excluded); on a folder: only its storage paths", HostOrFolder, true),
         new(HostFilesWrite, "Upload files to host folders (system folders excluded); on a folder: only its storage paths", HostOrFolder, true),
         new(UsersManage, "Manage users", GlobalOnly, true, Privileged: true),
