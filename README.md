@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.8.0 preview" src="https://img.shields.io/badge/version-0.8.0%20preview-2563eb">
+  <img alt="Version 0.9.0 preview" src="https://img.shields.io/badge/version-0.9.0%20preview-2563eb">
   <img alt="Hyper-V on Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="No telemetry" src="https://img.shields.io/badge/telemetry-none-16a34a">
@@ -47,6 +47,9 @@ you what VMware administrators get from vCenter, for Hyper-V:
   to a tamper-evident audit log. An outcome that cannot be verified is shown as such, never as a success.
 - **Backups included.** Scheduled backups of VMs to a NAS or a local folder, verified copies, automatic restore tests,
   and restores of a whole VM, one disk or single files.
+- **Failover clusters too.** Workgroup or domain, with or without Storage Spaces Direct: an agent on every node, so
+  the portal keeps working when a node or its agent is down. Cluster health, capacity if a node is lost, safe node
+  maintenance and highly available VMs.
 - **Know what your VMs really use.** Ten days of CPU, memory, disk and network history per VM, with charts that tell
   you what to look for.
 - **Built on least privilege.** The agent on each host is only a member of *Hyper-V Administrators*, opens the
@@ -86,6 +89,19 @@ you what VMware administrators get from vCenter, for Hyper-V:
   for 10 days, cards with the peaks (CPU, RAM, memory pressure, IOPS, disk data, network) and six charts, each with
   *what it shows* and *what to look for*.
 
+### Failover clusters (0.9.0)
+- **One agent per node, no single point of failure**: the cluster is read and managed through any node whose agent is
+  connected. Workgroup clusters (DNS access point) work: no domain account, no stored credentials.
+- **Cluster status with what to do**: nodes, quorum and witness, cluster networks, shared volumes (free space,
+  redirected access), Storage Spaces Direct (pools, volumes, physical disks, repair jobs), roles and failed resources;
+  checked every 2 minutes, with e-mail or webhook when it gets worse.
+- **Capacity if a node is lost**: whether the highly available VMs of each node fit on the others (memory), vCPU per
+  core with one node stopped, S2D pool reserve.
+- **Node maintenance**: drain plus storage maintenance mode, and back with optional failback. Refused when the cluster
+  cannot do without the node (another node down, repair running, witness offline, VMs that would not fit).
+- **New VMs on the node you choose** (with a suggestion), **highly available** on a cluster shared volume; moves between
+  nodes through the cluster; VMs moved by a failover keep their groups, permissions and history.
+
 ### Virtual machines
 - **Power**: start, guest shutdown and restart, turn off, reset, pause, resume, save.
 - **Creation wizard**: generation 1 or 2, CPU, memory, disks, network and VLAN, ISO, Secure Boot and virtual TPM,
@@ -98,7 +114,7 @@ you what VMware administrators get from vCenter, for Hyper-V:
 
 ### Groups, permissions and limits
 - **Folders of VMs**, nested, mirrored on the hosts as native Hyper-V VM groups.
-- **Role-based access**: global, host, group or VM scope; deny by default, explicit deny wins. Built-in roles from
+- **Role-based access**: global, cluster, host, group or VM scope; deny by default, explicit deny wins. Built-in roles from
   *Platform administrator* to *Read only*, plus custom roles.
 - **Limits per folder**: quotas (VMs, vCPU, memory, disk, private networks) and the hosts, networks and storage paths
   the folder may use, checked when an operation is requested and again when it runs.
@@ -181,6 +197,7 @@ backups and live-migration prerequisites, is in **[INSTALL.md](INSTALL.md)**.
 |---|---|
 | Gateway | Windows Server 64-bit (self-contained, no .NET to install; the graphical setup needs .NET Framework 4.7.2, included in Windows Server 2019+), or a Linux Docker host (`linux/amd64`) |
 | Hyper-V hosts | Windows Server with the Hyper-V role and its PowerShell module; outbound TCP to the gateway's agent port. Domain membership not required. |
+| Failover clusters | The agent on every node, installed with `-ClusterAccess Full` (or *Node of a failover cluster* in the setup); the Failover Clustering PowerShell module on the nodes ([install guide](INSTALL.md#5i-failover-clusters-also-workgroup-clusters-with-or-without-storage-spaces-direct)) |
 | Browsers | Current Edge, Chrome or Firefox |
 | Internet | Not required. Used only by what you turn on: Entra ID sign-in, SMTP, webhooks |
 
@@ -215,10 +232,11 @@ More: [architecture](docs/architecture.md), [design decisions](docs/decisions.md
 
 ## Project status
 
-HvPortal 0.8.0 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
+HvPortal 0.9.0 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
 tested against a test double of the agent, and the checks still to run on real hosts are listed in the
 [real-host test plan](docs/verification/real-host-test-plan.md). Start in a lab or on non-critical hosts, and do not
 expose the portal or the agent port to the Internet. HvPortal has not had an independent security review yet.
+Failover cluster support (0.9.0) has not been validated on a real cluster yet (test plan V72–V80).
 
 ## Documentation
 

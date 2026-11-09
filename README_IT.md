@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versione 0.8.0 anteprima" src="https://img.shields.io/badge/versione-0.8.0%20anteprima-2563eb">
+  <img alt="Versione 0.9.0 anteprima" src="https://img.shields.io/badge/versione-0.9.0%20anteprima-2563eb">
   <img alt="Hyper-V su Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="Nessuna telemetria" src="https://img.shields.io/badge/telemetria-nessuna-16a34a">
@@ -48,6 +48,9 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
   successo.
 - **Backup inclusi.** Backup pianificati delle VM su NAS o cartella locale, copie verificate, test di ripristino
   automatici, ripristino di un'intera VM, di un disco o di singoli file.
+- **Anche i cluster di failover.** In workgroup o in dominio, con o senza Storage Spaces Direct: un agent su ogni
+  nodo, così il portale continua a funzionare se un nodo o il suo agent sono fermi. Stato del cluster, capacità in caso
+  di perdita di un nodo, manutenzione sicura dei nodi e VM altamente disponibili.
 - **Sai davvero cosa usano le tue VM.** Dieci giorni di storico di CPU, memoria, dischi e rete per ogni VM, con grafici
   che spiegano cosa guardare.
 - **Costruito sul minimo privilegio.** L'agent su ogni host è solo membro di *Hyper-V Administrators*, apre lui la
@@ -88,6 +91,21 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
   campione ogni 5 minuti conservato per 10 giorni, card con i picchi (CPU, RAM, pressione della memoria, IOPS, dati
   disco, rete) e sei grafici, ognuno con *cosa mostra* e *cosa guardare*.
 
+### Cluster di failover (0.9.0)
+- **Un agent per nodo, nessun punto unico di guasto**: il cluster viene letto e gestito tramite qualsiasi nodo il cui
+  agent è connesso. Funzionano anche i cluster in workgroup (punto di accesso DNS): nessun account di dominio, nessuna
+  credenziale memorizzata.
+- **Stato del cluster con cosa fare**: nodi, quorum e witness, reti del cluster, volumi condivisi (spazio libero,
+  accesso reindirizzato), Storage Spaces Direct (pool, volumi, dischi fisici, riparazioni in corso), ruoli e risorse in
+  errore; controllato ogni 2 minuti, con e-mail o webhook quando peggiora.
+- **Capacità in caso di perdita di un nodo**: se le VM altamente disponibili di ogni nodo stanno sugli altri (memoria),
+  vCPU per core con un nodo fermo, riserva del pool S2D.
+- **Manutenzione dei nodi**: svuotamento più manutenzione storage, e rientro con failback facoltativo. Rifiutata quando
+  il cluster non può fare a meno del nodo (altro nodo fermo, riparazioni in corso, witness non disponibile, VM che non ci
+  starebbero).
+- **Nuove VM sul nodo che scegli** (con un suggerimento), **altamente disponibili** su un volume condiviso del cluster;
+  spostamenti tra nodi tramite il cluster; le VM spostate da un failover mantengono gruppi, permessi e storico.
+
 ### Macchine virtuali
 - **Alimentazione**: avvio, arresto e riavvio del guest, spegnimento, reset, pausa, ripresa, salvataggio.
 - **Procedura guidata di creazione**: generazione 1 o 2, CPU, memoria, dischi, rete e VLAN, ISO, Secure Boot e TPM
@@ -103,7 +121,7 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
 
 ### Gruppi, permessi e limiti
 - **Cartelle di VM** annidate, riportate sugli host come gruppi di VM nativi di Hyper-V.
-- **Accesso basato sui ruoli**: ambito globale, host, gruppo o VM; tutto negato per default, il divieto esplicito vince.
+- **Accesso basato sui ruoli**: ambito globale, cluster, host, gruppo o VM; tutto negato per default, il divieto esplicito vince.
   Ruoli predefiniti da *Amministratore della piattaforma* a *Sola lettura*, più ruoli personalizzati.
 - **Limiti per cartella**: quote (VM, vCPU, memoria, disco, reti private) e gli host, le reti e i percorsi di storage
   che la cartella può usare, controllati alla richiesta e di nuovo all'esecuzione.
@@ -189,6 +207,7 @@ Docker, il tuo certificato, i prerequisiti per backup e live migration, è in **
 |---|---|
 | Gateway | Windows Server a 64 bit (autonomo, nessun .NET da installare; il setup grafico richiede .NET Framework 4.7.2, incluso da Windows Server 2019), oppure un host Docker Linux (`linux/amd64`) |
 | Host Hyper-V | Windows Server con il ruolo Hyper-V e il suo modulo PowerShell; TCP in uscita verso la porta degli agent del gateway. Non serve essere in dominio. |
+| Cluster di failover | L'agent su ogni nodo, installato con `-ClusterAccess Full` (o *Nodo di un cluster di failover* nel setup); il modulo PowerShell del Failover Clustering sui nodi ([guida di installazione](INSTALL_IT.md#5i-cluster-di-failover-anche-in-workgroup-con-o-senza-storage-spaces-direct)) |
 | Browser | Edge, Chrome o Firefox aggiornati |
 | Internet | Non necessario. Lo usa solo ciò che attivi: accesso con Entra ID, SMTP, webhook |
 
@@ -224,11 +243,12 @@ Approfondimenti: [architettura](docs/architecture.md), [decisioni di progetto](d
 
 ## Stato del progetto
 
-HvPortal 0.8.0 è un'**anteprima**. Ha un'ampia suite di test automatici; le operazioni che richiedono un host Hyper-V
+HvPortal 0.9.0 è un'**anteprima**. Ha un'ampia suite di test automatici; le operazioni che richiedono un host Hyper-V
 reale sono provate contro un sostituto di prova dell'agent, e le verifiche ancora da fare su host reali sono elencate
 nel [piano di test sugli host reali](docs/verification/real-host-test-plan.md). Comincia in laboratorio o su host non
 critici, e non esporre il portale né la porta degli agent su Internet. HvPortal non ha ancora avuto una revisione di
-sicurezza indipendente.
+sicurezza indipendente. Il supporto ai cluster di failover (0.9.0) non è ancora stato verificato su un cluster reale
+(piano di test V72–V80).
 
 ## Documentazione
 
