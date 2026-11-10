@@ -271,6 +271,9 @@ Format: context → decision → consequences. Status of all records: **accepted
   job dialog warns about the nodes of the clusters of the chosen VMs. When the portal chooses the host of a
   repository check or rescan and no connected host can use it, the error lists every host with its reason (agent not
   connected, too old, no staging folder) instead of the reason of the first host only. Real-host plan V84.
+  0.9.3: a share is often reachable from some hosts only (a NAS on one host's network): the *Rescan* dialog lets the
+  user choose the host (default: the host of the last check, then one that can use the repository), and when the portal
+  chooses, the host of the last check comes first when it is connected and can use the repository.
 
 ## ADR-040 License: PolyForm Shield License 1.0.0 (source available)
 - **Context**: NEXQ wants HvPortal to be free for everyone, companies included, with public source code, but does not
@@ -553,7 +556,10 @@ Format: context → decision → consequences. Status of all records: **accepted
     (`Hosts.BackupStagingPath`, `hosts.manage` or `backup.manage`), which must hold a full copy of the largest VM. The
     path of a repository cannot be changed (its points live there). `GetBackupReadiness` checks the Hyper-V module and
     cmdlets, the checkpoint setting, backup integration service and heartbeat of the VMs, a write test and the free
-    space of the repository and the staging folder.
+    space of the repository and the staging folder. 0.9.3: files are written into the repository with
+    `Write-RepositoryText` (provider path + `[IO.File]::WriteAllText`), never `Set-Content`: on such a drive Windows
+    PowerShell 5.1 writes to `\\server\share\server\share\server\share\…` (reproduced on the development machine; the
+    write test and every manifest failed); real NAS with credentials in plan V86.
   - **Jobs and schedule**: a backup job protects VMs and groups (with their sub-groups, resolved at every run) into one
     repository, with a schedule (`daily`: days of the week and `HH:mm` times in a time zone, a time skipped by daylight
     saving runs one hour later; `hourly`: every 1–24 h; `manual`), retention, checkpoint type, verify after copy,

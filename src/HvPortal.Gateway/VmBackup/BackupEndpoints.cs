@@ -381,9 +381,10 @@ public static class BackupEndpoints
     }
 
     /// <summary>
-    /// The host that checks or scans a repository: the given one, the repository's own host, or (shares) a connected host
-    /// that can use it (with credentials: one with a backup staging folder), else the first connected host, so that the
-    /// caller can say why it cannot.
+    /// The host that checks or scans a repository: the given one, the repository's own host, or (shares) the host of the
+    /// last check when it is connected and can use it (a NAS is often reachable from some hosts only), else a connected
+    /// host that can use it (with credentials: one with a backup staging folder), else the first connected host, so that
+    /// the caller can say why it cannot.
     /// </summary>
     private static async Task<ManagedHost?> CheckingHostAsync(PortalDbContext db, IAgentDispatcher agents, BackupRepository repo, Guid? requested, CancellationToken ct)
     {
@@ -397,7 +398,8 @@ public static class BackupEndpoints
             return null;
         }
         var connected = hosts.Where(h => agents.IsConnected(h.Id) && agents.ProtocolVersionOf(h.Id) >= 9).ToList();
-        return connected.FirstOrDefault(h => BackupRules.CanUse(repo, h) is null) ?? connected.FirstOrDefault();
+        return connected.FirstOrDefault(h => h.Id == repo.LastCheckHostId && BackupRules.CanUse(repo, h) is null)
+            ?? connected.FirstOrDefault(h => BackupRules.CanUse(repo, h) is null) ?? connected.FirstOrDefault();
     }
 
     /// <summary>Why no host can read a share repository now: every active host with its reason (at most 12).</summary>
@@ -411,7 +413,7 @@ public static class BackupEndpoints
             : "usable"));
         var more = hosts.Count > 12 ? $"; and {hosts.Count - 12} more" : "";
         var staging = repo.PasswordEncrypted is null ? "" :
-            " The repository uses credentials, so every host that reads or writes it needs a backup staging folder: host page > Settings, or for every node of a cluster at once: cluster page > Actions > Backup staging folder.";
+            " The repository uses credentials, so the hosts that read or write it need a backup staging folder: set it on the hosts that reach this share (host page > Settings; for every node of a cluster at once: cluster page > Nodes > Set on all nodes), then choose one of them in Rescan.";
         return $"No connected host can read this repository ({string.Join("; ", reasons)}{more}).{staging}";
     }
 

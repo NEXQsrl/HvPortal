@@ -18,6 +18,8 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
     private readonly ConcurrentDictionary<Guid, (Guid HostId, string Name, VmPowerState State, long UptimeMs)> _vms = new();
 
     public ConcurrentQueue<AgentCommand> Received { get; } = new();
+    /// <summary>Commands sent to host agents with the host they were sent to.</summary>
+    public ConcurrentQueue<(Guid HostId, AgentCommand Command)> ReceivedBy { get; } = new();
 
     /// <summary>Size of the VMs created through NewVm (vCPU, memory, dynamic maximum, disk), reported by inventory and disk listings.</summary>
     private readonly ConcurrentDictionary<Guid, (int Processors, long MemoryMb, long? MaximumMb, bool Dynamic, long DiskGb)> _specs = new();
@@ -132,6 +134,7 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
             return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.Rejected, Message = "update the agent" });
         }
         Received.Enqueue(command);
+        ReceivedBy.Enqueue((hostId, command));
         switch (command.Kind)
         {
             case AgentCommandKind.GetVm:

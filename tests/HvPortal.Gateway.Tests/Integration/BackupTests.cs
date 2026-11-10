@@ -71,6 +71,41 @@ public sealed class BackupTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_share_reached_by_one_host_is_rescanned_from_the_host_chosen_or_from_the_last_check()
+    {
+        var (reaches, _) = await _app.CreateHostAsync("bk-nas-host");
+        var (other, _) = await _app.CreateHostAsync("bk-other-host");
+        var admin = await UserAsync("bk-rescan", BuiltInRoles.BackupOperator);
+        var repoId = await RepositoryAsync(admin, credentials: true);
+
+        // No host has a staging folder: every host is named with its reason, and the message says where to set it.
+        var none = await admin.PostJsonAsync($"/api/v1/backup/repositories/{repoId}/rescan", new { });
+        var detail = (await none.JsonAsync()).GetProperty("detail").GetString()!;
+        Assert.Contains("bk-nas-host: no backup staging folder", detail, StringComparison.Ordinal);
+        Assert.Contains("bk-other-host: no backup staging folder", detail, StringComparison.Ordinal);
+        Assert.Contains("cluster page > Nodes > Set on all nodes", detail, StringComparison.Ordinal);
+
+        // The host chosen in the dialog is used; without a staging folder only its own reason is given.
+        await SetStagingAsync(reaches, @"D:\Staging");
+        var refused = await admin.PostJsonAsync($"/api/v1/backup/repositories/{repoId}/rescan", new { hostId = other });
+        var refusedBody = await refused.JsonAsync();
+        Assert.Equal("staging_required", refusedBody.GetProperty("code").GetString());
+        Assert.Contains("bk-other-host", refusedBody.GetProperty("detail").GetString()!, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostJsonAsync($"/api/v1/backup/repositories/{repoId}/rescan", new { hostId = reaches })).StatusCode);
+
+        // Without a choice, the host of the last check comes first when it can use the repository.
+        await SetStagingAsync(other, @"D:\Staging");
+        await _app.WithDbAsync(async db =>
+        {
+            (await db.BackupRepositories.FirstAsync(r => r.Id == repoId)).LastCheckHostId = reaches;
+            await db.SaveChangesAsync();
+        });
+        var before = _app.Agent.ReceivedBy.Count(c => c.Command.Operation == HvOperation.ListBackups && c.HostId == reaches);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostJsonAsync($"/api/v1/backup/repositories/{repoId}/rescan", new { })).StatusCode);
+        Assert.Equal(before + 1, _app.Agent.ReceivedBy.Count(c => c.Command.Operation == HvOperation.ListBackups && c.HostId == reaches));
+    }
+
+    [Fact]
     public async Task Repositories_are_managed_by_backup_managers_and_their_password_never_leaves_the_gateway_except_inside_a_command()
     {
         var (hostId, vms) = await _app.CreateHostAsync("bk-host", ("web01", VmPowerState.Running));

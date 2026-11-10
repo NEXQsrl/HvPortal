@@ -1,5 +1,6 @@
 import { FolderOpen, LoaderCircle, Play } from 'lucide-react';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { del, post, put } from '@/api/client';
 import { ErrorAlert, Mono, Notice } from '@/components/common';
 import { ActionDialog, Field } from '@/components/dialogs';
@@ -196,14 +197,33 @@ export function CheckRepositoryDialog({ repo, onChecked, onClose }: { repo: Repo
 /** Rescan (POST /backup/repositories/{id}/rescan): restore points found in the folder and unknown to the portal are added back, Unverified. */
 export function RescanRepositoryDialog({ repo, onDone, onClose }: { repo: Repository; onDone: () => void; onClose: () => void }) {
   const { t } = useI18n();
+  const inv = useInventory();
+  // A share may be reachable from some hosts only: the user chooses the host (default: the one of the last check, then
+  // one that can use the repository, i.e. with a staging folder when it has credentials).
+  const candidates = inv.hosts.filter((h) => h.status === 'Active' && h.connected && h.agent7 && (!repo.hostId || h.id === repo.hostId));
+  const usable = (h: (typeof candidates)[number]) => !repo.hasCredentials || !!h.backupStagingPath;
+  const [hostId, setHostId] = useState(repo.hostId
+    ?? candidates.find((h) => h.id === repo.lastCheckHostId && usable(h))?.id ?? candidates.find(usable)?.id ?? candidates[0]?.id ?? '');
+  const chosen = candidates.find((h) => h.id === hostId);
   return (
-    <ActionDialog title={t('bk.repo.rescanTitle', { name: repo.name })} confirmLabel={t('bk.repo.rescan')} onClose={onClose}
+    <ActionDialog title={t('bk.repo.rescanTitle', { name: repo.name })} confirmLabel={t('bk.repo.rescan')} onClose={onClose} disabled={candidates.length === 0}
       onConfirm={async () => {
-        const r = await post<RescanResponse>(`/api/v1/backup/repositories/${repo.id}/rescan`, {});
+        const r = await post<RescanResponse>(`/api/v1/backup/repositories/${repo.id}/rescan`, { hostId: hostId || undefined });
         toast.success(t('bk.repo.rescanDone', { found: r.found, added: r.added }), r.added > 0 ? t('bk.repo.rescanVerify') : undefined);
         onDone();
       }}>
       <p className="text-sm">{t('bk.repo.rescanHelp')}</p>
+      <Field label={t('bk.repo.rescanFrom')} htmlFor="rs-host" hint={repo.isShare ? t('bk.repo.rescanFromHint') : undefined}>
+        <NativeSelect id="rs-host" value={hostId} disabled={!!repo.hostId} onChange={(e) => setHostId(e.target.value)}>
+          {candidates.length === 0 && <option value="">{t('bk.repo.noCheckHost')}</option>}
+          {candidates.map((h) => <option key={h.id} value={h.id}>{h.displayName}{usable(h) ? '' : ` — ${t('bk.host.noStaging')}`}</option>)}
+        </NativeSelect>
+      </Field>
+      {chosen && !usable(chosen) && (
+        <Notice kind="warn">{t('bk.repo.rescanNoStaging', { host: chosen.displayName })}{' '}
+          <Link className="underline" to={chosen.clusterId ? `/clusters/${chosen.clusterId}?tab=nodes` : `/hosts/${chosen.id}?tab=settings`} onClick={onClose}>{t('bk.repo.rescanSetStaging')}</Link>
+        </Notice>
+      )}
       <Notice kind="info">{t('bk.repo.rescanVerify')}</Notice>
     </ActionDialog>
   );

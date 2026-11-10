@@ -1,5 +1,23 @@
 # Testing
 
+## v0.9.3 — rescan of a share reachable from one host only (2026-11-10, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 249 | pass — `BackupTests` adds 1: with no staging folder every host is named with its reason and the message points to *cluster page > Nodes > Set on all nodes*; a rescan from the host chosen in the dialog uses that host (refused with its own reason when it has no staging folder, accepted when it has one); without a choice the host of the last check is used first when it can use the repository (the fake agent now records the host of each command) |
+| `tests/HvPortal.Agent.Tests` | 135 | pass — `Protocol9Tests` adds 1: no file is written with `Set-Content`/`Add-Content`/`Out-File`; the repository write test and the restore point manifest go through `Write-RepositoryText` |
+| `web`: `tsc -b`, `vitest` | 5 | pass — *Rescan* dialog with the host picker (hosts without a staging folder marked, link to set it) |
+
+Repository check on a share opened with credentials (reported on a real host: *Could not find a part of the path
+'\\server\share\server\share\server\share\.hvportal-write-test-…'*): reproduced on the development machine in Windows
+PowerShell 5.1 with a drive `New-PSDrive -Root \\localhost\C$`. On such a drive `Set-Content -LiteralPath` writes the
+share path three times, both for a share root and for a sub-folder, while `New-Item`, `Copy-Item`, `Get-ChildItem` and
+`Get-Content` work. The same `Set-Content` wrote the manifest of every backup, so the backups to those repositories
+would have failed at their last step. `Write-RepositoryText` (the provider path + `[IO.File]::WriteAllText`) was run on
+the development machine on a drive at a share root, on a drive at a sub-folder and on a local folder: the write test and
+the manifest are written and read back (`Get-Content -Raw | ConvertFrom-Json`). Not run here: a drive opened with the
+`-Credential` of a NAS (real-host plan V84).
+
 ## v0.9.2 — faster console (2026-11-10, development machine)
 
 | Suite | Count | Result |

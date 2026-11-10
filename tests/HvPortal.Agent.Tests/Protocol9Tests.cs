@@ -395,4 +395,18 @@ public sealed class Protocol9Tests
         Assert.DoesNotMatch(@"(^|[;{(])\s*Set-VMHost\b", script);
         Assert.Contains("Set-VMNetworkAdapterVlan -VMNetworkAdapter $nic -Access -VlanId", Branch(script, "NewVm"), StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Files_in_a_repository_are_not_written_with_set_content()
+    {
+        // 0.9.3 regression: on a drive of a share opened with credentials, Set-Content in Windows PowerShell 5.1 wrote to
+        // \\server\share\server\share\server\share\... and the repository check failed ("Could not find a part of the
+        // path"); the manifest of every backup to such a repository would have failed the same way.
+        var script = Script();
+        Assert.DoesNotMatch(@"\bSet-Content\s+-", script);
+        Assert.DoesNotMatch(@"\b(Add-Content|Out-File)\b", script);
+        Assert.Contains("Write-RepositoryText $probe 'HvPortal write test'", Branch(script, "GetBackupReadiness"), StringComparison.Ordinal);
+        Assert.Contains("Write-RepositoryText (Join-Path $pointPath 'hvportal-backup.json')", Branch(script, "BackupVm"), StringComparison.Ordinal);
+        Assert.Contains("[IO.File]::WriteAllText($full, $text, $encoding)", script, StringComparison.Ordinal);
+    }
 }

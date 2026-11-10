@@ -259,6 +259,14 @@ function Close-BackupTarget($repo) {
     if ($repo -and $repo.drive) { Remove-PSDrive -Name $repo.drive -Force -ErrorAction SilentlyContinue }
 }
 
+function Write-RepositoryText([string]$path, [string]$text, [Text.Encoding]$encoding) {
+    # Not Set-Content: on a drive of a share (New-PSDrive -Root \\server\share) Windows PowerShell 5.1 writes to
+    # \\server\share\server\share\server\share\... ("Could not find a part of the path"), while New-Item, Copy-Item and
+    # Get-Content work. The file is written through the provider path, served by the connection the drive opened.
+    $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path)
+    [IO.File]::WriteAllText($full, $text, $encoding)
+}
+
 function Assert-PointFolder([string]$folder, [guid]$pointId) {
     if ($folder -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\\[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
         -not $folder.EndsWith('\' + $pointId.ToString('D'))) { throw 'Invalid restore point folder.' }
@@ -1547,7 +1555,7 @@ try {
                 try {
                     $repo = Open-BackupTarget $a.target
                     $probe = Join-Path $repo.root ('.hvportal-write-test-' + [guid]::NewGuid().ToString('N'))
-                    Set-Content -LiteralPath $probe -Value 'HvPortal write test' -Encoding ASCII
+                    Write-RepositoryText $probe 'HvPortal write test' ([Text.Encoding]::ASCII)
                     Remove-Item -LiteralPath $probe -Force
                     $how = $(if ($repo.drive) { 'with the stored credentials' } elseif ($repo.share) { 'with the computer account of this host' } else { 'with the agent service account' })
                     [void]$checks.Add(@{ key = 'repository'; status = 'Ok'; message = "Repository $([string]$a.target.path) reachable and writable $how."; fix = $null })
@@ -1664,7 +1672,7 @@ try {
                     warnings = @($warnings)
                 }
                 # Written last: a folder without manifest is an incomplete restore point.
-                Set-Content -LiteralPath (Join-Path $pointPath 'hvportal-backup.json') -Value (ConvertTo-Json -InputObject $manifest -Depth 6) -Encoding UTF8
+                Write-RepositoryText (Join-Path $pointPath 'hvportal-backup.json') (ConvertTo-Json -InputObject $manifest -Depth 6) (New-Object System.Text.UTF8Encoding $true)
                 [void]$applied.Add('manifest')
                 Write-Response $true $manifest $null $applied
             } catch {
