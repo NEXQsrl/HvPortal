@@ -130,6 +130,8 @@ namespace HvPortal.Setup
         public bool OpenFirewall { get; set; }
         public List<string> UiRemoteAddress { get; set; } = new List<string> { "LocalSubnet" };
         public List<string> AgentRemoteAddress { get; set; } = new List<string> { "LocalSubnet" };
+        /// <summary>No updater task: the gateway is updated by hand only (Install-Gateway -DisableRemoteUpdate).</summary>
+        public bool DisableRemoteUpdate { get; set; }
 
         /// <summary>Error codes (keys of the setup texts); empty when everything is valid.</summary>
         public List<string> Validate()
@@ -172,6 +174,10 @@ namespace HvPortal.Setup
             if (SetupRules.NormalizeThumbprint(UiCertificateThumbprint) is string thumbprint)
             {
                 p["UiCertificateThumbprint"] = thumbprint;
+            }
+            if (DisableRemoteUpdate)
+            {
+                p["DisableRemoteUpdate"] = true;
             }
             if (OpenFirewall)
             {

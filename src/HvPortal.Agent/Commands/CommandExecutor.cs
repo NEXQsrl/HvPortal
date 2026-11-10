@@ -44,7 +44,7 @@ public sealed class CommandExecutor
             or HvOperation.BackupVm or HvOperation.RemoveBackup or HvOperation.RestoreBackup or HvOperation.RestoreBackupDisk
             or HvOperation.MountBackupDisk or HvOperation.DismountBackupDisk
             or HvOperation.SetVmResourceMetering or HvOperation.ResetVmResourceMetering
-            or HvOperation.SetClusterNodeMaintenance or HvOperation.MoveClusterVm,
+            or HvOperation.SetClusterNodeMaintenance or HvOperation.MoveClusterVm or HvOperation.MoveClusterSharedVolume,
         _ => false,
     };
 

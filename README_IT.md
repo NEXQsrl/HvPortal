@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versione 0.9.0 anteprima" src="https://img.shields.io/badge/versione-0.9.0%20anteprima-2563eb">
+  <img alt="Versione 0.9.1 anteprima" src="https://img.shields.io/badge/versione-0.9.1%20anteprima-2563eb">
   <img alt="Hyper-V su Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="Nessuna telemetria" src="https://img.shields.io/badge/telemetria-nessuna-16a34a">
@@ -51,6 +51,9 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
 - **Anche i cluster di failover.** In workgroup o in dominio, con o senza Storage Spaces Direct: un agent su ogni
   nodo, così il portale continua a funzionare se un nodo o il suo agent sono fermi. Stato del cluster, capacità in caso
   di perdita di un nodo, manutenzione sicura dei nodi e VM altamente disponibili.
+- **Aggiornamenti dal portale.** Quando su GitHub c'è una release più recente, un amministratore la installa dalle
+  Impostazioni: il setup viene verificato (SHA-256 e firma) e installato da un updater locale, mantenendo porte, nomi,
+  certificato e dati.
 - **Sai davvero cosa usano le tue VM.** Dieci giorni di storico di CPU, memoria, dischi e rete per ogni VM, con grafici
   che spiegano cosa guardare.
 - **Costruito sul minimo privilegio.** L'agent su ogni host è solo membro di *Hyper-V Administrators*, apre lui la
@@ -61,6 +64,14 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
 
 <table>
   <tr>
+    <td width="50%"><img src="assets/screenshots/cluster-it.png" alt="Riepilogo del cluster di failover"><br><b>Cluster di failover</b> (0.9): problemi con cosa fare, capacità se si perde un nodo, stato del cluster (risorse principali, Health Service), nodi. Le VM sono elencate sotto il cluster.</td>
+    <td width="50%"><img src="assets/screenshots/cluster-storage.png" alt="Storage del cluster"><br><b>Storage del cluster</b>: volumi condivisi e nodo proprietario (spostabile), Storage Spaces Direct, copie dei dati allineate o in ricostruzione, job di riparazione con tempo residuo.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/cluster-new-vm.png" alt="Nuova VM in un cluster"><br><b>Nuova VM in un cluster</b>: scegli il nodo, con stato, memoria libera e un suggerimento.</td>
+    <td width="50%"><img src="assets/screenshots/updates.png" alt="Aggiornamenti del portale"><br><b>Aggiornamenti</b> (0.9.1): l'ultima release su GitHub, installata dal portale; GitHub viene contattato solo quando lo chiedi.</td>
+  </tr>
+  <tr>
     <td width="50%"><img src="assets/screenshots/inventory.png" alt="Inventario di tutte le VM"><br><b>Inventario</b>: tutte le VM di tutti gli host, con stato, carico, memoria e uptime. Host, cartelle e tutte le VM in un unico albero.</td>
     <td width="50%"><img src="assets/screenshots/vm-summary.png" alt="Riepilogo della VM"><br><b>Pagina della VM</b>: riepilogo, console nel browser, impostazioni, dischi e rete, checkpoint, backup ed eventi.</td>
   </tr>
@@ -69,12 +80,12 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
     <td width="50%"><img src="assets/screenshots/backup-it.png" alt="Panoramica dei backup"><br><b>Backup</b>: VM protette, ultima esecuzione di ogni job, repository, punti di ripristino e ripristino file.</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/screenshots/vm-resource-use-dark.png" alt="Tema scuro"><br><b>Tema chiaro e scuro</b>, italiano e inglese, guide passo passo integrate.</td>
+    <td width="50%"><img src="assets/screenshots/cluster-dark.png" alt="Tema scuro"><br><b>Tema chiaro e scuro</b>, italiano e inglese, guide passo passo integrate.</td>
     <td width="50%"><img src="assets/screenshots/sign-in.png" alt="Accesso"><br><b>Accesso</b> con account locali e verifica in due passaggi, oppure con Microsoft Entra ID.</td>
   </tr>
 </table>
 
-<sub>Le immagini mostrano l'interfaccia reale della versione 0.8.0 con dati di esempio (host, VM e valori sono esempi).</sub>
+<sub>Le immagini mostrano l'interfaccia reale (cluster e aggiornamenti: versione 0.9.1; le altre: 0.8.0) con dati di esempio (host, cluster, VM e valori sono esempi).</sub>
 
 ## Funzionalità
 
@@ -91,20 +102,29 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
   campione ogni 5 minuti conservato per 10 giorni, card con i picchi (CPU, RAM, pressione della memoria, IOPS, dati
   disco, rete) e sei grafici, ognuno con *cosa mostra* e *cosa guardare*.
 
-### Cluster di failover (0.9.0)
+### Cluster di failover (0.9)
 - **Un agent per nodo, nessun punto unico di guasto**: il cluster viene letto e gestito tramite qualsiasi nodo il cui
   agent è connesso. Funzionano anche i cluster in workgroup (punto di accesso DNS): nessun account di dominio, nessuna
   credenziale memorizzata.
 - **Stato del cluster con cosa fare**: nodi, quorum e witness, reti del cluster, volumi condivisi (spazio libero,
   accesso reindirizzato), Storage Spaces Direct (pool, volumi, dischi fisici, riparazioni in corso), ruoli e risorse in
-  errore; controllato ogni 2 minuti, con e-mail o webhook quando peggiora.
+  errore; controllato ogni 2 minuti, con e-mail o webhook quando peggiora. Un'icona di avviso sul cluster e sul nodo
+  nell'albero, il problema scritto nella pagina del cluster e dell'host.
+- **Stato del cluster e copie dei dati** (0.9.1): il gruppo principale del cluster (nome, indirizzo IP, witness) con le
+  sue risorse, i guasti segnalati dall'Health Service di Storage Spaces Direct, se ogni volume ha tutte le copie
+  allineate, i job di mirror/resync con dati copiati, tempo trascorso e tempo residuo, e i gruppi di Storage Replica se
+  presenti.
 - **Capacità in caso di perdita di un nodo**: se le VM altamente disponibili di ogni nodo stanno sugli altri (memoria),
   vCPU per core con un nodo fermo, riserva del pool S2D.
 - **Manutenzione dei nodi**: svuotamento più manutenzione storage, e rientro con failback facoltativo. Rifiutata quando
   il cluster non può fare a meno del nodo (altro nodo fermo, riparazioni in corso, witness non disponibile, VM che non ci
   starebbero).
 - **Nuove VM sul nodo che scegli** (con un suggerimento), **altamente disponibili** su un volume condiviso del cluster;
-  spostamenti tra nodi tramite il cluster; le VM spostate da un failover mantengono gruppi, permessi e storico.
+  spostamenti tra nodi tramite il cluster; le VM spostate da un failover mantengono gruppi, permessi e storico. Le VM
+  sono elencate sotto il cluster, non sotto il nodo che le esegue in quel momento.
+- **Proprietario di un volume condiviso** (0.9.1) spostato da un nodo all'altro dalla scheda Storage.
+- **Backup delle VM del cluster su un NAS con credenziali** (0.9.1): la cartella di appoggio dei backup impostata su
+  tutti i nodi in un colpo solo, con un avviso sul cluster e sul repository quando un nodo non ce l'ha.
 
 ### Macchine virtuali
 - **Alimentazione**: avvio, arresto e riavvio del guest, spegnimento, reset, pausa, ripresa, salvataggio.
@@ -145,6 +165,10 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
 ### Gestione e integrazione
 - **Notifiche** via e-mail, Microsoft Teams, Slack o webhook; **token API di sola lettura** per i sistemi di
   monitoraggio; **API REST** con OpenAPI ([docs/api.md](docs/api.md)).
+- **Aggiornamenti del portale da GitHub** (0.9.1): controlla (su richiesta, o due volte al giorno se attivato) e
+  installa la nuova release da *Impostazioni > Sistema*. Il setup viene scaricato, il suo SHA-256 confrontato con quello
+  pubblicato con la release, e installato da un'attività pianificata di Windows solo se firmato dallo stesso editore del
+  portale installato ([come funziona](INSTALL_IT.md#9-aggiornare)).
 - **Aggiornamento degli agent dal portale** per le release firmate, accettato solo se firmato dallo stesso editore.
 - **Host senza agent** (facoltativo), tramite un agent di gestione con credenziali salvate.
 - **Backup del portale stesso** dalle Impostazioni, più copie automatiche giornaliere del suo database.
@@ -197,7 +221,8 @@ quali cartelle locali il portale può usare. L'host compare online in pochi seco
 **7. Invita il tuo team.** In **Utenti e ruoli** crea gli utenti (locali o Microsoft) e assegna i ruoli su host,
 cartelle o VM. I nuovi utenti non hanno permessi finché non glieli dai.
 
-**Aggiornamenti**: avvia il nuovo setup del gateway sul gateway, poi aggiorna gli agent dal portale (*Guida >
+**Aggiornamenti**: in *Impostazioni > Sistema > Aggiornamenti* premi *Cerca aggiornamenti*, poi *Installa aggiornamento*
+(dalla 0.9.1; oppure avvia il nuovo setup del gateway sul gateway), poi aggiorna gli agent dal portale (*Guida >
 Aggiornare i servizi Windows*) o con il nuovo setup dell'agent. Tutto il resto, compresi gli script per le installazioni automatiche,
 Docker, il tuo certificato, i prerequisiti per backup e live migration, è in **[INSTALL_IT.md](INSTALL_IT.md)**.
 
@@ -209,7 +234,7 @@ Docker, il tuo certificato, i prerequisiti per backup e live migration, è in **
 | Host Hyper-V | Windows Server con il ruolo Hyper-V e il suo modulo PowerShell; TCP in uscita verso la porta degli agent del gateway. Non serve essere in dominio. |
 | Cluster di failover | L'agent su ogni nodo, installato con `-ClusterAccess Full` (o *Nodo di un cluster di failover* nel setup); il modulo PowerShell del Failover Clustering sui nodi ([guida di installazione](INSTALL_IT.md#5i-cluster-di-failover-anche-in-workgroup-con-o-senza-storage-spaces-direct)) |
 | Browser | Edge, Chrome o Firefox aggiornati |
-| Internet | Non necessario. Lo usa solo ciò che attivi: accesso con Entra ID, SMTP, webhook |
+| Internet | Non necessario. Lo usa solo ciò che attivi o chiedi: accesso con Entra ID, SMTP, webhook, controllo degli aggiornamenti su GitHub |
 
 Windows Server 2025 è la piattaforma di riferimento, la 2022 è in valutazione: vedi la
 [matrice di compatibilità](docs/compatibility-matrix.md).
@@ -243,12 +268,12 @@ Approfondimenti: [architettura](docs/architecture.md), [decisioni di progetto](d
 
 ## Stato del progetto
 
-HvPortal 0.9.0 è un'**anteprima**. Ha un'ampia suite di test automatici; le operazioni che richiedono un host Hyper-V
+HvPortal 0.9.1 è un'**anteprima**. Ha un'ampia suite di test automatici; le operazioni che richiedono un host Hyper-V
 reale sono provate contro un sostituto di prova dell'agent, e le verifiche ancora da fare su host reali sono elencate
 nel [piano di test sugli host reali](docs/verification/real-host-test-plan.md). Comincia in laboratorio o su host non
 critici, e non esporre il portale né la porta degli agent su Internet. HvPortal non ha ancora avuto una revisione di
-sicurezza indipendente. Il supporto ai cluster di failover (0.9.0) non è ancora stato verificato su un cluster reale
-(piano di test V72–V80).
+sicurezza indipendente. Il supporto ai cluster di failover (0.9) non è ancora stato verificato su un cluster reale
+(piano di test V72–V81, V83), e l'aggiornamento dal portale non è ancora stato eseguito per intero su un server reale (V82).
 
 ## Documentazione
 

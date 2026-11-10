@@ -21,7 +21,7 @@ import { useLoad } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 import { GuideDialog } from './HostDialogs';
 
-const BYTE_ARGS = new Set(['needed', 'available', 'free', 'size', 'reserve']);
+const BYTE_ARGS = new Set(['needed', 'available', 'free', 'size', 'reserve', 'remaining']);
 
 /** Text of a cluster problem in the user's language (the server's English message when there is no translation). */
 export function useIssueText() {

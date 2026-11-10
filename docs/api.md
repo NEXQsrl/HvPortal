@@ -183,11 +183,28 @@ afterwards. Repository passwords are write-only.
 | POST `/clusters/{id}/delete` | hosts stay as standalone hosts, role assignments on the cluster deleted | `hosts.manage` + recent re-authentication |
 | GET `/hosts/{id}/maintenance?action=Enter` (or `Exit`) | live check: `allowed`, `blocking[]`, `warnings[]`, `s2d` | `hosts.maintenance` on the node |
 | POST `/hosts/{id}/maintenance` | `{action, storageMaintenance, failback, acknowledgeWarnings, idempotencyKey}` → job `host.maintenance`; 409 `maintenance_blocked` / `maintenance_warnings` | `hosts.maintenance` on the node |
+| PUT `/clusters/{id}/backup-staging` | v0.9.1: `{path, replaceExisting}` sets the backup staging folder of every node (all or nothing; nodes that have one keep it unless `replaceExisting`) → `{path, updated[], kept[{name, path}]}`; 400 `invalid_staging_path` / `drive_not_found` / `location_not_allowed` naming each node | `hosts.manage` or `backup.manage` (Global) |
+| POST `/clusters/{id}/shared-volumes/move` | v0.9.1: `{volumeName, destinationHostId, idempotencyKey}` → job `cluster.storage` (`MoveCsv`): the node becomes the owner of the CSV (data does not move); 409 `csv_not_found` / `csv_not_online` / `csv_owner_not_up` / `csv_already_owner`, 501 `agent_outdated` without a node agent 0.9.1 | `hosts.maintenance` on the destination node |
 
+`GET /clusters` also returns `problems` and `nodeProblems` (last stored read, only for who reads the cluster).
 Also: `POST /hosts/{id}/vms` accepts `vm.highlyAvailable` (location on a CSV of the node); `POST /vms/{id}/move` between
 two nodes of the same cluster queues `vm.migrate` operation `ClusterNode`; hosts carry `clusterId`, `clusterName`,
 `clusterFacts`, `clusterMismatch`, `canMaintain`; VMs carry `isClustered`; `/hosts/{id}/defaults` carries `cluster`;
 role assignments accept `scopeType: Cluster`.
+`GET /clusters/{id}` (v0.9.1) also returns `backupStagingPath` per node, `can.setBackupStaging` and
+`backup.credentialRepositories`; `GET /backup/repositories` returns `hostsWithoutStaging[{id, name, clusterId}]` to
+backup administrators (repositories with credentials).
+The cluster status report (v0.9.1) also carries `coreGroupState`, `coreResources[]`, `healthFaults[]`, `replication[]`
+and `storageSpacesDirect.jobs[].elapsedSeconds` (null when not read or with an older agent).
+
+## Endpoints added in v0.9.1 (portal updates from GitHub, ADR-042)
+
+| Method / path | What | Authorization |
+|---|---|---|
+| GET `/system/updates` | `{current, autoCheck, lastCheckAt, lastError, latest {version, tag, publishedAt, htmlUrl, gatewaySetup {name, size, hasChecksum}, agentSetup}, updateAvailable, installBlocker, installRequestedAt, installRequestedVersion, lastResult {timeUtc, status, version, message}}`; never contacts GitHub | `settings.manage` |
+| POST `/system/updates/check` | reads the latest release on GitHub now; returns the status (a failed check returns 200 with `lastError`, audited Failure) | `settings.manage` |
+| PUT `/system/updates/settings` | `{autoCheck}`: check every 12 hours (off by default) → 204 | `settings.manage` |
+| POST `/system/updates/install` | `{version}` (the latest found): download, SHA-256 check, stage, start the updater task → 202; 409 `not_latest`, `not_newer`, `no_setup`, `no_checksum`, `invalid_size`, `checksum_mismatch`, `download_failed`, `updater_failed`, `container`, `not_a_service`, `updater_missing` | `settings.manage` + recent re-authentication |
 
 ## Example (PowerShell)
 

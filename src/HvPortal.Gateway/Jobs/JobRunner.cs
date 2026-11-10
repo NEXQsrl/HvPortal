@@ -170,8 +170,9 @@ public sealed partial class JobRunner : BackgroundService
             return "agent-update:" + job.TargetId.ToString("N");
         }
         // One node of a cluster in (or out of) maintenance at a time (ADR-041).
-        if (job.Type == JobService.MaintenanceJobType)
+        if (job.Type is JobService.MaintenanceJobType or JobService.ClusterStorageJobType)
         {
+            // Node maintenance and CSV owner moves of one cluster never overlap.
             return "cluster-maintenance:" + (ReadParameters(job)?.ClusterId ?? job.TargetId).ToString("N");
         }
         if (job.TargetType == ScopeType.Host && job.Type.StartsWith("backup.", StringComparison.Ordinal) && ReadParameters(job)?.BackupPointId is { } point)
@@ -256,6 +257,8 @@ public sealed partial class JobRunner : BackgroundService
             // Protocol 11: node names were stamped from the portal's records just before (StampProtocol11Async).
             case HvOperation.SetClusterNodeMaintenance when HvOperations.FromElement<ClusterNodeMaintenanceRequest>(args) is { } maintenance:
                 return OperationValidation.Validate(maintenance) is null ? HvOperations.ToElement(maintenance) : null;
+            case HvOperation.MoveClusterSharedVolume when HvOperations.FromElement<MoveSharedVolumeRequest>(args) is { } csvMove:
+                return OperationValidation.Validate(csvMove) is null ? HvOperations.ToElement(csvMove) : null;
             case HvOperation.MoveClusterVm when vm is not null && HvOperations.FromElement<MoveClusterVmRequest>(args) is { } clusterMove:
                 var moveInCluster = clusterMove with { VmId = vm.HyperVId };
                 return OperationValidation.Validate(moveInCluster) is null ? HvOperations.ToElement(moveInCluster) : null;
@@ -286,7 +289,7 @@ public sealed partial class JobRunner : BackgroundService
                 job.LeaseOwner = null;
                 job.NotBefore = _time.GetUtcNow().AddSeconds(2);
                 job.Attempt--;
-                job.ProgressMessage = job.Type == JobService.MaintenanceJobType
+                job.ProgressMessage = job.Type is JobService.MaintenanceJobType or JobService.ClusterStorageJobType
                     ? "Waiting for the maintenance of another node of the same cluster."
                     : job.TargetType == ScopeType.Host
                     ? "Waiting for another VM creation on the same host."
@@ -473,9 +476,10 @@ public sealed partial class JobRunner : BackgroundService
 
             // A cluster node is paused or resumed by its own agent or, when that one is not connected, by another node's (ADR-041).
             var sendTo = hostId;
-            if (job.Type == JobService.MaintenanceJobType)
+            if (job.Type is JobService.MaintenanceJobType or JobService.ClusterStorageJobType)
             {
-                if (await ClusterExecutorAsync(db, host, ct) is not { } executor)
+                var minimum = job.Type == JobService.ClusterStorageJobType ? 12 : Clusters.ClusterService.Protocol;
+                if (await ClusterExecutorAsync(db, host, minimum, ct) is not { } executor)
                 {
                     await RetryOrFailUnreachableAsync(db, job, ct);
                     return;

@@ -1,5 +1,39 @@
 # Testing
 
+## v0.9.1 (third part) — backup staging folder on every node of a cluster (2026-11-10, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 245 | pass — `ClusterTests` adds 1: setting the backup staging folder of the nodes needs `hosts.manage` or `backup.manage` (refusal audited); with a share with credentials and a job protecting a VM of one node, the repository list names **both** nodes (the VM can move); a rescan chosen by the portal lists every node with its reason; a node refusing the path (no such drive) changes nothing on any node and the refusal is returned, a drive root is refused; without `replaceExisting` a node keeps its own folder; audited per host and for the cluster; afterwards no node is listed and the rescan works; the cluster view returns `can.setBackupStaging` and the number of repositories with credentials. `BackupTests` unchanged (the single-host rescan still answers `staging_required`). OpenAPI regenerated |
+| `tests/HvPortal.Agent.Tests` | 131 | not changed (no agent change) |
+| `web`: `tsc -b`, `vitest`, `vite build` | 5 | pass |
+| Visual check (static build, API stubbed, Edge headless; IT light, EN dark, phone) | 4 views × 3 | pass, no JavaScript error, no horizontal overflow at 390 px — cluster summary notice, Nodes tab section with the folder of each node and *Set on all nodes* dialog, repository list naming the host without folder |
+
+Not run on real hosts: backups of cluster VMs to a NAS with credentials from each node (real-host plan V84).
+
+## v0.9.1 (second part) — cluster state, copies of the data, Health Service and Storage Replica; portal updates from GitHub (2026-11-10, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 244 | pass — adds `PortalUpdateTests` (3, ADR-042): status, check, settings and install need `settings.manage` (3 refusals audited), GitHub is never contacted by reading the status, only by *check*; a release older than the portal is not an update, a failed check is stored and audited as Failure; install refuses a download whose SHA-256 does not match (nothing staged, updater not started), a release without checksum, a version that is not the latest found and a blocked updater (`container`), then stages the setup and `request.json` and starts the updater once (audited); only `https://github.com` / `api.github.com` URLs without user info are accepted. `ClusterRulesTests` adds 1: core cluster group / resource not online, Health Service faults (critical for Critical/Fatal), Storage Replica not in sync. `SetupLogicTests`: the gateway option `-DisableRemoteUpdate` exists in `Install-Gateway.ps1` with the type sent by the setup. OpenAPI document regenerated (4 new paths) |
+| `tests/HvPortal.Agent.Tests` | 131 | pass — the script rule test also checks that `GetClusterStatus` reads `Get-HealthFault` and `Get-SRGroup` only where those cmdlets exist (still no changing verb in the branch) |
+| PowerShell parser (7 and 5.1) on `installer\Update-HvPortalGateway.ps1`, `Common.ps1`, `Install-Gateway.ps1`, `Uninstall-HvPortal.ps1`, `Ops\HvPortal.Ops.ps1` | — | pass |
+| `web`: `tsc -b`, `vitest` (IT/EN keys, no key defined in two dictionary files), `vite build` | 5 | pass — the new vitest found that the first portal-update texts reused 4 keys of the agent updates (`upd.title`, `upd.lastOk`, ...), which replaced those texts: renamed `pupd.*`; also `vm.path` defined twice (same text, one removed) |
+| Screenshots of the README (static build, API stubbed, Edge headless, 1440×900) | 7 | pass, no JavaScript error — cluster summary (IT/EN, dark), storage tab (copies of the data, repair job with time left), nodes, new VM node picker, *Settings > System > Updates*. Sample data, not a real cluster |
+
+Not run: the updater task end to end (download from the real GitHub release, signature check, upgrade keeping the
+settings) — it needs a signed gateway installed as a service and a newer signed release (real-host plan V82); the
+Health Service, Storage Replica and core group reads on a real cluster (V83).
+
+## v0.9.1 (first part) — owner of cluster shared volumes, problems per node, VMs under the cluster, select fixes (2026-11-09, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 240 | pass — `ClusterTests` adds 2: moving the owner of a CSV needs `hosts.maintenance` (refusal audited), refuses an invalid name, a volume that does not exist, the node that already owns it and clusters with only 0.9.0 agents (`agent_outdated`), runs as job `cluster.storage` on the destination node with the node name from its inventory; the cluster list returns the problems of the last read and those of each node only to who reads the cluster status |
+| `tests/HvPortal.Agent.Tests` | 131 | pass — adds 1: `MoveClusterSharedVolume` needs protocol 12 (agent 0.9.1), is mutating, volume names validated (also a long refused input, quickly), the script branch only runs `Move-ClusterSharedVolume`. Version assertions moved to protocol 12 |
+| `web`: `tsc -b`, `vitest` (IT/EN keys), `vite build` | 4 | pass |
+| Visual check of the static build with the API stubbed (Edge headless) | IT/EN, light/dark, phone | pass — tree: VMs of a cluster under the cluster after its nodes, problem icon on the cluster and on the node (problems in the tooltip); host page with the problems of its node; Storage tab *Move owner* dialog; node picker of the new VM wizard (state, free memory, suggested node). The open list of native selects follows the dark theme (`color-scheme`): not visible in a headless screenshot, to be checked by eye |
+
 ## v0.9.0 — failover clusters: one agent per node, cluster status, capacity, node maintenance, highly available VMs (2026-11-09, development machine)
 
 | Suite | Count | Result |

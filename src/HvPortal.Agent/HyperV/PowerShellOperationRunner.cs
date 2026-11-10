@@ -304,6 +304,13 @@ public sealed class PowerShellOperationRunner
                         return "not_supported_on_remote_hosts";
                     }
                     return HvOperations.FromElement<MoveClusterVmRequest>(args) is { } moveCluster ? OperationValidation.Validate(moveCluster) : "invalid_arguments";
+                // Protocol 12: owner of a cluster shared volume.
+                case HvOperation.MoveClusterSharedVolume:
+                    if (files is { IsLocal: false })
+                    {
+                        return "not_supported_on_remote_hosts";
+                    }
+                    return HvOperations.FromElement<MoveSharedVolumeRequest>(args) is { } moveCsv ? OperationValidation.Validate(moveCsv) : "invalid_arguments";
                 case HvOperation.NewFolder:
                     return HvOperations.FromElement<NewFolderRequest>(args) is { } nf ? OperationValidation.Validate(nf) : "invalid_arguments";
                 case HvOperation.MoveVm:

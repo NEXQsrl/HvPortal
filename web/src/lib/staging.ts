@@ -1,4 +1,8 @@
 import type { Host, HostVolume } from '@/api/types';
+import { LIBRARY_PATH } from '@/lib/format';
+
+/** A local folder that can be a backup staging folder (not a drive root, no ".."). */
+export const stagingFolderOk = (p: string) => LIBRARY_PATH.test(p) && !p.includes('..') && p.length > 3;
 
 /** Drive letter of a local path ("C:\x" -> "C"), or null. */
 export function driveOf(path: string): string | null {

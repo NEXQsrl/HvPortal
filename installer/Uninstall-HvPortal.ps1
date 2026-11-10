@@ -28,7 +28,7 @@ foreach ($c in $Component) {
             & net.exe localgroup ((New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-578').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]) "NT SERVICE\$service" /delete 2>$null | Out-Null
         }
         Invoke-Sc @('delete', $service)
-        if ($c -eq 'Agent') { Unregister-AgentUpdater }
+        if ($c -eq 'Agent') { Unregister-AgentUpdater } else { Unregister-GatewayUpdater }
         # Dedicated local account created by Install-Agent -ServiceAccount: remove its rights, profile and the user.
         if ($c -eq 'Agent' -and $startName -and $startName -notlike 'NT SERVICE\*' -and $startName -ne 'LocalSystem') {
             $name = $startName.Split('\')[-1]

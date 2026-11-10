@@ -130,7 +130,7 @@ public sealed class TemplateOperationTests
         };
         var folder = $@"{Library}\{Guid.NewGuid():D}";
         var fromTemplate = new NewVmRequest { Name = "web01", TemplateDisks = [$@"{folder}\disk0.vhdx"], TemplateRoots = [Library] };
-        Assert.Equal(11, AgentProtocol.Version);
+        Assert.Equal(12, AgentProtocol.Version);
         Assert.Equal(8, AgentProtocol.RequiredVersion(Op(HvOperation.NewTemplate)));
         Assert.Equal(8, AgentProtocol.RequiredVersion(Op(HvOperation.RemoveTemplate)));
         // An older agent would ignore the template disks and create an empty VM.

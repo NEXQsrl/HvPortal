@@ -10,6 +10,7 @@ import { enTopics, itTopics } from './i18n-topics';
 import { enBackup, itBackup } from './i18n-backup';
 import { enMetrics, itMetrics } from './i18n-metrics';
 import { enCluster, itCluster } from './i18n-cluster';
+import { enUpdates, itUpdates } from './i18n-updates';
 
 const enBase = {
   'app.name': 'HvPortal',
@@ -384,7 +385,7 @@ const enBase = {
   'state.Unknown': 'Unknown',
 };
 
-const en = { ...enBase, ...enOps, ...enGuide, ...enLimits, ...enAudit, ...enTemplates, ...enInfra, ...enLogin, ...enTopics, ...enBackup, ...enMetrics, ...enCluster };
+const en = { ...enBase, ...enOps, ...enGuide, ...enLimits, ...enAudit, ...enTemplates, ...enInfra, ...enLogin, ...enTopics, ...enBackup, ...enMetrics, ...enCluster, ...enUpdates };
 type Key = keyof typeof en;
 
 const itBase: Record<keyof typeof enBase, string> = {
@@ -760,7 +761,7 @@ const itBase: Record<keyof typeof enBase, string> = {
   'state.Unknown': 'Sconosciuto',
 };
 
-const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide, ...itLimits, ...itAudit, ...itTemplates, ...itInfra, ...itLogin, ...itTopics, ...itBackup, ...itMetrics, ...itCluster };
+const it: Record<Key, string> = { ...itBase, ...itOps, ...itGuide, ...itLimits, ...itAudit, ...itTemplates, ...itInfra, ...itLogin, ...itTopics, ...itBackup, ...itMetrics, ...itCluster, ...itUpdates };
 
 export type Lang = 'it' | 'en';
 const dictionaries: Record<Lang, Record<Key, string>> = { en, it };
@@ -813,3 +814,5 @@ export function useI18n(): I18n {
 
 export type TKey = Key;
 export const dictionaryKeys = { en: Object.keys(en), it: Object.keys(it) };
+/** The English parts in merge order: a key defined in two parts would silently replace the earlier text (tested). */
+export const dictionaryParts = { enBase, enOps, enGuide, enLimits, enAudit, enTemplates, enInfra, enLogin, enTopics, enBackup, enMetrics, enCluster, enUpdates };

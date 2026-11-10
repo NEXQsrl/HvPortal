@@ -187,6 +187,7 @@ cd <release>\installer
 | `-OpenFirewall` | off | Create the inbound rules for both ports (Domain and Private firewall profiles) |
 | `-UiRemoteAddress` / `-AgentRemoteAddress` | `LocalSubnet` | Who may reach the portal port and the agent port |
 | `-InstallPath` / `-DataPath` | `C:\Program Files\HvPortal\Gateway` / `C:\ProgramData\HvPortal\Gateway` | Binaries and data |
+| `-DisableRemoteUpdate` | off | Do not register the updater task: the gateway cannot be updated from the portal ([9](#gateway)). In the graphical setup: *Allow updates of the portal from Settings > System*. |
 
 The script checks the ports and the certificate before it touches a running service. It installs the service with a
 delayed automatic start and restart on failure. The binaries are read-only for the service, and the data directory is
@@ -535,6 +536,19 @@ that need a newer agent say so ("update the agent").
 
 ### Gateway
 
+- **From the portal** (0.9.1 and later): *Settings > System > Updates*, **Check for updates**, then **Install update**
+  (needs `settings.manage` and a recent password confirmation). GitHub (`api.github.com`, `github.com` and its download
+  host) is contacted only when you press the button, or twice a day if you turn on the automatic check. The gateway
+  downloads `HvPortal.Gateway.Setup.exe` of the latest release, compares its SHA-256 with the one published with the
+  release (asset digest, or the line in the release notes) and puts it in `<data>\update`. It then starts the scheduled
+  task `\HvPortal\HvPortal Gateway Update` (SYSTEM; the gateway service account may only start it). The task:
+  1. checks the SHA-256 again and that the setup, the gateway and the installer scripts inside it are signed by the
+     **same certificate as the installed gateway** (an unsigned installation is never updated this way);
+  2. runs `Install-Gateway.ps1` of the new release with the current ports, bind address, names, certificate and data
+     folder of the service (database copy and automatic rollback as in the script update below);
+  3. writes the outcome to `<data>\update\last-result.json`, shown on the same page.
+  Not available in Docker (pull the new image instead) or when the gateway was installed with `-DisableRemoteUpdate`
+  or before 0.9.1: run the new setup once by hand. The gateway needs outbound HTTPS to GitHub only for this.
 - **Graphical setup**: run the `HvPortal.Gateway.Setup.exe` of the new version on the same server. It recognizes the
   installation, fills in the current settings and copies the database before updating. If the new version does not
   start, the previous one is restored automatically.

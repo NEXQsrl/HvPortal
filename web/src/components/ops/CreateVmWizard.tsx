@@ -1,4 +1,4 @@
-import { Check, Cpu, Disc3, FolderOpen, FolderSearch, Info, ListChecks, Network, RotateCcw, Server, Settings2, ShieldCheck, HardDrive } from 'lucide-react';
+import { Boxes, Check, Cpu, Disc3, FolderOpen, FolderSearch, Info, ListChecks, Network, RotateCcw, Server, Settings2, ShieldCheck, HardDrive } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { get, newIdempotencyKey, post } from '@/api/client';
 import type { Accepted, GroupPolicyView, HostDefaultsResponse, NewVmSpec, VmTemplate } from '@/api/ops-types';
@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { NativeSelect } from '@/components/ui/native-select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { parseVlan } from '@/components/infra/PortalNetworks';
@@ -223,22 +224,41 @@ export function CreateVmWizard({ hostId: initialHost, groupId: initialGroup, tem
         </Field>
         {tpl && <Notice kind="info">{t('tpl.wiz.notice')}</Notice>}
         <Field label={currentHost?.clusterId ? t('wiz.clusterNode') : t('wiz.host')} htmlFor="wiz-host" hint={currentHost?.clusterId ? t('wiz.clusterNodeHint') : undefined}>
-          <NativeSelect id="wiz-host" value={hostId} disabled={!!template} onChange={(e) => setHostId(e.target.value)}>
-            {hostGroups.length === 1 && hostGroups[0]!.clusterId === null
-              ? hosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)
-              : hostGroups.map((g) => (
-                <optgroup key={g.clusterId ?? 'standalone'} label={g.clusterId ? `${t('cl.cluster')} ${g.name}` : t('cl.standalone')}>
+          <Select value={hostId} disabled={!!template} onValueChange={setHostId}>
+            <SelectTrigger id="wiz-host" className="h-auto min-h-9 w-full py-1.5 data-[size=default]:h-auto">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" className="max-h-80 w-(--radix-select-trigger-width)">
+              {hostGroups.map((g) => (
+                <SelectGroup key={g.clusterId ?? 'standalone'}>
+                  {(hostGroups.length > 1 || g.clusterId) && (
+                    <SelectLabel className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                      {g.clusterId ? <Boxes className="size-3.5" /> : <Server className="size-3.5" />}{g.clusterId ? g.name : t('cl.standalone')}
+                    </SelectLabel>
+                  )}
                   {g.hosts.map((h) => {
                     const state = nodeState(h.id);
+                    const known = state && ['Up', 'Down', 'Paused', 'Joining'].includes(state) ? state : 'Unknown';
+                    const free = freeMemory(h.id);
+                    const total = inv.hostById.get(h.id)?.hardware?.totalPhysicalMemoryBytes ?? null;
                     return (
-                      <option key={h.id} value={h.id} disabled={state === 'Paused' && h.id !== hostId}>
-                        {h.displayName}{g.clusterId ? ` — ${t('wiz.nodeInfo', { state: t(('cl.state.' + (state && ['Up', 'Down', 'Paused', 'Joining'].includes(state) ? state : 'Unknown')) as TKey), free: formatBytes(freeMemory(h.id)) })}` : ''}
-                      </option>
+                      <SelectItem key={h.id} value={h.id} disabled={state === 'Paused' && h.id !== hostId} className="py-1.5">
+                        <span className={cn('size-2 shrink-0 rounded-full', !g.clusterId ? 'bg-muted-foreground/40' : state === 'Up' ? 'bg-success' : state === 'Paused' ? 'bg-warning' : 'bg-destructive')} />
+                        <span className="flex min-w-0 flex-col">
+                          <span className="flex items-center gap-1.5 font-medium">{h.displayName}
+                            {suggested?.id === h.id && <span className="rounded-full bg-primary/10 px-1.5 text-[10px] font-medium text-primary">{t('wiz.suggestedBadge')}</span>}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {g.clusterId ? `${t(('cl.state.' + known) as TKey)} · ` : ''}{t('wiz.freeOf', { free: formatBytes(free), total: formatBytes(total) })}
+                          </span>
+                        </span>
+                      </SelectItem>
                     );
                   })}
-                </optgroup>
+                </SelectGroup>
               ))}
-          </NativeSelect>
+            </SelectContent>
+          </Select>
           {suggested && suggested.id !== hostId && !template && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               {t('wiz.nodeSuggested', { node: suggested.displayName })}

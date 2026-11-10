@@ -56,7 +56,7 @@ public class NetworkOperationTests
     {
         AgentCommand Op(HvOperation op, object? args = null) =>
             new() { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.HyperVOperation, Operation = op, OperationArgs = args is null ? null : HvOperations.ToElement(args) };
-        Assert.Equal(11, AgentProtocol.Version);
+        Assert.Equal(12, AgentProtocol.Version);
         Assert.Equal(7, AgentProtocol.RequiredVersion(Op(HvOperation.ListNetAdapters)));
         Assert.Equal(7, AgentProtocol.RequiredVersion(Op(HvOperation.NewSwitch)));
         Assert.Equal(7, AgentProtocol.RequiredVersion(Op(HvOperation.RemoveSwitch)));

@@ -7,6 +7,10 @@
   - Binaries: read-only for the service. Data directory: private (SYSTEM, Administrators, service).
   - Firewall: inbound rules only for the UI port and the agent port, optionally restricted by remote address.
   - Upgrade: binaries are backed up and restored automatically if the new version does not start.
+  - Updates from the portal: a scheduled task "\HvPortal\HvPortal Gateway Update" (SYSTEM) is registered; the gateway
+    service may only start it. It installs a setup downloaded from the GitHub releases only when the setup is signed by
+    the same certificate as the installed gateway (unsigned builds are never installed this way). -DisableRemoteUpdate
+    removes the task (updates by hand only).
     The database is copied before the upgrade (service stopped) — see docs/backup-restore.md.
   - On first start the one-time setup token is written to <DataPath>\bootstrap\setup-token.txt.
 .EXAMPLE
@@ -24,7 +28,8 @@ param(
     [string]$UiCertificateThumbprint,
     [switch]$OpenFirewall,
     [string[]]$UiRemoteAddress = @('LocalSubnet'),
-    [string[]]$AgentRemoteAddress = @('LocalSubnet')
+    [string[]]$AgentRemoteAddress = @('LocalSubnet'),
+    [switch]$DisableRemoteUpdate
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
@@ -93,6 +98,16 @@ if ($UiCertificateThumbprint) {
     }
 }
 Set-ServiceEnvironment -ServiceName $service -Variables $serviceEnv
+
+# Updates from the portal (Settings > System, signed releases on GitHub): the updater task, that only the gateway service
+# account may start. It installs a setup only when it is signed by the same certificate as the installed gateway.
+if ($DisableRemoteUpdate) {
+    Unregister-GatewayUpdater
+    Write-Host 'Updates from the portal disabled (updater task removed).'
+} else {
+    $gatewaySid = (New-Object System.Security.Principal.NTAccount "NT SERVICE\$service").Translate([System.Security.Principal.SecurityIdentifier]).Value
+    Register-GatewayUpdater -SourceDirectory $PSScriptRoot -ServiceSids @($gatewaySid)
+}
 
 if ($OpenFirewall) {
     foreach ($r in @(@{ Name = 'HvPortal Gateway UI'; Port = $UiPort; Remote = $UiRemoteAddress }, @{ Name = 'HvPortal Gateway Agents'; Port = $AgentPort; Remote = $AgentRemoteAddress })) {

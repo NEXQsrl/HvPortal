@@ -132,6 +132,34 @@ public sealed class ClusterService(PortalDbContext db, IAgentDispatcher agents, 
         }
     }
 
+    /// <summary>
+    /// Problems of the last stored read (no agent call): all of them, and those about each node of the portal (issue
+    /// subject = node name or host name). Notes (Info) are left out.
+    /// </summary>
+    public async Task<(List<ClusterIssue> Issues, Dictionary<Guid, List<ClusterIssue>> ByHost)> StoredProblemsAsync(HostCluster cluster, CancellationToken ct)
+    {
+        var report = LastReport(cluster);
+        if (report is null && cluster.LastStatusError is null)
+        {
+            return ([], []);
+        }
+        var hosts = await NodesAsync(cluster.Id, ct);
+        var facts = await NodeFactsAsync(hosts, report, ct);
+        var issues = ClusterRules.Evaluate(report, facts, ClusterRules.Capacity(facts, report), cluster.LastStatusError)
+            .Where(i => i.Level != ClusterRules.Info).ToList();
+        var byHost = new Dictionary<Guid, List<ClusterIssue>>();
+        foreach (var n in facts.Where(n => n.HostId is not null))
+        {
+            var mine = issues.Where(i => i.Subject is { } s
+                && (s.Equals(n.Name, StringComparison.OrdinalIgnoreCase) || s.Equals(n.HostName, StringComparison.OrdinalIgnoreCase))).ToList();
+            if (mine.Count > 0)
+            {
+                byHost[n.HostId!.Value] = mine;
+            }
+        }
+        return (issues, byHost);
+    }
+
     public static ClusterStatusReport? LastReport(HostCluster cluster)
     {
         if (cluster.LastStatusJson is null)

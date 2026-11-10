@@ -53,6 +53,13 @@ public sealed record ClusterStatusReport
     public IReadOnlyList<ClusterRoleStatus> Roles { get; init; } = [];
     /// <summary>Resources in a failed state (Get-ClusterResource), whatever their group.</summary>
     public IReadOnlyList<ClusterResourceStatus> FailedResources { get; init; } = [];
+    /// <summary>Agent 0.9.1+. State of the core cluster group (cluster name, IP addresses, witness) and its resources.</summary>
+    public string? CoreGroupState { get; init; }
+    public IReadOnlyList<ClusterResourceStatus> CoreResources { get; init; } = [];
+    /// <summary>Agent 0.9.1+. Faults reported by the Health Service of Storage Spaces Direct (Get-HealthFault).</summary>
+    public IReadOnlyList<ClusterHealthFault> HealthFaults { get; init; } = [];
+    /// <summary>Agent 0.9.1+. Storage Replica groups of the node that read the report (empty when Storage Replica is not used).</summary>
+    public IReadOnlyList<StorageReplicaStatus> Replication { get; init; } = [];
     public IReadOnlyList<string> Errors { get; init; } = [];
 }
 
@@ -168,6 +175,31 @@ public sealed record ClusterStorageJobStatus
     public int? PercentComplete { get; init; }
     public long? BytesTotal { get; init; }
     public long? BytesProcessed { get; init; }
+    /// <summary>Agent 0.9.1+. Seconds the job has been running (Get-StorageJob ElapsedTime).</summary>
+    public long? ElapsedSeconds { get; init; }
+}
+
+/// <summary>A fault of the Health Service (Get-HealthFault): what is wrong and what Microsoft recommends doing.</summary>
+public sealed record ClusterHealthFault
+{
+    /// <summary>Critical, Warning, Minor, ...</summary>
+    public string? Severity { get; init; }
+    public string? FaultType { get; init; }
+    public string? Reason { get; init; }
+    public string? RecommendedAction { get; init; }
+    public string? FaultingObject { get; init; }
+}
+
+/// <summary>A Storage Replica group (Get-SRGroup) and the state of its replicas.</summary>
+public sealed record StorageReplicaStatus
+{
+    public required string Name { get; init; }
+    public string? ReplicationMode { get; init; }
+    /// <summary>ReplicationStatus of the replicas: ContinuouslyReplicating, InitialBlockCopy, WaitingForDestination, ...</summary>
+    public string? Status { get; init; }
+    public long? BytesRemaining { get; init; }
+    public bool? IsPrimary { get; init; }
+    public string? Partner { get; init; }
 }
 
 public sealed record ClusterRoleStatus
@@ -237,6 +269,13 @@ public sealed record MoveClusterVmRequest
     public required string NodeName { get; init; }
 }
 
+/// <summary>Protocol 12. The cluster shared volume (its cluster resource name) and the node that becomes its owner.</summary>
+public sealed record MoveSharedVolumeRequest
+{
+    public required string VolumeName { get; init; }
+    public required string NodeName { get; init; }
+}
+
 public static partial class ClusterNames
 {
     /// <summary>Cluster folder where Windows mounts the cluster shared volumes (on the system drive).</summary>
@@ -245,6 +284,13 @@ public static partial class ClusterNames
     // One label of a host name: letters, digits and hyphens, not starting or ending with a hyphen (checked apart).
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9-]{0,62}$", RegexOptions.CultureInvariant)]
     private static partial Regex NodeNameRegex();
+
+    // Cluster resource names such as "Cluster Virtual Disk (Volume1)": letters, digits, space and . _ ( ) - only.
+    [GeneratedRegex(@"^[\p{L}\p{N}][\p{L}\p{N} ._()-]{0,127}$", RegexOptions.CultureInvariant)]
+    private static partial Regex ResourceNameRegex();
+
+    /// <summary>Name of a cluster resource (a cluster shared volume): 1-128 safe characters, not ending with a space.</summary>
+    public static bool IsValidResourceName(string? name) => name is not null && ResourceNameRegex().IsMatch(name) && !name.EndsWith(' ');
 
     /// <summary>Name of a cluster node (computer name): one DNS label, 1-63 characters.</summary>
     public static bool IsValidNodeName(string? name) => name is not null && NodeNameRegex().IsMatch(name) && !name.EndsWith('-');

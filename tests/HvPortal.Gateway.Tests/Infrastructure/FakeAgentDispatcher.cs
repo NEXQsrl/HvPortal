@@ -540,6 +540,23 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                     NodeName = maintenance.NodeName, State = newState, DrainStatus = maintenance.Action == MaintenanceActions.Enter ? "Completed" : null,
                     StorageMaintenance = maintenance.StorageMaintenance && Cluster?.Storage?.S2dEnabled == true && maintenance.Action == MaintenanceActions.Enter,
                 }, maintenance.Action == MaintenanceActions.Enter ? "drained" : "resumed");
+            case HvOperation.MoveClusterSharedVolume:
+                var csvMove = HvOperations.FromElement<MoveSharedVolumeRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(csvMove) is { } badCsv)
+                {
+                    return new HvOperationOutcome { Ok = false, Error = badCsv };
+                }
+                CsvMoves.Enqueue((hostId, csvMove));
+                string? previous = null;
+                if (Cluster is { } withCsv)
+                {
+                    previous = withCsv.SharedVolumes.FirstOrDefault(v => v.Name == csvMove.VolumeName)?.OwnerNode;
+                    Cluster = withCsv with
+                    {
+                        SharedVolumes = withCsv.SharedVolumes.Select(v => v.Name == csvMove.VolumeName ? v with { OwnerNode = csvMove.NodeName } : v).ToList(),
+                    };
+                }
+                return Ok(new { volumeName = csvMove.VolumeName, previousOwner = previous, ownerNode = csvMove.NodeName, state = "Online", moved = true }, "moved");
             case HvOperation.MoveClusterVm:
                 var clusterMove = HvOperations.FromElement<MoveClusterVmRequest>(command.OperationArgs)!;
                 if (OperationValidation.Validate(clusterMove) is { } badClusterMove)
@@ -570,6 +587,8 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
     public ConcurrentDictionary<string, Guid> ClusterNodeHosts { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public ConcurrentQueue<(Guid SentTo, ClusterNodeMaintenanceRequest Request)> MaintenanceRequests { get; } = new();
+
+    public ConcurrentQueue<(Guid SentTo, MoveSharedVolumeRequest Request)> CsvMoves { get; } = new();
 
     /// <summary>Simulated resource metering (Hyper-V VM id -> Measure-VM totals of this moment; present = metering on).</summary>
     public ConcurrentDictionary<Guid, VmMetricsSample> Meters { get; } = new();

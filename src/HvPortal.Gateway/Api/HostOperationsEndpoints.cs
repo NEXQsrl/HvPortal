@@ -262,26 +262,37 @@ public static class HostOperationsEndpoints
             return ApiSupport.NotFound();
         }
         var path = string.IsNullOrWhiteSpace(req.Path) ? null : HostPaths.Normalize(req.Path);
-        if (path is not null && (HostPaths.ValidateLocation(path) is not null || path.Length <= 3))
+        if (path is not null && StagingProblem(host, path) is { } problem)
         {
-            return ApiSupport.BadRequest("invalid_staging_path", @"A local folder such as C:\HvPortal-staging (not a drive root, not a system folder).");
-        }
-        // A drive the host does not have would only fail at the first backup: refused now (when the drives are known).
-        var volumes = (host.HostFactsJson is null ? null : System.Text.Json.JsonSerializer.Deserialize<HvPortal.Contracts.HyperV.HostFacts>(host.HostFactsJson))?.Volumes ?? [];
-        if (path is not null && volumes.Count > 0
-            && !volumes.Any(v => v.Name.TrimEnd('\\').Equals(path[..2], StringComparison.OrdinalIgnoreCase)))
-        {
-            return ApiSupport.BadRequest("drive_not_found",
-                $"The host has no drive {path[..2]} (local drives: {string.Join(", ", volumes.Select(v => v.Name.TrimEnd('\\')))}).");
-        }
-        if (path is not null && InventoryEndpoints.StorageFoldersOf(host) is { Count: > 0 } allowed && !StorageFolderRules.IsInside(path, allowed))
-        {
-            return ApiSupport.BadRequest("location_not_allowed", "The folder is outside the storage folders allowed on this host.");
+            return ApiSupport.BadRequest(problem.Code, problem.Message);
         }
         var before = host.BackupStagingPath;
         host.BackupStagingPath = path;
         await db.SaveChangesAsync(http.RequestAborted);
         await http.WriteAuditAsync("hosts.backup_staging.update", resourceType: "host", resourceId: id.ToString("D"), details: new { before, after = path });
         return Results.Ok(new { path });
+    }
+
+    /// <summary>
+    /// Why <paramref name="path"/> (normalized) cannot be the backup staging folder of <paramref name="host"/>, or null.
+    /// Used for one host and for every node of a cluster.
+    /// </summary>
+    internal static (string Code, string Message)? StagingProblem(ManagedHost host, string path)
+    {
+        if (HostPaths.ValidateLocation(path) is not null || path.Length <= 3)
+        {
+            return ("invalid_staging_path", @"A local folder such as C:\HvPortal-staging (not a drive root, not a system folder).");
+        }
+        // A drive the host does not have would only fail at the first backup: refused now (when the drives are known).
+        var volumes = (host.HostFactsJson is null ? null : System.Text.Json.JsonSerializer.Deserialize<HvPortal.Contracts.HyperV.HostFacts>(host.HostFactsJson))?.Volumes ?? [];
+        if (volumes.Count > 0 && !volumes.Any(v => v.Name.TrimEnd('\\').Equals(path[..2], StringComparison.OrdinalIgnoreCase)))
+        {
+            return ("drive_not_found", $"The host has no drive {path[..2]} (local drives: {string.Join(", ", volumes.Select(v => v.Name.TrimEnd('\\')))}).");
+        }
+        if (InventoryEndpoints.StorageFoldersOf(host) is { Count: > 0 } allowed && !StorageFolderRules.IsInside(path, allowed))
+        {
+            return ("location_not_allowed", "The folder is outside the storage folders allowed on this host.");
+        }
+        return null;
     }
 }

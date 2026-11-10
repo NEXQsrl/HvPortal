@@ -605,6 +605,8 @@ export const enBackup = {
   'audit.k.prefix': 'Token prefix',
   'audit.k.scopes': 'Scopes',
   'audit.k.expiresat': 'Expires',
+  'bk.repo.noStaging': 'Backups fail without a backup staging folder on:',
+  'bk.job.noStagingNodes': 'The VMs of a cluster can move to any of its nodes: {nodes} have no backup staging folder, so backups of VMs running there will fail (cluster page > Nodes > Set on all nodes).',
 };
 
 export const itBackup: Record<keyof typeof enBackup, string> = {
@@ -1211,4 +1213,6 @@ export const itBackup: Record<keyof typeof enBackup, string> = {
   'audit.k.prefix': 'Prefisso del token',
   'audit.k.scopes': 'Ambiti',
   'audit.k.expiresat': 'Scadenza',
+  'bk.repo.noStaging': 'I backup non riescono senza cartella di appoggio dei backup su:',
+  'bk.job.noStagingNodes': 'Le VM di un cluster possono spostarsi su qualunque nodo: {nodes} non hanno la cartella di appoggio dei backup, quindi i backup delle VM in esecuzione lì non riusciranno (pagina del cluster > Nodi > Imposta su tutti i nodi).',
 };

@@ -264,7 +264,7 @@ public sealed class SetupLogicTests
         Assert.Contains("Source", declared.Keys);
 
         var sent = component == "Gateway"
-            ? new GatewaySetupOptions { PublicNames = ["gw"], UiCertificateThumbprint = new string('A', 40), OpenFirewall = true }.ToParameters("src")
+            ? new GatewaySetupOptions { PublicNames = ["gw"], UiCertificateThumbprint = new string('A', 40), OpenFirewall = true, DisableRemoteUpdate = true }.ToParameters("src")
             : new AgentSetupOptions
             {
                 Gateway = "https://gw:8444", CaSha256 = new string('A', 64), Token = new string('t', 32), ForceReenroll = true, Management = true, ServiceAccount = "svc",

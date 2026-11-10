@@ -3300,6 +3300,72 @@
         }
       }
     },
+    "/api/v1/clusters/{id}/shared-volumes/move": {
+      "post": {
+        "tags": [
+          "Clusters"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveSharedVolumeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/clusters/{id}/backup-staging": {
+      "put": {
+        "tags": [
+          "Clusters"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackupStagingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/v1/hosts/{id}/maintenance": {
       "get": {
         "tags": [
@@ -3349,6 +3415,74 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/MaintenanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/system/updates": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/system/updates/check": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/system/updates/settings": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/system/updates/install": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallBody"
               }
             }
           },
@@ -4412,6 +4546,24 @@
           }
         }
       },
+      "BackupStagingRequest": {
+        "required": [
+          "path"
+        ],
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "replaceExisting": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
       "Body": {
         "required": [
           "email",
@@ -5214,6 +5366,20 @@
           }
         }
       },
+      "InstallBody": {
+        "required": [
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "IsoLibraryRequest": {
         "required": [
           "paths"
@@ -5557,6 +5723,34 @@
           "includeStorage": {
             "type": "boolean",
             "default": true
+          },
+          "idempotencyKey": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "MoveSharedVolumeBody": {
+        "required": [
+          "volumeName",
+          "destinationHostId"
+        ],
+        "type": "object",
+        "properties": {
+          "volumeName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "destinationHostId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
           },
           "idempotencyKey": {
             "type": [
@@ -6205,6 +6399,17 @@
           },
           "localSignIn": {
             "type": "string"
+          }
+        }
+      },
+      "SettingsBody": {
+        "required": [
+          "autoCheck"
+        ],
+        "type": "object",
+        "properties": {
+          "autoCheck": {
+            "type": "boolean"
           }
         }
       },

@@ -128,6 +128,26 @@ public static class ClusterRules
         {
             issues.Add(Issue(HealthLevel.Warning, "resource_failed", $"Cluster resource {r.Name} ({r.ResourceType}) has failed.", r.Name, ("type", r.ResourceType)));
         }
+        if (report.CoreGroupState is { Length: > 0 } core && !Is(core, "Online"))
+        {
+            issues.Add(Issue(HealthLevel.Critical, "core_group_not_online", $"The core cluster group (cluster name, IP address, witness) is {core}: the cluster cannot be managed by its name.",
+                null, ("state", core)));
+        }
+        foreach (var r in report.CoreResources.Where(r => !Is(r.State, "Online") && !Is(report.CoreGroupState, "Offline")))
+        {
+            issues.Add(Issue(HealthLevel.Warning, "core_resource_not_online", $"Core resource {r.Name} ({r.ResourceType}) is {r.State}.", r.Name, ("type", r.ResourceType), ("state", r.State)));
+        }
+        foreach (var f in report.HealthFaults)
+        {
+            var level = Is(f.Severity, "Critical") || Is(f.Severity, "Fatal") ? HealthLevel.Critical : HealthLevel.Warning;
+            issues.Add(Issue(level, "health_fault", $"Health Service: {f.Reason} ({f.FaultingObject}). Recommended: {f.RecommendedAction}",
+                f.FaultingObject, ("reason", f.Reason), ("action", f.RecommendedAction), ("severity", f.Severity)));
+        }
+        foreach (var r in report.Replication.Where(r => r.Status is { Length: > 0 } st && !st.Equals("ContinuouslyReplicating", StringComparison.OrdinalIgnoreCase)))
+        {
+            issues.Add(Issue(HealthLevel.Warning, "replication_not_in_sync", $"Storage Replica group {r.Name} is {r.Status} ({r.BytesRemaining ?? 0} bytes still to copy).",
+                r.Name, ("status", r.Status), ("remaining", r.BytesRemaining)));
+        }
         foreach (var e in report.Errors)
         {
             issues.Add(Issue(HealthLevel.Unknown, "section_unreadable", $"Not read: {e}", e.Split(':')[0], ("error", e)));
@@ -393,6 +413,38 @@ public static class ClusterRules
             PoolFreeBytes = poolFree,
             PoolReserveBytes = poolReserve,
         };
+    }
+
+    // ------------------------------------------------------------------ storage
+
+    /// <summary>
+    /// Whether node <paramref name="nodeName"/> may become the owner of the cluster shared volume <paramref name="volume"/>
+    /// now: the volume exists and is online, the node is a node that is up and does not own it already. Null = allowed.
+    /// </summary>
+    public static ClusterIssue? CheckSharedVolumeMove(string volume, string nodeName, ClusterStatusReport? report)
+    {
+        if (report is null)
+        {
+            return Issue(HealthLevel.Unknown, "status_unreadable", "The cluster could not be read from any node: its state cannot be checked.", null, ("error", "—"));
+        }
+        var csv = report.SharedVolumes.FirstOrDefault(v => Is(v.Name, volume));
+        if (csv is null)
+        {
+            return Issue(HealthLevel.Warning, "csv_not_found", $"There is no cluster shared volume named {volume}.", volume);
+        }
+        if (!Is(csv.State, "Online"))
+        {
+            return Issue(HealthLevel.Critical, "csv_not_online", $"Cluster shared volume {csv.Path ?? volume} is {csv.State}.", csv.Path ?? volume, ("state", csv.State));
+        }
+        var node = report.Nodes.FirstOrDefault(n => Is(n.Name, nodeName));
+        if (node is null || !Is(node.State, "Up"))
+        {
+            return Issue(HealthLevel.Warning, "csv_owner_not_up", $"Node {nodeName} is {node?.State ?? "not a node of the cluster"}: only a node that is up can own the volume.",
+                nodeName, ("state", node?.State));
+        }
+        return Is(csv.OwnerNode, nodeName)
+            ? Issue(HealthLevel.Warning, "csv_already_owner", $"{nodeName} already owns {csv.Path ?? volume}.", nodeName)
+            : null;
     }
 
     // ------------------------------------------------------------------ maintenance

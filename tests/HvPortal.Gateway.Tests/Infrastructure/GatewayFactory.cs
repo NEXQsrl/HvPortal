@@ -27,6 +27,9 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
 {
     public string DataDirectory { get; } = Path.Combine(Path.GetTempPath(), "hvp-tests", Guid.NewGuid().ToString("N"));
     public FakeAgentDispatcher Agent { get; } = new();
+
+    /// <summary>TEST DOUBLE of GitHub and of the updater task (portal updates, ADR-042).</summary>
+    public FakeReleases Releases { get; } = new();
     public FakeEntraClient Entra { get; } = new();
     public string PackagesDirectory => Path.Combine(DataDirectory, "packages-test");
     /// <summary>Configuration values of a single test (e.g. an option switched off).</summary>
@@ -43,6 +46,7 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         builder.UseSetting("Gateway:Backup:SchedulerEnabled", "false");
         builder.UseSetting("Gateway:Metrics:CollectorEnabled", "false");
         builder.UseSetting("Gateway:Clusters:MonitorEnabled", "false");
+        builder.UseSetting("Gateway:Updates:CheckerEnabled", "false");
         builder.UseSetting("Gateway:PackagesDirectory", PackagesDirectory);
         foreach (var (key, value) in ExtraSettings)
         {
@@ -52,6 +56,10 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<IAgentDispatcher>();
             services.AddSingleton<IAgentDispatcher>(Agent);
+            services.RemoveAll<HvPortal.Gateway.Updates.IReleaseSource>();
+            services.AddSingleton<HvPortal.Gateway.Updates.IReleaseSource>(Releases);
+            services.RemoveAll<HvPortal.Gateway.Updates.IUpdaterLauncher>();
+            services.AddSingleton<HvPortal.Gateway.Updates.IUpdaterLauncher>(Releases);
             services.RemoveAll<HvPortal.Gateway.Security.Entra.IEntraClient>();
             services.AddSingleton<HvPortal.Gateway.Security.Entra.IEntraClient>(Entra);
         });

@@ -26,6 +26,8 @@ public static class ClusterEndpoints
     public sealed record CreateClusterRequest(string? Name, string? Description, string[]? NewNodes, Guid[]? HostIds);
     public sealed record UpdateClusterRequest(string? Name, string? Description);
     public sealed record AddNodeRequest(Guid? HostId, string? DisplayName);
+    public sealed record MoveSharedVolumeBody(string? VolumeName, Guid? DestinationHostId, string? IdempotencyKey = null);
+    public sealed record BackupStagingRequest(string? Path, bool ReplaceExisting = false);
     public sealed record MaintenanceRequest(string? Action, bool Failback = false, bool StorageMaintenance = true, bool AcknowledgeWarnings = false,
         string? IdempotencyKey = null);
 
@@ -40,6 +42,8 @@ public static class ClusterEndpoints
         g.MapPost("/{id:guid}/nodes", AddNodeAsync);
         g.MapPost("/{id:guid}/nodes/{hostId:guid}/remove", RemoveNodeAsync);
         g.MapPost("/{id:guid}/delete", DeleteAsync);
+        g.MapPost("/{id:guid}/shared-volumes/move", MoveSharedVolumeAsync);
+        g.MapPut("/{id:guid}/backup-staging", SetBackupStagingAsync);
         var hosts = app.MapGroup("/api/v1/hosts").WithTags("Clusters");
         hosts.MapGet("/{id:guid}/maintenance", CheckMaintenanceAsync);
         hosts.MapPost("/{id:guid}/maintenance", MaintenanceAsync);
@@ -48,7 +52,7 @@ public static class ClusterEndpoints
     // ------------------------------------------------------------------ read
 
     /// <summary>Clusters whose status the user may read, or with at least one node the user can see (name and nodes only).</summary>
-    private static async Task<IResult> ListAsync(HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents)
+    private static async Task<IResult> ListAsync(HttpContext http, PortalDbContext db, AccessEvaluator access, IAgentDispatcher agents, ClusterService service)
     {
         var uid = http.User.UserId();
         var manage = await access.HasAsync(uid, Permissions.HostsManage, ResourceRef.Global, http.RequestAborted);
@@ -71,6 +75,8 @@ public static class ClusterEndpoints
             {
                 continue;
             }
+            // Problems of the last read (tree icons, host pages): only for who may read the cluster status.
+            var (problems, byHost) = readStatus ? await service.StoredProblemsAsync(c, http.RequestAborted) : ([], []);
             list.Add(new
             {
                 c.Id,
@@ -82,6 +88,8 @@ public static class ClusterEndpoints
                 nodesTotal = nodes[c.Id].Count(),
                 status = readStatus ? c.LastStatusLevel : null,
                 statusAt = readStatus ? c.LastStatusAt : null,
+                problems = problems.Take(20),
+                nodeProblems = byHost.Where(kv => visibleNodes.Contains(kv.Key)).Select(kv => new { hostId = kv.Key, issues = kv.Value.Take(10) }),
                 can = new { manage, readStatus },
             });
         }
@@ -156,6 +164,7 @@ public static class ClusterEndpoints
                 n.NotClusteredRunningVms,
                 clusterError = hostFacts?.Cluster?.Error,
                 clusterMismatch = host is null ? null : InventoryEndpoints.ClusterMismatch(host, cluster, hostFacts),
+                backupStagingPath = host?.BackupStagingPath,
                 canMaintain = host is not null && await access.HasAsync(uid, Permissions.HostsMaintenance, ResourceRef.Host(host.Id), http.RequestAborted),
             });
         }
@@ -176,6 +185,12 @@ public static class ClusterEndpoints
             {
                 manage,
                 createVm = hosts.Count > 0 && await AnyAsync(hosts, h => access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(h.Id), http.RequestAborted)),
+                setBackupStaging = manage || await access.HasAsync(uid, Permissions.BackupManage, ResourceRef.Global, http.RequestAborted),
+            },
+            // Backup repositories with credentials need a staging folder on every node that runs VMs backed up there.
+            backup = new
+            {
+                credentialRepositories = await db.BackupRepositories.AsNoTracking().CountAsync(r => r.PasswordEncrypted != null, http.RequestAborted),
             },
             nodes,
             suggestedHosts = suggested,
@@ -429,6 +444,127 @@ public static class ClusterEndpoints
         await http.WriteAuditAsync("clusters.delete", resourceType: "cluster", resourceId: scopeId, details: new { cluster.Name, nodes, roleAssignmentsRemoved = assignments });
         await notifier.ClustersChangedAsync();
         return Results.NoContent();
+    }
+
+    // ------------------------------------------------------------------ backup staging folder
+
+    /// <summary>
+    /// The backup staging folder of every node at once (repositories with credentials need one on each node, since the VMs
+    /// move between nodes). Same permission and checks as the folder of one host (hosts.manage or backup.manage); all or
+    /// nothing: when one node refuses the path, nothing changes and every refusal is returned. Without
+    /// <c>replaceExisting</c> the nodes that already have a folder keep it. Nothing is sent to the agents.
+    /// </summary>
+    private static async Task<IResult> SetBackupStagingAsync(Guid id, BackupStagingRequest req, HttpContext http, PortalDbContext db, AccessEvaluator access)
+    {
+        var uid = http.User.UserId();
+        if (!await access.HasAsync(uid, Permissions.HostsManage, ResourceRef.Global, http.RequestAborted)
+            && await http.GuardAsync(Permissions.BackupManage, ResourceRef.Global, "clusters.backup_staging.update") is { } denied)
+        {
+            return denied;
+        }
+        var cluster = await db.Clusters.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, http.RequestAborted);
+        if (cluster is null)
+        {
+            return ApiSupport.NotFound();
+        }
+        if (string.IsNullOrWhiteSpace(req.Path))
+        {
+            return ApiSupport.BadRequest("invalid_staging_path", @"Enter a local folder such as D:\HvPortal-staging.");
+        }
+        var path = HostPaths.Normalize(req.Path);
+        var nodes = await db.Hosts.Where(h => h.ClusterId == id && h.Status != HostStatus.Revoked).OrderBy(h => h.DisplayName).ToListAsync(http.RequestAborted);
+        if (nodes.Count == 0)
+        {
+            return ApiSupport.Conflict("no_nodes", "The cluster has no nodes.");
+        }
+        var targets = nodes.Where(n => req.ReplaceExisting || n.BackupStagingPath is null).ToList();
+        var refused = targets.Select(n => (Node: n, Problem: HostOperationsEndpoints.StagingProblem(n, path))).Where(x => x.Problem is not null).ToList();
+        if (refused.Count > 0)
+        {
+            // One code when every node refuses for the same reason; the message names each node.
+            var codes = refused.Select(x => x.Problem!.Value.Code).Distinct().ToList();
+            return ApiSupport.BadRequest(codes.Count == 1 ? codes[0] : "invalid_staging_path",
+                "Nothing was changed. " + string.Join(" ", refused.Select(x => $"{x.Node.DisplayName}: {x.Problem!.Value.Message}")));
+        }
+        var changed = new List<(Guid HostId, string? Before)>();
+        foreach (var n in targets.Where(n => !string.Equals(n.BackupStagingPath, path, StringComparison.OrdinalIgnoreCase)))
+        {
+            changed.Add((n.Id, n.BackupStagingPath));
+            n.BackupStagingPath = path;
+        }
+        await db.SaveChangesAsync(http.RequestAborted);
+        foreach (var (hostId, before) in changed)
+        {
+            await http.WriteAuditAsync("hosts.backup_staging.update", resourceType: "host", resourceId: hostId.ToString("D"),
+                details: new { before, after = path, cluster = cluster.Name });
+        }
+        await http.WriteAuditAsync("clusters.backup_staging.update", resourceType: "cluster", resourceId: id.ToString("D"),
+            details: new { cluster.Name, path, req.ReplaceExisting, updated = changed.Count, kept = nodes.Count - targets.Count });
+        return Results.Ok(new
+        {
+            path,
+            updated = targets.Select(n => n.DisplayName),
+            kept = nodes.Except(targets).Select(n => new { name = n.DisplayName, path = n.BackupStagingPath }),
+        });
+    }
+
+    // ------------------------------------------------------------------ storage
+
+    /// <summary>
+    /// Protocol 12: another node becomes the owner (coordinator) of a cluster shared volume. Permission
+    /// <c>hosts.maintenance</c> on that node (inherited from the cluster); checked against the live cluster now and again
+    /// when the job runs. The data does not move; the VMs keep running.
+    /// </summary>
+    private static async Task<IResult> MoveSharedVolumeAsync(Guid id, MoveSharedVolumeBody req, HttpContext http, PortalDbContext db, AccessEvaluator access,
+        ClusterService clusters, JobService jobs, IAgentDispatcher agents)
+    {
+        var cluster = await db.Clusters.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, http.RequestAborted);
+        if (cluster is null || !await access.HasAsync(http.User.UserId(), Permissions.InventoryRead, ResourceRef.Cluster(id), http.RequestAborted))
+        {
+            return ApiSupport.NotFound();
+        }
+        var destination = req.DestinationHostId is { } hostId
+            ? await db.Hosts.AsNoTracking().FirstOrDefaultAsync(h => h.Id == hostId && h.ClusterId == id && h.Status == HostStatus.Active, http.RequestAborted)
+            : null;
+        if (destination is null)
+        {
+            return ApiSupport.BadRequest("invalid_destination_host", "Choose a node of this cluster.");
+        }
+        if (await http.GuardAsync(Permissions.HostsMaintenance, ResourceRef.Host(destination.Id), "clusters.csv.move.request") is { } denied)
+        {
+            return denied;
+        }
+        var volume = req.VolumeName?.Trim() ?? "";
+        if (!ClusterNames.IsValidResourceName(volume))
+        {
+            return ApiSupport.BadRequest("invalid_volume_name");
+        }
+        if (ClusterService.NodeNameOf(destination) is not { } nodeName)
+        {
+            return ApiSupport.Conflict("node_name_unknown", "The cluster node name of the destination is not known yet (no inventory from its agent).");
+        }
+        var nodes = await clusters.NodesAsync(id, http.RequestAborted);
+        if (!nodes.Any(h => agents.IsConnected(h.Id) && agents.ProtocolVersionOf(h.Id) >= 12))
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", "Moving a cluster shared volume needs agent 0.9.1 or later on at least one connected node. Update the agents.");
+        }
+        var key = VmOperationsEndpoints.IdempotencyKey(http, req.IdempotencyKey);
+        if (key == "!")
+        {
+            return ApiSupport.BadRequest("invalid_idempotency_key");
+        }
+        var read = await clusters.ReadStatusAsync(cluster, http.RequestAborted);
+        if (ClusterRules.CheckSharedVolumeMove(volume, nodeName, read.Report) is { } refused)
+        {
+            await http.WriteAuditAsync("clusters.csv.move.request", AuditOutcome.Denied, "cluster", id.ToString("D"), new { volume, node = nodeName, reason = refused.Code });
+            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: refused.Code, detail: refused.Message,
+                extensions: new Dictionary<string, object?> { ["code"] = refused.Code, ["issue"] = refused });
+        }
+        var spec = new MoveSharedVolumeRequest { VolumeName = volume, NodeName = nodeName };
+        return await VmOperationsEndpoints.QueueAsync(http, jobs, new JobService.OperationJobSpec(JobService.ClusterStorageJobType, "MoveCsv", ScopeType.Host,
+            destination.Id, destination.DisplayName, destination.Id, Permissions.HostsMaintenance,
+            new JobService.OperationParameters(HvOperations.ToElement(spec), ClusterId: id), 900, $"Make {destination.DisplayName} the owner of {volume}"),
+            key, "clusters.csv.move.request", new { volume, node = nodeName, cluster = cluster.Name });
     }
 
     // ------------------------------------------------------------------ maintenance

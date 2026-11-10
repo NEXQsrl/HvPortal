@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.9.0 preview" src="https://img.shields.io/badge/version-0.9.0%20preview-2563eb">
+  <img alt="Version 0.9.1 preview" src="https://img.shields.io/badge/version-0.9.1%20preview-2563eb">
   <img alt="Hyper-V on Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="No telemetry" src="https://img.shields.io/badge/telemetry-none-16a34a">
@@ -50,6 +50,8 @@ you what VMware administrators get from vCenter, for Hyper-V:
 - **Failover clusters too.** Workgroup or domain, with or without Storage Spaces Direct: an agent on every node, so
   the portal keeps working when a node or its agent is down. Cluster health, capacity if a node is lost, safe node
   maintenance and highly available VMs.
+- **Updates from the portal.** When GitHub has a newer release, an administrator installs it from Settings: the setup is
+  checked (SHA-256 and signature) and installed by a local updater, keeping ports, names, certificate and data.
 - **Know what your VMs really use.** Ten days of CPU, memory, disk and network history per VM, with charts that tell
   you what to look for.
 - **Built on least privilege.** The agent on each host is only a member of *Hyper-V Administrators*, opens the
@@ -60,6 +62,14 @@ you what VMware administrators get from vCenter, for Hyper-V:
 
 <table>
   <tr>
+    <td width="50%"><img src="assets/screenshots/cluster.png" alt="Failover cluster summary"><br><b>Failover cluster</b> (0.9): problems with what to do, capacity if a node is lost, cluster state (core resources, Health Service), nodes. VMs listed under the cluster.</td>
+    <td width="50%"><img src="assets/screenshots/cluster-storage.png" alt="Cluster storage"><br><b>Cluster storage</b>: shared volumes and their owner node (movable), Storage Spaces Direct, copies of the data in sync or being rebuilt, repair jobs with time left.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/cluster-new-vm.png" alt="New VM in a cluster"><br><b>New VM in a cluster</b>: you choose the node, with its state, free memory and a suggestion.</td>
+    <td width="50%"><img src="assets/screenshots/updates.png" alt="Updates of the portal"><br><b>Updates</b> (0.9.1): the latest release on GitHub, installed from the portal; GitHub is contacted only when you ask.</td>
+  </tr>
+  <tr>
     <td width="50%"><img src="assets/screenshots/inventory.png" alt="Inventory of all VMs"><br><b>Inventory</b>: every VM of every host, with state, load, memory and uptime. Hosts, folders and all VMs in one tree.</td>
     <td width="50%"><img src="assets/screenshots/vm-summary.png" alt="VM summary"><br><b>VM page</b>: summary, browser console, settings, disks and network, checkpoints, backups and events.</td>
   </tr>
@@ -68,12 +78,12 @@ you what VMware administrators get from vCenter, for Hyper-V:
     <td width="50%"><img src="assets/screenshots/backup.png" alt="Backup overview"><br><b>Backup</b>: protected VMs, last run of each job, repositories, restore points and file restore.</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/screenshots/vm-resource-use-dark.png" alt="Dark theme"><br><b>Light and dark theme</b>, English and Italian, built-in step-by-step guides.</td>
+    <td width="50%"><img src="assets/screenshots/cluster-dark.png" alt="Dark theme"><br><b>Light and dark theme</b>, English and Italian, built-in step-by-step guides.</td>
     <td width="50%"><img src="assets/screenshots/sign-in.png" alt="Sign-in"><br><b>Sign-in</b> with local accounts and two-step verification, or with Microsoft Entra ID.</td>
   </tr>
 </table>
 
-<sub>The screenshots show the real interface of version 0.8.0 with sample data (hosts, VMs and values are examples).</sub>
+<sub>The screenshots show the real interface (cluster and updates: version 0.9.1; the others: 0.8.0) with sample data (hosts, clusters, VMs and values are examples).</sub>
 
 ## Features
 
@@ -89,18 +99,26 @@ you what VMware administrators get from vCenter, for Hyper-V:
   for 10 days, cards with the peaks (CPU, RAM, memory pressure, IOPS, disk data, network) and six charts, each with
   *what it shows* and *what to look for*.
 
-### Failover clusters (0.9.0)
+### Failover clusters (0.9)
 - **One agent per node, no single point of failure**: the cluster is read and managed through any node whose agent is
   connected. Workgroup clusters (DNS access point) work: no domain account, no stored credentials.
 - **Cluster status with what to do**: nodes, quorum and witness, cluster networks, shared volumes (free space,
   redirected access), Storage Spaces Direct (pools, volumes, physical disks, repair jobs), roles and failed resources;
-  checked every 2 minutes, with e-mail or webhook when it gets worse.
+  checked every 2 minutes, with e-mail or webhook when it gets worse. A warning icon on the cluster and on the node in
+  the tree, the problem written on the cluster and on the host page.
+- **Cluster state and copies of the data** (0.9.1): the core cluster group (name, IP address, witness) and its
+  resources, the faults reported by the Storage Spaces Direct Health Service, whether every volume has all its copies
+  in sync, mirror/resync jobs with data copied, elapsed time and time left, and Storage Replica groups when present.
 - **Capacity if a node is lost**: whether the highly available VMs of each node fit on the others (memory), vCPU per
   core with one node stopped, S2D pool reserve.
 - **Node maintenance**: drain plus storage maintenance mode, and back with optional failback. Refused when the cluster
   cannot do without the node (another node down, repair running, witness offline, VMs that would not fit).
 - **New VMs on the node you choose** (with a suggestion), **highly available** on a cluster shared volume; moves between
-  nodes through the cluster; VMs moved by a failover keep their groups, permissions and history.
+  nodes through the cluster; VMs moved by a failover keep their groups, permissions and history. VMs are listed under
+  the cluster, not under the node that runs them now.
+- **Owner of a shared volume** (0.9.1) moved from one node to another from the Storage tab.
+- **Backups of cluster VMs to a NAS with credentials** (0.9.1): the backup staging folder set on every node at once,
+  with a warning on the cluster and on the repository when a node has none.
 
 ### Virtual machines
 - **Power**: start, guest shutdown and restart, turn off, reset, pause, resume, save.
@@ -136,6 +154,10 @@ you what VMware administrators get from vCenter, for Hyper-V:
 ### Operations and integration
 - **Notifications** by e-mail, Microsoft Teams, Slack or webhook; **read-only API tokens** for monitoring systems;
   **REST API** with OpenAPI ([docs/api.md](docs/api.md)).
+- **Portal updates from GitHub** (0.9.1): check (on request, or twice a day if turned on) and install the new release
+  from *Settings > System*. The setup is downloaded, its SHA-256 compared with the one published with the release, and
+  installed by a Windows scheduled task only if signed by the same publisher as the installed portal
+  ([how it works](INSTALL.md#9-updating)).
 - **Agent updates from the portal** for signed releases, accepted only if signed by the same publisher.
 - **Hosts without an agent** (optional), through a management agent with stored credentials.
 - **Backup of the portal itself** from Settings, plus automatic daily copies of its database.
@@ -187,8 +209,9 @@ choose which local folders the portal may use. The host appears online within se
 **7. Invite your team.** In **Users & roles** create users (local or Microsoft) and assign roles on hosts, folders or
 VMs. New users have no permissions until you give them some.
 
-**Updating**: run the new gateway setup on the gateway, then update the agents from the portal (*Guide > Update the Windows services*) or
-with the new agent setup. Everything else, including scripts for unattended installs, Docker, your own certificate,
+**Updating**: in *Settings > System > Updates* press *Check for updates*, then *Install update* (from 0.9.1; or run the
+new gateway setup on the gateway), then update the agents from the portal (*Guide > Update the Windows services*) or with the new
+agent setup. Everything else, including scripts for unattended installs, Docker, your own certificate,
 backups and live-migration prerequisites, is in **[INSTALL.md](INSTALL.md)**.
 
 ### Requirements
@@ -199,7 +222,7 @@ backups and live-migration prerequisites, is in **[INSTALL.md](INSTALL.md)**.
 | Hyper-V hosts | Windows Server with the Hyper-V role and its PowerShell module; outbound TCP to the gateway's agent port. Domain membership not required. |
 | Failover clusters | The agent on every node, installed with `-ClusterAccess Full` (or *Node of a failover cluster* in the setup); the Failover Clustering PowerShell module on the nodes ([install guide](INSTALL.md#5i-failover-clusters-also-workgroup-clusters-with-or-without-storage-spaces-direct)) |
 | Browsers | Current Edge, Chrome or Firefox |
-| Internet | Not required. Used only by what you turn on: Entra ID sign-in, SMTP, webhooks |
+| Internet | Not required. Used only by what you turn on or ask for: Entra ID sign-in, SMTP, webhooks, update checks on GitHub |
 
 Windows Server 2025 is the target platform, 2022 is under evaluation: see the
 [compatibility matrix](docs/compatibility-matrix.md).
@@ -232,11 +255,12 @@ More: [architecture](docs/architecture.md), [design decisions](docs/decisions.md
 
 ## Project status
 
-HvPortal 0.9.0 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
+HvPortal 0.9.1 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
 tested against a test double of the agent, and the checks still to run on real hosts are listed in the
 [real-host test plan](docs/verification/real-host-test-plan.md). Start in a lab or on non-critical hosts, and do not
 expose the portal or the agent port to the Internet. HvPortal has not had an independent security review yet.
-Failover cluster support (0.9.0) has not been validated on a real cluster yet (test plan V72–V80).
+Failover cluster support (0.9) has not been validated on a real cluster yet (test plan V72–V81, V83), and the update
+from the portal has not been run end to end on a real server yet (V82).
 
 ## Documentation
 
@@ -283,7 +307,7 @@ secrets in logs, and keep every user-visible text in both English and Italian.
 
 ## License
 
-HvPortal is developed by [NEXQ](https://www.nexq.it) and released under the
+HvPortal is developed by [NEXQ](https://www.nexq.it/?utm_source=github&utm_medium=referral&utm_campaign=hvmanager) and released under the
 **[PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0)** ([LICENSE](LICENSE)), a standard
 source-available license:
 
@@ -293,7 +317,7 @@ source-available license:
   the license and the `Required Notice` line.
 - **Reselling HvPortal is not allowed**: the license forbids providing any product that competes with HvPortal, so
   selling it, selling modified or renamed versions, or offering it as a competing product or service is not allowed.
-- **Additional commercial rights**: contact NEXQ through [www.nexq.it](https://www.nexq.it).
+- **Additional commercial rights**: contact NEXQ through [www.nexq.it](https://www.nexq.it/?utm_source=github&utm_medium=referral&utm_campaign=hvmanager).
 
 It is not an OSI-approved open-source license (GitHub shows it as "Other"). Third-party components keep their own
 licenses: see [NOTICE](NOTICE) and [docs/licensing.md](docs/licensing.md), which also explains how the noncompete

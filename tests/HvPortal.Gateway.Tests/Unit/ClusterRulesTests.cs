@@ -190,4 +190,25 @@ public sealed class ClusterRulesTests
         Assert.False(ClusterNames.IsValidNodeName(null));
         Assert.Equal("invalid_maintenance_action", OperationValidation.Validate(new ClusterNodeMaintenanceRequest { NodeName = "HV01", Action = "enter" }));
     }
+
+    [Fact]
+    public void Core_group_health_service_faults_and_replication_are_reported()
+    {
+        var report = Report() with
+        {
+            CoreGroupState = "PartialOnline",
+            CoreResources = [new ClusterResourceStatus { Name = "Cluster IP Address", ResourceType = "IP Address", State = "Failed" }],
+            HealthFaults = [new ClusterHealthFault { Severity = "Critical", Reason = "The physical disk has failed.", RecommendedAction = "Replace the disk.", FaultingObject = "Disk 7" }],
+            Replication = [new StorageReplicaStatus { Name = "rg01", Status = "InitialBlockCopy", BytesRemaining = 5 * Gb },
+                           new StorageReplicaStatus { Name = "rg02", Status = "ContinuouslyReplicating", BytesRemaining = 0 }],
+        };
+        var issues = Evaluate(report, [Facts("HV01"), Facts("HV02")]);
+        Assert.Contains(issues, i => i.Code == "core_group_not_online" && i.Level == HealthLevel.Critical);
+        Assert.Contains(issues, i => i.Code == "core_resource_not_online" && i.Subject == "Cluster IP Address");
+        Assert.Contains(issues, i => i.Code == "health_fault" && i.Level == HealthLevel.Critical && i.Args!["action"] == "Replace the disk.");
+        Assert.Contains(issues, i => i.Code == "replication_not_in_sync" && i.Subject == "rg01");
+        Assert.DoesNotContain(issues, i => i.Code == "replication_not_in_sync" && i.Subject == "rg02");
+        // Older agents send none of these: nothing is reported (and nothing guessed).
+        Assert.DoesNotContain(Evaluate(Report(), [Facts("HV01"), Facts("HV02")]), i => i.Code is "core_group_not_online" or "health_fault" or "replication_not_in_sync");
+    }
 }

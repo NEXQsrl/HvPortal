@@ -17,6 +17,10 @@ export interface ClusterSummary {
   status: ClusterLevel | null;
   statusAt: string | null;
   can: { manage: boolean; readStatus: boolean };
+  /** Problems of the last read (notes left out); empty for who may not read the cluster status. */
+  problems?: ClusterIssue[];
+  /** Problems about each node (issue subject = node or host name). */
+  nodeProblems?: { hostId: string; issues: ClusterIssue[] }[];
 }
 
 /** What the agent of a node reads about its cluster with every inventory (protocol 11). */
@@ -78,7 +82,7 @@ export interface ClusterStorageStatus {
   pools: { name: string; healthStatus: string | null; operationalStatus: string | null; sizeBytes: number | null; allocatedBytes: number | null; isReadOnly: boolean | null }[];
   virtualDisks: { name: string; healthStatus: string | null; operationalStatus: string | null; resiliency: string | null; dataCopies: number | null; sizeBytes: number | null; footprintBytes: number | null }[];
   physicalDisks: { name: string; serialNumber: string | null; mediaType: string | null; usage: string | null; healthStatus: string | null; operationalStatus: string | null; sizeBytes: number | null }[];
-  jobs: { name: string; state: string | null; percentComplete: number | null; bytesTotal: number | null; bytesProcessed: number | null }[];
+  jobs: { name: string; state: string | null; percentComplete: number | null; bytesTotal: number | null; bytesProcessed: number | null; elapsedSeconds?: number | null }[];
 }
 
 export interface ClusterRoleStatus { name: string; groupType: string | null; state: string | null; ownerNode: string | null; vmId: string | null }
@@ -98,6 +102,11 @@ export interface ClusterStatusReport {
   roles: ClusterRoleStatus[];
   failedResources: { name: string; resourceType: string | null; state: string | null; ownerGroup: string | null; ownerNode: string | null }[];
   errors: string[];
+  /** Agent 0.9.1+ (absent with older agents). */
+  coreGroupState?: string | null;
+  coreResources?: { name: string; resourceType: string | null; state: string | null }[];
+  healthFaults?: { severity: string | null; faultType: string | null; reason: string | null; recommendedAction: string | null; faultingObject: string | null }[];
+  replication?: { name: string; replicationMode: string | null; status: string | null; bytesRemaining: number | null; isPrimary: boolean | null; partner: string | null }[];
 }
 
 export interface CapacityReport {
@@ -144,6 +153,7 @@ export interface ClusterNodeView {
   notClusteredRunningVms: string[];
   clusterError: string | null;
   clusterMismatch: string | null;
+  backupStagingPath: string | null;
   canMaintain: boolean;
 }
 
@@ -153,7 +163,9 @@ export interface ClusterDetail {
   description: string | null;
   windowsName: string | null;
   createdAt: string;
-  can: { manage: boolean; createVm: boolean };
+  can: { manage: boolean; createVm: boolean; setBackupStaging: boolean };
+  /** Number of backup repositories with credentials (they need a staging folder on every node). */
+  backup: { credentialRepositories: number };
   nodes: ClusterNodeView[];
   suggestedHosts: { id: string; displayName: string }[];
   status: {

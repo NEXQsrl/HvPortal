@@ -98,6 +98,11 @@ public enum HvOperation
     SetClusterNodeMaintenance,
     /// <summary>Protocol 11. Move a clustered VM to another node of its cluster (MoveClusterVmRequest).</summary>
     MoveClusterVm,
+    /// <summary>
+    /// Protocol 12. Make another node the owner (coordinator) of a cluster shared volume (Move-ClusterSharedVolume,
+    /// MoveSharedVolumeRequest). The data stays where it is; VMs keep running (I/O pauses for a moment).
+    /// </summary>
+    MoveClusterSharedVolume,
 }
 
 public static class HvOperations

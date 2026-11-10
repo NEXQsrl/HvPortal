@@ -112,6 +112,16 @@ namespace HvPortal.Gateway
             builder.Services.AddScoped<AccessEvaluator>();
             builder.Services.AddScoped<HvPortal.Gateway.Quotas.GroupPolicyService>();
             builder.Services.AddScoped<HvPortal.Gateway.Clusters.ClusterService>();
+            builder.Services.AddHttpClient(HvPortal.Gateway.Updates.GitHubReleaseSource.ClientName, c =>
+            {
+                c.Timeout = TimeSpan.FromMinutes(30);
+                c.DefaultRequestHeaders.UserAgent.ParseAdd($"HvPortal-gateway/{ProductInfo.Version}");
+                c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+            });
+            builder.Services.AddSingleton<HvPortal.Gateway.Updates.IReleaseSource, HvPortal.Gateway.Updates.GitHubReleaseSource>();
+            builder.Services.AddSingleton<HvPortal.Gateway.Updates.IUpdaterLauncher, HvPortal.Gateway.Updates.ScheduledTaskUpdaterLauncher>();
+            builder.Services.AddScoped<HvPortal.Gateway.Updates.PortalUpdateService>();
+            builder.Services.AddHostedService<HvPortal.Gateway.Updates.PortalUpdateChecker>();
             builder.Services.AddSingleton<HvPortal.Gateway.Clusters.ClusterMonitor>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<HvPortal.Gateway.Clusters.ClusterMonitor>());
             builder.Services.AddScoped<LoginThrottleService>();
@@ -290,6 +300,7 @@ namespace HvPortal.Gateway
             NetworkEndpoints.Map(app);
             HostOperationsEndpoints.Map(app);
             ClusterEndpoints.Map(app);
+            HvPortal.Gateway.Updates.PortalUpdateEndpoints.Map(app);
             AgentUpdateEndpoints.Map(app);
             HvPortal.Gateway.VmBackup.BackupEndpoints.Map(app);
             HvPortal.Gateway.VmBackup.BackupFileEndpoints.Map(app);
@@ -309,7 +320,7 @@ namespace HvPortal.Gateway
                     connectedAgents = agents.ConnectedHosts.Count,
                     telemetry = "disabled (no telemetry is implemented)",
                     dataDirectory = admin ? paths.Root : null,
-                    internetRequired = "No. Only Microsoft Entra ID sign-in, when enabled, needs HTTPS to Microsoft endpoints.",
+                    internetRequired = "No. Only Microsoft Entra ID sign-in, when enabled, needs HTTPS to Microsoft endpoints; checking for updates contacts GitHub (api.github.com) when an administrator asks.",
                 });
             }).WithTags("System");
             app.MapGet("/healthz", () => Results.Text("ok")).AllowAnonymous().ExcludeFromDescription();

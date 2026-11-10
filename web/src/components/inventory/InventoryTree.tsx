@@ -1,4 +1,4 @@
-import { Boxes, ChevronRight, ChevronsDownUp, FolderPlus, Monitor, Plus, Search, Server, X } from 'lucide-react';
+import { Boxes, ChevronRight, CircleAlert, TriangleAlert, ChevronsDownUp, FolderPlus, Monitor, Plus, Search, Server, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { Group } from '@/api/ops-types';
@@ -16,6 +16,16 @@ import { useLocalStorage } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/session';
 import { useInventory } from './InventoryProvider';
+import type { ClusterIssue } from '@/api/cluster-types';
+import { useIssueText } from '@/components/ops/ClusterDialogs';
+
+/** Red (critical) or amber (warning, unknown) icon when a cluster or a node has problems; nothing otherwise. */
+function problemIcon(issues: ClusterIssue[]) {
+  if (issues.length === 0) return null;
+  return issues.some((i) => i.level === 'Critical')
+    ? <CircleAlert className="size-3.5 text-destructive" aria-label="!" />
+    : <TriangleAlert className="size-3.5 text-warning" aria-label="!" />;
+}
 
 interface Node {
   key: string;
@@ -32,6 +42,8 @@ interface Node {
   badge?: ReactNode;
   icon: ReactNode;
   sub?: string;
+  /** Tooltip of the row (problems of a cluster or of a node). */
+  title?: string;
   section?: boolean;
 }
 
@@ -58,6 +70,7 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
   const [menuNode, setMenuNode] = useState<Node | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const issueText = useIssueText();
 
   const toggle = (key: string, open?: boolean) => {
     const next = new Set(expanded);
@@ -84,18 +97,23 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
     out.push({ key: 'hosts', kind: 'hostsRoot', label: t('tree.hosts'), depth: 0, hasChildren: inv.hosts.length > 0, path: '/inventory?view=hosts',
       icon: <Server className="size-4 text-muted-foreground" />, badge: count(inv.hosts.length), section: true });
     if (isOpen('hosts')) {
-      const hostNodes = (hosts: typeof inv.hosts, depth: number) => {
+      // In a cluster (inCluster) the nodes have no VM children: the VMs move between nodes, so they are listed under the
+      // cluster, after its nodes. Standalone hosts keep their VMs below them.
+      const hostNodes = (hosts: typeof inv.hosts, depth: number, inCluster = false, problems?: Map<string, ClusterIssue[]>) => {
         for (const h of hosts) {
           const vms = inv.vms.filter((v) => v.hostId === h.id).sort((a, b) => a.name.localeCompare(b.name));
           const visibleVms = vms.filter((v) => matches(v.name) || matches(v.notes));
-          if (q && !matches(h.displayName) && visibleVms.length === 0) continue;
+          if (q && !matches(h.displayName) && (inCluster || visibleVms.length === 0)) continue;
           const key = `host:${h.id}`;
           const paused = h.clusterFacts?.nodeState === 'Paused';
+          const issues = problems?.get(h.id) ?? [];
           out.push({
-            key, kind: 'host', label: h.displayName, depth, hasChildren: vms.length > 0, path: `/hosts/${h.id}`,
-            icon: <HostIcon connected={h.connected} access={h.access} />, badge: count(vms.length), sub: paused ? '⏸' : undefined,
+            key, kind: 'host', label: h.displayName, depth, hasChildren: !inCluster && vms.length > 0, path: `/hosts/${h.id}`,
+            icon: <HostIcon connected={h.connected} access={h.access} />, sub: paused ? '⏸' : undefined,
+            badge: <span className="flex items-center gap-1">{problemIcon(issues)}{count(vms.length)}</span>,
+            title: issues.length > 0 ? issues.map(issueText).join('\n') : undefined,
           });
-          if (isOpen(key)) for (const v of (q && !matches(h.displayName) ? visibleVms : vms)) out.push(vmNode(v, depth + 1));
+          if (!inCluster && isOpen(key)) for (const v of (q && !matches(h.displayName) ? visibleVms : vms)) out.push(vmNode(v, depth + 1));
         }
       };
       // Failover clusters (ADR-041): cluster -> nodes -> VMs; standalone hosts as before.
@@ -105,11 +123,18 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
         if (q && !matches(c.name) && !nodes.some((h) => matches(h.displayName)) && !clusterVms.some((v) => matches(v.name) || matches(v.notes))) continue;
         const key = `cluster:${c.id}`;
         const tone = c.status === 'Critical' ? 'text-destructive' : c.status === 'Warning' ? 'text-warning' : c.status === 'Ok' ? 'text-success' : 'text-muted-foreground';
+        const problems = c.problems ?? [];
         out.push({
-          key, kind: 'cluster', label: c.name, depth: 1, hasChildren: nodes.length > 0, path: c.can.readStatus ? `/clusters/${c.id}` : null,
-          icon: <Boxes className={cn('size-4', tone)} />, badge: count(clusterVms.length),
+          key, kind: 'cluster', label: c.name, depth: 1, hasChildren: nodes.length + clusterVms.length > 0, path: c.can.readStatus ? `/clusters/${c.id}` : null,
+          icon: <Boxes className={cn('size-4', tone)} />,
+          badge: <span className="flex items-center gap-1">{problemIcon(problems)}{count(clusterVms.length)}</span>,
+          title: problems.length > 0 ? problems.map(issueText).join('\n') : undefined,
         });
-        if (isOpen(key)) hostNodes(nodes, 2);
+        if (isOpen(key)) {
+          hostNodes(nodes, 2, true, new Map((c.nodeProblems ?? []).map((n) => [n.hostId, n.issues])));
+          const visible = clusterVms.filter((v) => !q || matches(c.name) || matches(v.name) || matches(v.notes)).sort((a, b) => a.name.localeCompare(b.name));
+          for (const v of visible) out.push(vmNode(v, 2));
+        }
       }
       hostNodes(inv.hosts.filter((h) => !h.clusterId || !inv.clusterById.has(h.clusterId)), 1);
     }
@@ -149,7 +174,7 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
       icon: <Monitor className="size-4 text-muted-foreground" />, badge: count(inv.vms.length), section: true });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inv, expanded, q, t]);
+  }, [inv, expanded, q, t, issueText]);
 
   // Selection follows the route; reveal the selected object in the tree (a VM under its host, a group in its folders).
   const selectedPath = location.pathname + location.search;
@@ -161,7 +186,8 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
     const clusterOf = (hostId: string) => inv.hostById.get(hostId)?.clusterId;
     if (kind === 'vms') {
       const vm = inv.vmById.get(id!);
-      if (vm) add.push('hosts', `host:${vm.hostId}`, ...(clusterOf(vm.hostId) ? [`cluster:${clusterOf(vm.hostId)}`] : []));
+      // A VM of a cluster is listed under the cluster, a VM of a standalone host under its host.
+      if (vm) add.push('hosts', ...(clusterOf(vm.hostId) ? [`cluster:${clusterOf(vm.hostId)}`] : [`host:${vm.hostId}`]));
     }
     if (kind === 'hosts') add.push('hosts', ...(clusterOf(id!) ? [`cluster:${clusterOf(id!)}`] : []));
     if (kind === 'clusters') add.push('hosts');
@@ -304,6 +330,7 @@ export function InventoryTree({ onNavigate }: { onNavigate?: () => void }) {
                     'hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60',
                     selected && 'bg-primary/10 font-medium text-primary hover:bg-primary/15',
                     dropKey === n.key && 'bg-primary/15 ring-2 ring-primary/50')}
+                  title={n.title}
                   style={{ paddingLeft: 4 + n.depth * 14 }}>
                   <span className="flex size-4 shrink-0 items-center justify-center">
                     {n.hasChildren && (

@@ -1293,6 +1293,7 @@ try {
             } catch { [void]$errors.Add("sharedVolumes: $($_.Exception.Message)") }
 
             $storage = $null
+            $faults = New-Object System.Collections.ArrayList
             try {
                 $s2dState = $null; $cacheState = $null
                 $pools = New-Object System.Collections.ArrayList
@@ -1332,12 +1333,26 @@ try {
                     } catch { [void]$errors.Add("virtualDisks: $($_.Exception.Message)") }
                     try {
                         foreach ($j in @(Get-StorageJob -ErrorAction Stop | Where-Object { "$($_.JobState)" -ne 'Completed' })) {
+                            $elapsed = Get-Opt $j 'ElapsedTime'
                             [void]$jobs.Add(@{
                                 name = "$($j.Name)"; state = "$($j.JobState)"; percentComplete = Get-OptInt $j 'PercentComplete'
                                 bytesTotal = [int64](Get-Opt $j 'BytesTotal'); bytesProcessed = [int64](Get-Opt $j 'BytesProcessed')
+                                elapsedSeconds = $(if ($elapsed -is [timespan]) { [int64]$elapsed.TotalSeconds } else { $null })
                             })
                         }
                     } catch { [void]$errors.Add("storageJobs: $($_.Exception.Message)") }
+                    # Health Service of Storage Spaces Direct (Windows Server 2019+): faults with the recommended action.
+                    if (Get-Command Get-HealthFault -ErrorAction SilentlyContinue) {
+                        try {
+                            foreach ($f in @(Get-HealthFault -ErrorAction Stop | Select-Object -First 100)) {
+                                [void]$faults.Add(@{
+                                    severity = "$(Get-Opt $f 'PerceivedSeverity')"; faultType = "$(Get-Opt $f 'FaultType')"; reason = "$(Get-Opt $f 'Reason')"
+                                    recommendedAction = (@(Get-Opt $f 'RecommendedActions') | ForEach-Object { "$_" }) -join ' '
+                                    faultingObject = "$(Get-Opt $f 'FaultingObjectDescription')"
+                                })
+                            }
+                        } catch { [void]$errors.Add("healthFaults: $($_.Exception.Message)") }
+                    }
                 }
                 $storage = @{ s2dEnabled = $s2dEnabled; s2dState = $s2dState; cacheState = $cacheState; pools = @($pools); virtualDisks = @($vdisks)
                     physicalDisks = @($pdisks); jobs = @($jobs) }
@@ -1363,11 +1378,42 @@ try {
                 }
             } catch { [void]$errors.Add("roles: $($_.Exception.Message)") }
 
+            # The core group (cluster name, IP addresses, witness): the cluster itself is reachable only when it is online.
+            $coreState = $null
+            $core = New-Object System.Collections.ArrayList
+            try {
+                $coreGroup = @(Get-ClusterGroup -ErrorAction Stop | Where-Object { "$($_.GroupType)" -eq 'Cluster' }) | Select-Object -First 1
+                if ($coreGroup) {
+                    $coreState = "$($coreGroup.State)"
+                    foreach ($r in @(Get-ClusterResource -ErrorAction Stop | Where-Object { "$($_.OwnerGroup)" -eq "$($coreGroup.Name)" } | Select-Object -First 20)) {
+                        [void]$core.Add(@{ name = "$($r.Name)"; resourceType = "$($r.ResourceType)"; state = "$($r.State)"; ownerGroup = "$($r.OwnerGroup)"; ownerNode = "$($r.OwnerNode)" })
+                    }
+                }
+            } catch { [void]$errors.Add("coreGroup: $($_.Exception.Message)") }
+
+            # Storage Replica (only when the feature is installed and used): state of the replication groups of this node.
+            $replication = New-Object System.Collections.ArrayList
+            if (Get-Command Get-SRGroup -ErrorAction SilentlyContinue) {
+                try {
+                    $partners = @(Get-SRPartnership -ErrorAction SilentlyContinue)
+                    foreach ($g in @(Get-SRGroup -ErrorAction Stop | Select-Object -First 50)) {
+                        $replicas = @(Get-Opt $g 'Replicas')
+                        $statuses = @($replicas | ForEach-Object { "$(Get-Opt $_ 'ReplicationStatus')" } | Where-Object { $_ } | Select-Object -Unique)
+                        $remaining = ($replicas | ForEach-Object { [int64](Get-Opt $_ 'NumOfBytesRemaining') } | Measure-Object -Sum).Sum
+                        $p = $partners | Where-Object { "$($_.SourceRGName)" -eq "$($g.Name)" -or "$($_.DestinationRGName)" -eq "$($g.Name)" } | Select-Object -First 1
+                        $partner = $(if ($p) { if ("$($p.SourceRGName)" -eq "$($g.Name)") { "$($p.DestinationComputerName)" } else { "$($p.SourceComputerName)" } } else { $null })
+                        [void]$replication.Add(@{ name = "$($g.Name)"; replicationMode = "$(Get-Opt $g 'ReplicationMode')"; status = ($statuses -join ', ')
+                            bytesRemaining = [int64]$remaining; isPrimary = [bool](Get-Opt $g 'IsPrimary'); partner = $partner })
+                    }
+                } catch { [void]$errors.Add("storageReplica: $($_.Exception.Message)") }
+            }
+
             Write-Response $true @{
                 collectedUtc = (Get-Date).ToUniversalTime().ToString('o'); name = "$($cluster.Name)"; fqdn = "$(Get-Opt $cluster 'Fqdn')"
                 administrativeAccessPoint = "$(Get-Opt $cluster 'AdministrativeAccessPoint')"; domain = "$(Get-Opt $cluster 'Domain')"
                 readByNode = $env:COMPUTERNAME; nodes = @($nodes); quorum = $quorum; networks = @($networks); sharedVolumes = @($csvs)
                 storage = $storage; roles = @($roles); failedResources = @($failed); errors = @($errors)
+                coreGroupState = $coreState; coreResources = @($core); healthFaults = @($faults); replication = @($replication)
             } $null @()
         }
 
@@ -1436,6 +1482,27 @@ try {
             catch { throw "Moving the VM to $nodeName failed: $($_.Exception.Message)" }
             [void]$applied.Add('moved')
             Write-Response $true @{ vmId = "$($vm.Id)"; name = $vm.Name; destinationHost = $nodeName; path = $vm.Path; state = "$($vm.State)" } $null $applied
+        }
+
+        'MoveClusterSharedVolume' {
+            # Protocol 12. Another node becomes the owner (coordinator) of a cluster shared volume. The data does not move;
+            # the VMs on the volume keep running (I/O pauses for a moment while the ownership changes).
+            Import-Module FailoverClusters -ErrorAction Stop
+            $name = [string]$a.volumeName
+            $nodeName = [string]$a.nodeName
+            $csv = Get-ClusterSharedVolume -Name $name -ErrorAction Stop
+            $before = "$($csv.OwnerNode)"
+            if ($before -ieq $nodeName) {
+                Write-Response $true @{ volumeName = $name; previousOwner = $before; ownerNode = $before; state = "$($csv.State)"; moved = $false } $null @()
+            } else {
+                $node = Get-ClusterNode -Name $nodeName -ErrorAction Stop
+                if ("$($node.State)" -ne 'Up') { throw "The node $nodeName is $($node.State): only a node that is up can own a cluster shared volume." }
+                try { Move-ClusterSharedVolume -Name $name -Node $nodeName -ErrorAction Stop | Out-Null }
+                catch { throw "Moving the owner of $name to $nodeName failed: $($_.Exception.Message)" }
+                [void]$applied.Add('moved')
+                $after = Get-ClusterSharedVolume -Name $name -ErrorAction Stop
+                Write-Response $true @{ volumeName = $name; previousOwner = $before; ownerNode = "$($after.OwnerNode)"; state = "$($after.State)"; moved = $true } $null $applied
+            }
         }
 
         'MoveVmStorage' {

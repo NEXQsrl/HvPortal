@@ -78,6 +78,9 @@ export function JobDialog({ job, repositories, onSaved, onClose }: { job: Backup
   const coveredVms = [...covered.all].map((id) => inv.vmById.get(id)).filter((v) => !!v && !v.isMissing);
   const otherHost = repo?.hostId ? coveredVms.filter((v) => v!.hostId !== repo.hostId).length : 0;
   const noStaging = repo?.hasCredentials ? coveredVms.filter((v) => !inv.hostById.get(v!.hostId)?.backupStagingPath).length : 0;
+  // VMs of a cluster move between nodes: every node of their clusters needs the staging folder too.
+  const clusterIds = new Set(coveredVms.map((v) => inv.hostById.get(v!.hostId)?.clusterId).filter((c): c is string => !!c));
+  const nodesNoStaging = repo?.hasCredentials ? inv.hosts.filter((h) => h.clusterId && clusterIds.has(h.clusterId) && !h.backupStagingPath).map((h) => h.displayName) : [];
   const hiddenVms = d.vmIds.filter((id) => !inv.vmById.has(id)).length;
   const hiddenGroups = d.groupIds.filter((id) => !inv.groupById.has(id)).length;
 
@@ -149,6 +152,7 @@ export function JobDialog({ job, repositories, onSaved, onClose }: { job: Backup
       )}
       {otherHost > 0 && repo && <Notice kind="warn">{t('bk.job.otherHostWarn', { n: otherHost, host: repo.hostName ?? '—' })}</Notice>}
       {noStaging > 0 && <Notice kind="warn">{t('bk.job.noStagingWarn', { n: noStaging })}</Notice>}
+      {nodesNoStaging.length > 0 && <Notice kind="warn">{t('bk.job.noStagingNodes', { nodes: nodesNoStaging.join(', ') })}</Notice>}
 
       <SectionTitle>{t('bk.job.when')}</SectionTitle>
       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={t('bk.job.when')}>

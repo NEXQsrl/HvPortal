@@ -115,7 +115,7 @@ public static class BackupEndpoints
 
     // ------------------------------------------------------------------ DTOs
 
-    private static object RepoDto(BackupRepository r, string? hostName, bool manage, int points, long bytes) => new
+    private static object RepoDto(BackupRepository r, string? hostName, bool manage, int points, long bytes, List<object>? hostsWithoutStaging = null) => new
     {
         r.Id, r.Name, r.Description, r.Path, r.HostId, hostName,
         isShare = r.Path.StartsWith(@"\\", StringComparison.Ordinal),
@@ -124,6 +124,7 @@ public static class BackupEndpoints
         r.CredentialUpdatedAt, r.CreatedAt, r.LastCheckedAt, r.LastCheckHostId,
         lastCheck = r.LastCheckJson is null ? (JsonElement?)null : JsonSerializer.Deserialize<JsonElement>(r.LastCheckJson),
         points, bytes,
+        hostsWithoutStaging = hostsWithoutStaging ?? [],
     };
 
     private static object JobDto(BackupJob j, IEnumerable<BackupJobTarget> targets, BackupRun? last, string? owner) => new
@@ -219,8 +220,16 @@ public static class BackupEndpoints
         var usage = await db.BackupPoints.AsNoTracking().Where(p => p.Status == BackupPointStatus.Ok || p.Status == BackupPointStatus.Unverified)
             .GroupBy(p => p.RepositoryId).Select(g => new { g.Key, n = g.Count(), bytes = g.Sum(p => p.SizeBytes) }).ToDictionaryAsync(x => x.Key, http.RequestAborted);
         var repos = await db.BackupRepositories.AsNoTracking().OrderBy(r => r.Name).ToListAsync(http.RequestAborted);
-        return Results.Ok(repos.Select(r => RepoDto(r, r.HostId is { } h ? hosts.GetValueOrDefault(h) : null, manage,
-            usage.TryGetValue(r.Id, out var u) ? u.n : 0, usage.TryGetValue(r.Id, out var b) ? b.bytes : 0)));
+        var list = new List<object>();
+        foreach (var r in repos)
+        {
+            // Backup administrators: the hosts (and cluster nodes) whose backups into this repository fail without a staging folder.
+            var missing = manage ? await BackupService.HostsMissingStagingAsync(db, r, http.RequestAborted) : [];
+            list.Add(RepoDto(r, r.HostId is { } h ? hosts.GetValueOrDefault(h) : null, manage,
+                usage.TryGetValue(r.Id, out var u) ? u.n : 0, usage.TryGetValue(r.Id, out var b) ? b.bytes : 0,
+                missing.Select(m => new { m.Id, name = m.DisplayName, m.ClusterId }).ToList<object>()));
+        }
+        return Results.Ok(list);
     }
 
     private static async Task<(string? Error, string? Detail)> ValidateRepositoryAsync(PortalDbContext db, RepositoryBody b, BackupRepository? existing, CancellationToken ct)
@@ -391,6 +400,21 @@ public static class BackupEndpoints
         return connected.FirstOrDefault(h => BackupRules.CanUse(repo, h) is null) ?? connected.FirstOrDefault();
     }
 
+    /// <summary>Why no host can read a share repository now: every active host with its reason (at most 12).</summary>
+    internal static async Task<string> WhyNoHostAsync(PortalDbContext db, IAgentDispatcher agents, BackupRepository repo, CancellationToken ct)
+    {
+        var hosts = await db.Hosts.AsNoTracking().Where(h => h.Status == HostStatus.Active).OrderBy(h => h.DisplayName).ToListAsync(ct);
+        var reasons = hosts.Take(12).Select(h => h.DisplayName + ": " + (
+            !agents.IsConnected(h.Id) ? "agent not connected"
+            : agents.ProtocolVersionOf(h.Id) < 9 ? "agent older than 0.7.0"
+            : BackupRules.CanUse(repo, h) is { } r ? (r.Code == "staging_required" ? "no backup staging folder" : r.Message)
+            : "usable"));
+        var more = hosts.Count > 12 ? $"; and {hosts.Count - 12} more" : "";
+        var staging = repo.PasswordEncrypted is null ? "" :
+            " The repository uses credentials, so every host that reads or writes it needs a backup staging folder: host page > Settings, or for every node of a cluster at once: cluster page > Actions > Backup staging folder.";
+        return $"No connected host can read this repository ({string.Join("; ", reasons)}{more}).{staging}";
+    }
+
     private static async Task<IResult> CheckRepositoryAsync(Guid id, HostRef body, HttpContext http, PortalDbContext db, IAgentDispatcher agents, KeyRing keys, TimeProvider time)
     {
         if (await http.GuardAsync(Permissions.BackupManage, ResourceRef.Global, "backup.repository.check") is { } denied)
@@ -404,7 +428,9 @@ public static class BackupEndpoints
         }
         if (await CheckingHostAsync(db, agents, repo, body.HostId, http.RequestAborted) is not { } host)
         {
-            return ApiSupport.Error(StatusCodes.Status503ServiceUnavailable, "host_unreachable", "No connected host (agent 0.7.0+) can check this repository.");
+            return ApiSupport.Error(StatusCodes.Status503ServiceUnavailable, "host_unreachable", body.HostId is null && repo.HostId is null
+                ? await WhyNoHostAsync(db, agents, repo, http.RequestAborted)
+                : "No connected host (agent 0.7.0+) can check this repository.");
         }
         var (result, error) = await ReadinessAsync(db, agents, keys, host, repo, http.RequestAborted);
         if (error is not null)
@@ -502,12 +528,17 @@ public static class BackupEndpoints
         if (await CheckingHostAsync(db, agents, repo, body.HostId, http.RequestAborted) is not { } host || !agents.IsConnected(host.Id)
             || agents.ProtocolVersionOf(host.Id) < 9)
         {
-            return ApiSupport.Error(StatusCodes.Status503ServiceUnavailable, "host_unreachable", "No connected host (agent 0.7.0+) can read this repository.");
+            return ApiSupport.Error(StatusCodes.Status503ServiceUnavailable, "host_unreachable", body.HostId is null && repo.HostId is null
+                ? await WhyNoHostAsync(db, agents, repo, http.RequestAborted)
+                : "No connected host (agent 0.7.0+) can read this repository.");
         }
-        // Say why (for example: a share with credentials needs a backup staging folder on the host).
+        // Say why (for example: a share with credentials needs a backup staging folder on the host). When the portal chose
+        // the host, no connected host could use the repository: list them all, not only the first one.
         if (BackupRules.CanUse(repo, host) is { } refused)
         {
-            return ApiSupport.Conflict(refused.Code, refused.Message);
+            return ApiSupport.Conflict(refused.Code, body.HostId is null && repo.HostId is null
+                ? await WhyNoHostAsync(db, agents, repo, http.RequestAborted)
+                : refused.Message);
         }
         BackupTarget target;
         try

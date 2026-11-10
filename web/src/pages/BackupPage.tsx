@@ -335,6 +335,14 @@ function RepositoriesTab() {
                       <StatusBadge tone="muted">{r.isShare ? t('bk.repo.kind.share') : t('bk.repo.localOf', { host: r.hostName ?? '—' })}</StatusBadge>
                       {r.hasCredentials && <StatusBadge tone="info" title={r.userName ?? undefined}>{t('bk.repo.withCreds')}</StatusBadge>}
                     </div>
+                    {(r.hostsWithoutStaging ?? []).length > 0 && (
+                      <div className="mt-1 text-xs text-warning">
+                        {t('bk.repo.noStaging')}{' '}
+                        {r.hostsWithoutStaging.map((h, i) => (
+                          <span key={h.id}>{i > 0 && ', '}<Link className="underline" to={h.clusterId ? `/clusters/${h.clusterId}?tab=nodes` : `/hosts/${h.id}?tab=settings`}>{h.name}</Link></span>
+                        ))}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="hidden text-xs md:table-cell">
                     <Link className="text-primary hover:underline" to={`/backup?tab=points&repository=${r.id}`}>{t('bk.repo.used', { n: r.points, size: formatBytes(r.bytes) })}</Link>

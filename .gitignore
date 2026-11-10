@@ -27,3 +27,5 @@ recovery-token.txt
 
 # TypeScript incremental build state
 *.tsbuildinfo
+
+PublishRelease.txt

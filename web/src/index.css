@@ -56,6 +56,9 @@
 
 /* Technical, dense palette: cool neutrals with a single blue accent. */
 :root {
+    /* Native controls (the open list of a <select>, scrollbars, date pickers) follow the theme of the portal,
+       not only the one of the operating system: otherwise a dark page opens a white list with light text. */
+    color-scheme: light;
     --background: oklch(0.975 0.003 250);
     --panel: oklch(0.99 0.002 250);
     --foreground: oklch(0.21 0.012 255);
@@ -95,6 +98,7 @@
 }
 
 .dark {
+    color-scheme: dark;
     --background: oklch(0.165 0.008 255);
     --panel: oklch(0.185 0.009 255);
     --foreground: oklch(0.955 0.004 250);

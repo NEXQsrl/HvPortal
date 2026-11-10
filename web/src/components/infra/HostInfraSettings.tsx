@@ -9,13 +9,13 @@ import { useOps } from '@/components/ops/OperationsProvider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useI18n, type TKey } from '@/i18n';
-import { LIBRARY_PATH, formatBytes, shortVersion } from '@/lib/format';
-import { driveOf, insideStorageFolders, suggestStagingPath, volumeOf } from '@/lib/staging';
+import { formatBytes, shortVersion } from '@/lib/format';
+import { driveOf, insideStorageFolders, stagingFolderOk, suggestStagingPath, volumeOf } from '@/lib/staging';
 import { toast } from '@/lib/toast';
 import { useSession } from '@/session';
 import { useAgentUpdates } from './AgentUpdates';
 
-const folderOk = (p: string) => LIBRARY_PATH.test(p) && !p.includes('..') && p.length > 3;
+const folderOk = stagingFolderOk;
 
 /**
  * Folders of the host the portal may see. For a host with its own agent the list is decided on the host when the agent
@@ -110,6 +110,9 @@ export function BackupStagingSection({ host, onChanged }: { host: Host; onChange
   return (
     <Section title={<span className="flex items-center gap-2"><Archive className="size-4 text-muted-foreground" />{t('staging.title')}</span>} bodyClassName="space-y-3 p-3">
       <p className="text-xs text-muted-foreground">{t('staging.help')}</p>
+      {host.clusterId && (
+        <p className="text-xs"><Link className="text-primary hover:underline" to={`/clusters/${host.clusterId}?tab=nodes`}>{t('staging.clusterHint')}</Link></p>
+      )}
       {manage ? (
         <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); if (valid && dirty) void save(); }}>
           <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={suggestion ?? 'C:\\HvPortal-staging'} className="w-80 font-mono" aria-label={t('staging.title')} aria-invalid={!valid} />

@@ -21,6 +21,33 @@ public sealed class BackupService(PortalDbContext db, JobService jobs, TimeProvi
     /// <summary>VMs protected by a job: its VMs and the VMs of its groups and their sub-groups (resolved now).</summary>
     public Task<List<VirtualMachine>> ResolveVmsAsync(Guid jobId, CancellationToken ct) => ResolveVmsAsync(db, jobId, ct);
 
+    /// <summary>
+    /// Hosts that back up into <paramref name="repo"/> but have no backup staging folder, while the repository needs one
+    /// (share with credentials): the hosts of the VMs protected by its jobs and, for a cluster, every node of it (its VMs
+    /// move between nodes). Empty for repositories without credentials.
+    /// </summary>
+    public static async Task<List<ManagedHost>> HostsMissingStagingAsync(PortalDbContext db, BackupRepository repo, CancellationToken ct)
+    {
+        if (repo.PasswordEncrypted is null)
+        {
+            return [];
+        }
+        var hostIds = new HashSet<Guid>();
+        foreach (var jobId in await db.BackupJobs.AsNoTracking().Where(j => j.RepositoryId == repo.Id).Select(j => j.Id).ToListAsync(ct))
+        {
+            hostIds.UnionWith((await ResolveVmsAsync(db, jobId, ct)).Select(v => v.HostId));
+        }
+        if (hostIds.Count == 0)
+        {
+            return [];
+        }
+        var clusterIds = await db.Hosts.AsNoTracking().Where(h => hostIds.Contains(h.Id) && h.ClusterId != null).Select(h => h.ClusterId!.Value).Distinct().ToListAsync(ct);
+        return await db.Hosts.AsNoTracking()
+            .Where(h => h.Status == HostStatus.Active && h.BackupStagingPath == null
+                && (hostIds.Contains(h.Id) || (h.ClusterId != null && clusterIds.Contains(h.ClusterId.Value))))
+            .OrderBy(h => h.DisplayName).ToListAsync(ct);
+    }
+
     public static async Task<List<VirtualMachine>> ResolveVmsAsync(PortalDbContext db, Guid jobId, CancellationToken ct)
     {
         var targets = await db.BackupJobTargets.AsNoTracking().Where(t => t.BackupJobId == jobId).ToListAsync(ct);

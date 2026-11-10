@@ -5,6 +5,7 @@ import { del, get, post, put } from '@/api/client';
 import type { Assignment, Role, SecuritySettings, UserRow } from '@/api/types';
 import { CopyButton, ErrorAlert, KeyValue, Loading, Notice, PageHeader, Section, StatusBadge } from '@/components/common';
 import { AutoBackupSection, BackupSection } from '@/components/admin/BackupSection';
+import { PortalUpdatesSection } from '@/components/admin/PortalUpdates';
 import { ApiTokensSection, NotificationSettingsSection } from '@/components/backup/BackupSettings';
 import { AddUserDialog, CreatedUserNotice, EntraSettingsSection, type CreatedUser } from '@/components/admin/UserAdmin';
 import { ActionDialog, ConfirmTypedDialog, Field, HelpTip } from '@/components/dialogs';
@@ -194,7 +195,7 @@ export function SettingsPage() {
       <TabsContent value="backup" className="min-h-0 overflow-auto p-4">{tab === 'backup' && <div className="max-w-4xl space-y-4"><BackupSection /><AutoBackupSection /></div>}</TabsContent>
       <TabsContent value="notifications" className="min-h-0 overflow-auto p-4">{tab === 'notifications' && <div className="max-w-4xl"><NotificationSettingsSection /></div>}</TabsContent>
       <TabsContent value="apiTokens" className="min-h-0 overflow-auto p-4">{tab === 'apiTokens' && <div className="max-w-4xl"><ApiTokensSection /></div>}</TabsContent>
-      <TabsContent value="system" className="min-h-0 overflow-auto p-4">{tab === 'system' && <div className="max-w-4xl"><SystemInfoSection /></div>}</TabsContent>
+      <TabsContent value="system" className="min-h-0 overflow-auto p-4">{tab === 'system' && <div className="max-w-4xl space-y-4"><SystemInfoSection /><PortalUpdatesSection /></div>}</TabsContent>
     </Tabs>
   );
 }

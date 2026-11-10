@@ -289,34 +289,49 @@ function Set-StorageFolders([string]$DataPath, [string[]]$Folders) {
 }
 
 $script:HvPortalUpdaterTask = 'HvPortal Agent Update'
+$script:HvPortalGatewayUpdaterTask = 'HvPortal Gateway Update'
 
-function Register-AgentUpdater([string]$SourceDirectory, [string[]]$ServiceSids) {
-    # SYSTEM task running the fixed updater script from Program Files; the agent service account may only run it.
-    $script = Join-Path $SourceDirectory 'Update-HvPortalAgent.ps1'
-    if (-not (Test-Path $script)) { Write-Warning 'Update-HvPortalAgent.ps1 not in this package: updates from the portal are not available.'; return }
+function Register-HvPortalUpdater([string]$SourceDirectory, [string[]]$ServiceSids, [string]$TaskName, [string]$ScriptName, [string]$What) {
+    # SYSTEM task running a fixed updater script from Program Files; the service account may only run it.
+    $script = Join-Path $SourceDirectory $ScriptName
+    if (-not (Test-Path $script)) { Write-Warning "$ScriptName not in this package: updates from the portal are not available."; return }
     $dir = Join-Path $env:ProgramFiles 'HvPortal\Updater'
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     Copy-Item $script $dir -Force
     Copy-Item (Join-Path $SourceDirectory 'Common.ps1') $dir -Force
     Set-PrivateAcl -Path $dir -ExtraAccounts @() -ReadOnlyForExtra
     $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $action = New-ScheduledTaskAction -Execute $ps -Argument "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$(Join-Path $dir 'Update-HvPortalAgent.ps1')`""
+    $action = New-ScheduledTaskAction -Execute $ps -Argument "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$(Join-Path $dir $ScriptName)`""
     $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\SYSTEM' -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $HvPortalUpdaterTask -TaskPath '\HvPortal\' -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+    Register-ScheduledTask -TaskName $TaskName -TaskPath '\HvPortal\' -Action $action -Principal $principal -Settings $settings -Force | Out-Null
     # Read + execute (start) for the service account; full control only for SYSTEM and Administrators.
     $sddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)' + (($ServiceSids | ForEach-Object { "(A;;GRGX;;;$_)" }) -join '')
     $scheduler = New-Object -ComObject 'Schedule.Service'
     $scheduler.Connect()
-    $scheduler.GetFolder('\HvPortal').GetTask($HvPortalUpdaterTask).SetSecurityDescriptor($sddl, 0)
-    Write-Host 'Updater task registered: signed agent updates can be installed from the portal.'
+    $scheduler.GetFolder('\HvPortal').GetTask($TaskName).SetSecurityDescriptor($sddl, 0)
+    Write-Host "Updater task registered: signed $What updates can be installed from the portal."
 }
 
-function Unregister-AgentUpdater {
-    Get-ScheduledTask -TaskName $HvPortalUpdaterTask -TaskPath '\HvPortal\' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
+function Unregister-HvPortalUpdater([string]$TaskName, [string]$ScriptName) {
+    Get-ScheduledTask -TaskName $TaskName -TaskPath '\HvPortal\' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
+    # The agent and the gateway may share the folder (same server): only this updater's script, the folder when empty.
     $dir = Join-Path $env:ProgramFiles 'HvPortal\Updater'
-    if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+    Remove-Item (Join-Path $dir $ScriptName) -Force -ErrorAction SilentlyContinue
+    if ((Test-Path $dir) -and -not (Get-ChildItem $dir -Filter 'Update-HvPortal*.ps1')) { Remove-Item $dir -Recurse -Force }
 }
+
+function Register-AgentUpdater([string]$SourceDirectory, [string[]]$ServiceSids) {
+    Register-HvPortalUpdater -SourceDirectory $SourceDirectory -ServiceSids $ServiceSids -TaskName $HvPortalUpdaterTask -ScriptName 'Update-HvPortalAgent.ps1' -What 'agent'
+}
+
+function Unregister-AgentUpdater { Unregister-HvPortalUpdater -TaskName $HvPortalUpdaterTask -ScriptName 'Update-HvPortalAgent.ps1' }
+
+function Register-GatewayUpdater([string]$SourceDirectory, [string[]]$ServiceSids) {
+    Register-HvPortalUpdater -SourceDirectory $SourceDirectory -ServiceSids $ServiceSids -TaskName $HvPortalGatewayUpdaterTask -ScriptName 'Update-HvPortalGateway.ps1' -What 'gateway'
+}
+
+function Unregister-GatewayUpdater { Unregister-HvPortalUpdater -TaskName $HvPortalGatewayUpdaterTask -ScriptName 'Update-HvPortalGateway.ps1' }
 
 function Wait-ServiceRunning([string]$ServiceName, [int]$Seconds = 60) {
     $svc = Get-Service -Name $ServiceName

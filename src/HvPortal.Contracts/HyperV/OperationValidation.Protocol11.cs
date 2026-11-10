@@ -11,6 +11,12 @@ public static partial class OperationValidation
         return null;
     }
 
+    public static string? Validate(MoveSharedVolumeRequest r)
+    {
+        if (!ClusterNames.IsValidResourceName(r.VolumeName)) return "invalid_volume_name";
+        return ClusterNames.IsValidNodeName(r.NodeName) ? null : "invalid_node_name";
+    }
+
     public static string? Validate(MoveClusterVmRequest r)
     {
         if (r.VmId == Guid.Empty) return "invalid_vm";

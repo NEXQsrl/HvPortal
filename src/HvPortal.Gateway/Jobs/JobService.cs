@@ -73,6 +73,8 @@ public sealed class JobService
     public const string MaintenanceJobType = "host.maintenance";
     /// <summary>vm.migrate operation: a clustered VM moved to another node of its cluster (Move-ClusterVirtualMachineRole).</summary>
     public const string ClusterNodeMoveOperation = "ClusterNode";
+    /// <summary>Storage of a cluster: owner of a cluster shared volume moved ("MoveCsv"), target = the new owner node (protocol 12).</summary>
+    public const string ClusterStorageJobType = "cluster.storage";
 
     /// <summary>Typed Hyper-V operation executed by a job of the given type/operation (null for power/delete jobs).</summary>
     public static HvOperation? HvOperationFor(string type, string operation) => (type, operation) switch
@@ -81,6 +83,7 @@ public sealed class JobService
         (MigrateJobType, "Storage") => HvOperation.MoveVmStorage,
         (MigrateJobType, ClusterNodeMoveOperation) => HvOperation.MoveClusterVm,
         (MaintenanceJobType, "Enter" or "Exit") => HvOperation.SetClusterNodeMaintenance,
+        (ClusterStorageJobType, "MoveCsv") => HvOperation.MoveClusterSharedVolume,
         (BackupJobType, "Backup") => HvOperation.BackupVm,
         (BackupVerifyJobType, "Verify") => HvOperation.VerifyBackup,
         (BackupRemoveJobType, "Delete") => HvOperation.RemoveBackup,

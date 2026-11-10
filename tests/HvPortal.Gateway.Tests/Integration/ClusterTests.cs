@@ -423,4 +423,130 @@ public sealed class ClusterTests : IAsyncLifetime
         Assert.Equal("unassigned", hosts.Single(h => h.GetProperty("id").GetGuid() == solo).GetProperty("clusterMismatch").GetString());
         Assert.Null(await _app.WithDbAsync(db => db.Hosts.Where(h => h.Id == solo).Select(h => h.ClusterId).FirstAsync()));
     }
+
+    [Fact]
+    public async Task The_owner_of_a_shared_volume_is_moved_to_another_node_after_a_live_check()
+    {
+        var (clusterId, hv01, hv02, _) = await ClusterAsync();
+        _app.Agent.Cluster = _app.Agent.Cluster! with
+        {
+            SharedVolumes = [new ClusterSharedVolumeStatus { Name = "Volume1", Path = @"C:\ClusterStorage\Volume1", OwnerNode = "HV01", State = "Online", SizeBytes = 1000 * Gb, FreeBytes = 500 * Gb }],
+        };
+        var operatorClient = await UserAsync("csv-operator", BuiltInRoles.VmOperator);
+        Assert.Equal(HttpStatusCode.Forbidden, (await operatorClient.PostJsonAsync($"/api/v1/clusters/{clusterId}/shared-volumes/move",
+            new { volumeName = "Volume1", destinationHostId = hv02 })).StatusCode);
+        Assert.Equal(1, await DeniedAsync("clusters.csv.move.request"));
+
+        var admin = await UserAsync("csv-admin", BuiltInRoles.InfrastructureAdmin);
+        Assert.Equal("invalid_volume_name", await (await admin.PostJsonAsync($"/api/v1/clusters/{clusterId}/shared-volumes/move",
+            new { volumeName = "Vol;1", destinationHostId = hv02 })).CodeAsync());
+        Assert.Equal("csv_already_owner", await (await admin.PostJsonAsync($"/api/v1/clusters/{clusterId}/shared-volumes/move",
+            new { volumeName = "Volume1", destinationHostId = hv01 })).CodeAsync());
+        Assert.Equal("csv_not_found", await (await admin.PostJsonAsync($"/api/v1/clusters/{clusterId}/shared-volumes/move",
+            new { volumeName = "Volume9", destinationHostId = hv02 })).CodeAsync());
+        // Agents older than 0.9.1 cannot do it: refused before anything is sent.
+        _app.Agent.ProtocolVersions[hv01] = 11;
+        _app.Agent.ProtocolVersions[hv02] = 11;
+        Assert.Equal("agent_outdated", await (await admin.PostJsonAsync($"/api/v1/clusters/{clusterId}/shared-volumes/move",
+            new { volumeName = "Volume1", destinationHostId = hv02 })).CodeAsync());
+        _app.Agent.ProtocolVersions.Clear();
+
+        var job = await JobAsync(await admin.PostJsonAsync($"/api/v1/clusters/{clusterId}/shared-volumes/move", new { volumeName = "Volume1", destinationHostId = hv02 }));
+        Assert.Equal(JobStatus.Succeeded, job.Status);
+        Assert.Equal(JobService.ClusterStorageJobType, job.Type);
+        var (sentTo, request) = _app.Agent.CsvMoves.Single();
+        Assert.Equal(hv02, sentTo);
+        // The node name comes from the inventory of the destination host, not from the request.
+        Assert.Equal("HV02", request.NodeName);
+        Assert.Equal("HV02", _app.Agent.Cluster!.SharedVolumes.Single().OwnerNode);
+        Assert.Contains("owner is now HV02", job.ResultMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_cluster_list_says_which_nodes_have_problems_only_to_who_reads_the_cluster()
+    {
+        var (clusterId, hv01, hv02, _) = await ClusterAsync();
+        var admin = await UserAsync("pb-admin", BuiltInRoles.InfrastructureAdmin);
+        _app.Agent.Cluster = Report(("HV01", "Up"), ("HV02", "Down"));
+        await admin.GetAsync($"/api/v1/clusters/{clusterId}/status");
+        var item = (await (await admin.GetAsync("/api/v1/clusters")).JsonAsync()).EnumerateArray().Single();
+        Assert.Equal("Critical", item.GetProperty("status").GetString());
+        Assert.Contains(item.GetProperty("problems").EnumerateArray(), p => p.GetProperty("code").GetString() == "node_down");
+        var nodes = item.GetProperty("nodeProblems").EnumerateArray().ToList();
+        var down = nodes.Single(n => n.GetProperty("hostId").GetGuid() == hv02);
+        Assert.Contains(down.GetProperty("issues").EnumerateArray(), p => p.GetProperty("code").GetString() == "node_down");
+        Assert.DoesNotContain(nodes, n => n.GetProperty("hostId").GetGuid() == hv01);
+
+        var hostReader = await UserAsync("pb-host", BuiltInRoles.ReadOnly, ScopeType.Host, hv01.ToString("D"));
+        var limited = (await (await hostReader.GetAsync("/api/v1/clusters")).JsonAsync()).EnumerateArray().Single();
+        Assert.Equal(0, limited.GetProperty("problems").GetArrayLength());
+        Assert.Equal(0, limited.GetProperty("nodeProblems").GetArrayLength());
+    }
+
+    // ------------------------------------------------------------------ backup staging folder
+
+    private static async Task<HttpResponseMessage> PutAsync(HttpClient c, string url, object body)
+    {
+        await c.CsrfAsync();
+        return await c.PutAsJsonAsync(url, body, GatewayFactory.Json);
+    }
+
+    [Fact]
+    public async Task The_backup_staging_folder_is_set_on_every_node_and_nodes_without_it_are_listed()
+    {
+        var (clusterId, hv01, hv02, vms) = await ClusterAsync(("db01", VmPowerState.Running));
+        var reader = await UserAsync("bs-reader", BuiltInRoles.ReadOnly);
+        var admin = await UserAsync("bs-admin", BuiltInRoles.BackupOperator);
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await PutAsync(reader, $"/api/v1/clusters/{clusterId}/backup-staging", new { path = @"D:\HvPortal-staging" })).StatusCode);
+        Assert.Equal(1, await DeniedAsync("clusters.backup_staging.update"));
+
+        // A share with credentials and a job protecting a VM of HV01: both nodes need a staging folder (the VM can move).
+        var repo = await admin.PostJsonAsync("/api/v1/backup/repositories", new { name = "NAS", path = @"\\nas01\backups\hv", userName = @"NAS01\backup", password = "Nas-Pa55word!" });
+        var repoId = (await repo.JsonAsync()).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostJsonAsync("/api/v1/backup/jobs", new
+        {
+            name = "Nightly", repositoryId = repoId, enabled = true, scheduleKind = "daily", daysMask = 0x7F, times = new[] { "22:00" }, intervalHours = 6,
+            timeZoneId = "UTC", retentionPoints = 3, checkpointType = "Production", verifyAfterCopy = true, restoreTestDays = 0, notifyOn = "warning",
+            vmIds = new[] { vms["db01"] }, groupIds = Array.Empty<Guid>(),
+        })).StatusCode);
+        var missing = (await (await admin.GetAsync("/api/v1/backup/repositories")).JsonAsync()).EnumerateArray().Single()
+            .GetProperty("hostsWithoutStaging").EnumerateArray().Select(h => h.GetProperty("id").GetGuid()).ToList();
+        Assert.Equal([hv01, hv02], missing.OrderBy(g => g == hv02).ToList());
+
+        // The rescan names every node and its reason, not only the first one.
+        var rescan = await admin.PostJsonAsync($"/api/v1/backup/repositories/{repoId}/rescan", new { });
+        Assert.Equal(HttpStatusCode.Conflict, rescan.StatusCode);
+        var detail = (await rescan.JsonAsync()).GetProperty("detail").GetString()!;
+        Assert.Contains("hv01: no backup staging folder", detail, StringComparison.Ordinal);
+        Assert.Contains("hv02: no backup staging folder", detail, StringComparison.Ordinal);
+
+        // All or nothing: a node that refuses the path (no drive D:) leaves every node unchanged, and is named.
+        await _app.WithDbAsync(async db =>
+        {
+            var h = await db.Hosts.FirstAsync(x => x.Id == hv02);
+            h.HostFactsJson = JsonSerializer.Serialize(NodeFacts("HV02") with { Volumes = [new HostVolume(@"C:\", "System", "NTFS", 200 * Gb, 100 * Gb)] });
+            (await db.Hosts.FirstAsync(x => x.Id == hv01)).BackupStagingPath = @"E:\Own-staging";
+            await db.SaveChangesAsync();
+        });
+        var refused = await PutAsync(admin, $"/api/v1/clusters/{clusterId}/backup-staging", new { path = @"D:\HvPortal-staging", replaceExisting = true });
+        Assert.Equal("drive_not_found", await refused.CodeAsync());
+        Assert.Equal(@"E:\Own-staging", await _app.WithDbAsync(db => db.Hosts.Where(h => h.Id == hv01).Select(h => h.BackupStagingPath).FirstAsync()));
+        Assert.Equal("invalid_staging_path", await (await PutAsync(admin, $"/api/v1/clusters/{clusterId}/backup-staging", new { path = @"C:\" })).CodeAsync());
+
+        // Without replaceExisting the node that has a folder keeps it.
+        var ok = await PutAsync(admin, $"/api/v1/clusters/{clusterId}/backup-staging", new { path = @"C:\HvPortal-staging" });
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        var paths = await _app.WithDbAsync(db => db.Hosts.Where(h => h.ClusterId == clusterId).ToDictionaryAsync(h => h.Id, h => h.BackupStagingPath));
+        Assert.Equal(@"E:\Own-staging", paths[hv01]);
+        Assert.Equal(@"C:\HvPortal-staging", paths[hv02]);
+        Assert.Equal(1, await _app.WithDbAsync(db => db.AuditEntries.CountAsync(a => a.Action == "clusters.backup_staging.update" && a.Outcome == AuditOutcome.Success)));
+        Assert.Equal(1, await _app.WithDbAsync(db => db.AuditEntries.CountAsync(a => a.Action == "hosts.backup_staging.update" && a.ResourceId == hv02.ToString("D"))));
+
+        Assert.Equal(0, (await (await admin.GetAsync("/api/v1/backup/repositories")).JsonAsync()).EnumerateArray().Single().GetProperty("hostsWithoutStaging").GetArrayLength());
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostJsonAsync($"/api/v1/backup/repositories/{repoId}/rescan", new { })).StatusCode);
+        var detailView = await (await admin.GetAsync($"/api/v1/clusters/{clusterId}")).JsonAsync();
+        Assert.True(detailView.GetProperty("can").GetProperty("setBackupStaging").GetBoolean());
+        Assert.Equal(1, detailView.GetProperty("backup").GetProperty("credentialRepositories").GetInt32());
+    }
 }

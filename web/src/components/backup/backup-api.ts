@@ -36,6 +36,8 @@ export interface Repository {
   lastCheck: { host: string; checks: BackupCheck[] } | null;
   points: number;
   bytes: number;
+  /** Backup administrators: hosts (and nodes of their clusters) that back up here without the staging folder a share with credentials needs. */
+  hostsWithoutStaging: { id: string; name: string; clusterId: string | null }[];
 }
 
 export interface BackupRun {

@@ -34,7 +34,7 @@ public sealed class Protocol11Tests
     [Fact]
     public void Cluster_operations_need_protocol_11_and_only_the_changes_are_mutating()
     {
-        Assert.Equal(11, AgentProtocol.Version);
+        Assert.Equal(12, AgentProtocol.Version);
         Assert.Equal("0.9.0", AgentProtocol.MinimumAgentFor(11));
         Assert.Equal("0.8.0", AgentProtocol.MinimumAgentFor(10));
         foreach (var op in new[] { HvOperation.GetClusterStatus, HvOperation.SetClusterNodeMaintenance, HvOperation.MoveClusterVm })
@@ -161,6 +161,11 @@ public sealed class Protocol11Tests
         Assert.Contains("Get-ClusterQuorum", status, StringComparison.Ordinal);
         Assert.Contains("Get-ClusterSharedVolume", status, StringComparison.Ordinal);
         Assert.Contains("Get-StorageJob", status, StringComparison.Ordinal);
+        // 0.9.1: Health Service faults and Storage Replica are read only where their cmdlets exist (read-only, optional).
+        Assert.Contains("Get-HealthFault", status, StringComparison.Ordinal);
+        Assert.Contains("Get-SRGroup", status, StringComparison.Ordinal);
+        Assert.Contains("Get-Command Get-HealthFault", status, StringComparison.Ordinal);
+        Assert.Contains("Get-Command Get-SRGroup", status, StringComparison.Ordinal);
 
         var maintenance = Branch(script, "SetClusterNodeMaintenance");
         Assert.Contains("Suspend-ClusterNode -Name $nodeName -Drain -Wait", maintenance, StringComparison.Ordinal);
@@ -181,5 +186,32 @@ public sealed class Protocol11Tests
         var newVm = Branch(script, "NewVm");
         Assert.Contains("Add-ClusterVirtualMachineRole -VMId $vm.Id", newVm, StringComparison.Ordinal);
         Assert.Contains("NOT highly available", newVm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Moving_the_owner_of_a_shared_volume_needs_protocol_12_and_validated_names()
+    {
+        Assert.Equal("0.9.1", AgentProtocol.MinimumAgentFor(12));
+        Assert.Equal("0.9.0", AgentProtocol.MinimumAgentFor(11));
+        var ok = new MoveSharedVolumeRequest { VolumeName = "Cluster Virtual Disk (Volume1)", NodeName = "HV02" };
+        Assert.Equal(12, AgentProtocol.RequiredVersion(Op(HvOperation.MoveClusterSharedVolume, ok)));
+        Assert.True(CommandExecutor.IsMutating(Op(HvOperation.MoveClusterSharedVolume, ok)));
+        Assert.Null(PowerShellOperationRunner.Validate(HvOperation.MoveClusterSharedVolume, HvOperations.ToElement(ok)));
+        foreach (var bad in new[] { "", " Volume1", "Volume1 ", "Vol'1", "Vol;1", "Vol$(x)", new string('a', 129) })
+        {
+            Assert.Equal("invalid_volume_name", PowerShellOperationRunner.Validate(HvOperation.MoveClusterSharedVolume,
+                HvOperations.ToElement(ok with { VolumeName = bad })));
+        }
+        Assert.Equal("invalid_node_name", PowerShellOperationRunner.Validate(HvOperation.MoveClusterSharedVolume, HvOperations.ToElement(ok with { NodeName = "HV 02" })));
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(ClusterNames.IsValidResourceName(new string('a', 127) + "$" + new string(' ', 5000)));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1));
+
+        var branch = Branch(Script(), "MoveClusterSharedVolume");
+        Assert.Contains("Move-ClusterSharedVolume -Name $name -Node $nodeName", branch, StringComparison.Ordinal);
+        foreach (var never in new[] { "Remove-", "Suspend-", "Stop-", "Set-", "Remove-ClusterSharedVolume", "Format-" })
+        {
+            Assert.DoesNotContain(never, branch, StringComparison.Ordinal);
+        }
     }
 }

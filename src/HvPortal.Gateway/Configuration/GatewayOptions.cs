@@ -36,9 +36,18 @@ public sealed class GatewayOptions
     public BackupOptions Backup { get; set; } = new();
     public MetricsOptions Metrics { get; set; } = new();
     public ClusterOptions Clusters { get; set; } = new();
+    public UpdateOptions Updates { get; set; } = new();
 }
 
 /// <summary>Resource use history of VMs (ADR-039).</summary>
+public sealed class UpdateOptions
+{
+    /// <summary>GitHub repository whose releases are offered as updates of the portal (owner/name).</summary>
+    public string Repository { get; set; } = "NEXQsrl/HvPortal";
+    /// <summary>Runs the automatic checks when an administrator turned them on (Settings > System). Disabled only in tests.</summary>
+    public bool CheckerEnabled { get; set; } = true;
+}
+
 public sealed class ClusterOptions
 {
     /// <summary>Reads every failover cluster periodically (ADR-041). Disabled only in tests that drive it explicitly.</summary>

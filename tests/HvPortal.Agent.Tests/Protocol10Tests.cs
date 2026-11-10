@@ -30,7 +30,7 @@ public sealed class Protocol10Tests
     [Fact]
     public void Metering_operations_need_protocol_10_and_only_the_changes_are_mutating()
     {
-        Assert.Equal(11, AgentProtocol.Version);
+        Assert.Equal(12, AgentProtocol.Version);
         Assert.Equal("0.8.0", AgentProtocol.MinimumAgentFor(10));
         Assert.Equal("0.7.0", AgentProtocol.MinimumAgentFor(9));
         foreach (var op in new[] { HvOperation.GetVmMetrics, HvOperation.SetVmResourceMetering, HvOperation.ResetVmResourceMetering })

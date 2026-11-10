@@ -420,7 +420,7 @@ namespace HvPortal.Setup
 
         private WizardPage FirewallPage()
         {
-            CheckBox open = null!;
+            CheckBox open = null!, updates = null!;
             TextBox ui = null!, agents = null!;
             var page = Page("fw.title", "fw.sub", c =>
             {
@@ -435,6 +435,9 @@ namespace HvPortal.Setup
                 c.Text(Strings.T("fw.hint"), muted: true, indent: 22);
                 c.Gap(16);
                 c.Text(Strings.T("fw.skip"), muted: true);
+                c.Gap(14);
+                updates = c.Check(Strings.T("gw.updates"), !_gateway.DisableRemoteUpdate);
+                c.Text(Strings.T("gw.updatesHelp"), muted: true, indent: 22);
                 void Sync() { ui.Enabled = open.Checked; agents.Enabled = open.Checked; }
                 open.CheckedChanged += (_, __) => Sync();
                 Sync();
@@ -442,6 +445,7 @@ namespace HvPortal.Setup
             page.Leave = () =>
             {
                 _gateway.OpenFirewall = open.Checked;
+                _gateway.DisableRemoteUpdate = !updates.Checked;
                 _gateway.UiRemoteAddress = SetupRules.SplitList(ui.Text);
                 _gateway.AgentRemoteAddress = SetupRules.SplitList(agents.Text);
                 return _gateway.Validate().Contains("err.firewall") ? Strings.T("err.firewall") : null;

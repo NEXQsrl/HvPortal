@@ -98,6 +98,54 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-042 Portal updates from the GitHub releases, installed by a SYSTEM updater task
+- **Context**: updating the gateway meant copying the new setup to the server and running it there. Administrators want
+  to see from the portal that a new release exists and install it from there, like the agent updates (ADR-029). The
+  portal must not contact the Internet by itself unless asked (no telemetry, works offline), and the gateway account
+  (`NT SERVICE\HvPortalGateway`, not an administrator) cannot replace its own binaries or service.
+- **Decision**:
+  - *Check*: `PortalUpdateService.CheckAsync` reads `https://api.github.com/repos/<Gateway:Updates:Repository>/releases/latest`
+    (default `NEXQsrl/HvPortal`, validated `owner/name`) only when a `settings.manage` holder presses *Check for
+    updates*, or every 12 hours when that holder turned the automatic check on (setting `portal-updates`, **off by
+    default**; `PortalUpdateChecker` wakes every 5 minutes and does nothing while it is off). No identifying data is
+    sent (fixed User-Agent `HvPortal-gateway/<version>`, no token). Drafts and tags that are not versions are ignored;
+    a release is an update only when its version is greater than the running one. The result (version, date, notes
+    link, setup name, size, whether a SHA-256 is known) and the last error are stored and audited (`system.updates.*`).
+  - *Checksum*: the SHA-256 of `HvPortal.Gateway.Setup.exe` comes from GitHub's own asset `digest` (`sha256:...`), else
+    from a line `<64 hex>  HvPortal.Gateway.Setup.exe` of the release notes (written by `Publish-GitHubRelease.ps1`;
+    CRLF tolerated, first line wins). Without one the release cannot be installed from the portal (`no_checksum`).
+  - *Install* (`POST /system/updates/install {version}`, `settings.manage` + recent re-authentication): only the latest
+    release found by the last check, only newer, only when the updater is usable (`InstallBlocker`: `container` in
+    Docker/Linux, `not_a_service` when started by hand, `updater_missing` when the task does not exist). The asset URL
+    must be `https://github.com/...` or `https://api.github.com/...` (no user info); redirects to GitHub's download host
+    are followed by the HTTP client; at most 600 MB. The file is written to `<data>\update\HvPortal.Gateway.Setup.exe.partial`, its
+    size and SHA-256 compared, then renamed to `HvPortal.Gateway.Setup.exe` next to `request.json {version, sha256}`;
+    any mismatch deletes it (`checksum_mismatch`). Then the gateway starts the scheduled task.
+  - *Updater*: `Install-Gateway.ps1` registers `\HvPortal\HvPortal Gateway Update` (runs as SYSTEM, script
+    `Update-HvPortalGateway.ps1` copied with `Common.ps1` to `%ProgramFiles%\HvPortal\Updater`; the gateway's service
+    SID may only *run* it, the same descriptor as the agent updater). `-DisableRemoteUpdate` (setup: *Allow updates of the portal*,
+    on by default) does not register it and removes it. The script copies the staged setup into a folder only SYSTEM
+    and Administrators can write, checks the SHA-256 against `request.json` again, requires the installed
+    `HvPortal.Gateway.exe` to be Authenticode-signed and the setup to be signed with the **same thumbprint**, runs
+    `setup --extract`, requires `gateway\HvPortal.Gateway.exe`, `installer\Install-Gateway.ps1` and
+    `installer\Common.ps1` of the extracted files signed with the same thumbprint and a version not older than the
+    installed one, then runs `Install-Gateway.ps1` with the settings of the running service read from its registry
+    environment (data folder, ports, bind address, public names, portal certificate thumbprint). The installer keeps
+    its database copy and rollback (ADR-026). The outcome goes to `<data>\update\last-result.json`, shown in Settings.
+  - *UI*: *Settings > System > Updates* (status, check, automatic check, install with the steps explained); the
+    dashboard shows a notice to `settings.manage` holders when the **last stored** check found a newer release (the
+    dashboard never contacts GitHub). The agents are updated afterwards with ADR-029 (the new agent package comes with
+    the gateway).
+- **Consequences**: the trust anchor is the code-signing certificate of the installed gateway, as for agents: whoever
+  holds that private key can push any gateway to every portal whose administrator presses *Install*. A compromised
+  gateway can stage a file and start the task, but the task installs only a setup signed by the installed publisher and
+  not older (no downgrade). Unsigned and self-built installations, Docker and installations made before 0.9.1 are
+  updated by hand. The gateway needs outbound HTTPS to `api.github.com`, `github.com` and GitHub's download host only
+  when the check or the install is asked for. Not run end to end on a real server yet: real-host plan V82.
+- **Alternatives**: the gateway updating itself (would need administrator rights for the service account); a
+  self-hosted update feed (one more service to run); downloading only and letting the administrator run the setup (kept
+  as the fallback shown when the updater is not available).
+
 ## ADR-041 Failover clusters: one agent per node, cluster read through any node (agent protocol 11)
 - **Context**: Hyper-V hosts are often nodes of a failover cluster, also in a workgroup (DNS administrative access
   point) and with Storage Spaces Direct. Administrators want the portal to keep working when a node or its agent is
@@ -187,6 +235,38 @@ Format: context → decision → consequences. Status of all records: **accepted
   across nodes, impossible without AD); a management agent per cluster with stored credentials (ADR-022: no
   credentials needed here since every node has its agent).
 - Not validated on a real cluster: real-host plan V72–V80.
+- **0.9.1 (agent protocol 12)**: *Owner of a cluster shared volume*: `POST /clusters/{id}/shared-volumes/move
+  {volumeName, destinationHostId}` (permission `hosts.maintenance` on the new owner node, audited) queues the job
+  `cluster.storage` / `MoveCsv` (same per-cluster lock as maintenance), which runs `Move-ClusterSharedVolume -Name
+  -Node` through any connected node agent 0.9.1+. The volume name is validated on both sides (letters, digits, space,
+  `._()-`, up to 128 characters) and passed as a parameter; the node name comes from the inventory of the destination
+  host. Checked on the live cluster at request and again at execution: the volume exists and is online, the node is up
+  and does not own it already. Only the coordinator role moves: the data stays where it is and the VMs keep running.
+  *Problems per node*: `GET /clusters` returns the problems of the last stored read and those about each node (subject =
+  node or host name), only to who reads the cluster status; the tree shows an icon on the cluster and on the node with
+  the problems as tooltip, the host page lists the problems of its node. In the tree the VMs of a cluster are listed under
+  the cluster, after its nodes (they move between nodes); standalone hosts keep their VMs below them. Real-host plan V81.
+  *Cluster state and copies of the data* (same protocol, new optional fields of `GetClusterStatus`, read-only, each
+  guarded by `Get-Command`): `coreGroupState` and `coreResources` (the group of type *Cluster*: name, IP address,
+  witness); `healthFaults` from `Get-HealthFault` (S2D Health Service: severity, type, reason, recommended action,
+  faulting object); `replication` from `Get-SRGroup`/`Get-SRPartnership` (Storage Replica: mode, status, bytes left,
+  primary, partner) when the module exists; `elapsedSeconds` of storage jobs (the UI shows data copied, elapsed time and
+  an estimate of the time left). New rules: `core_group_not_online` (critical), `core_resource_not_online`,
+  `health_fault` (critical for Critical/Fatal faults), `replication_not_in_sync`. The Storage tab lists for every
+  volume whether all its copies are in sync or being rebuilt. Older agents simply omit the fields (shown as not read).
+  Real-host plan V83.
+  *Backup staging folder of the nodes* (ADR-031 applied to clusters): a share with credentials needs the staging folder
+  on the host that runs the VM, and in a cluster the VMs move between nodes, so a folder set on one node only made
+  backups work there and fail elsewhere. `PUT /clusters/{id}/backup-staging {path, replaceExisting}` sets one folder on
+  every node (same permission and checks as for one host: `hosts.manage` or `backup.manage`; drive known on the node,
+  inside its storage folders), **all or nothing** (one node refusing the path changes nothing and every refusal is
+  named), nodes that already have a folder keep it unless `replaceExisting`; audited per host and for the cluster.
+  Nothing is sent to the agents. The cluster page (Nodes tab) lists the folder of each node and warns when backup
+  repositories with credentials exist and some node has none; the repository list gives backup administrators the
+  hosts that back up there without a folder (hosts of the VMs of its jobs, plus every node of their clusters); the
+  job dialog warns about the nodes of the clusters of the chosen VMs. When the portal chooses the host of a
+  repository check or rescan and no connected host can use it, the error lists every host with its reason (agent not
+  connected, too old, no staging folder) instead of the reason of the first host only. Real-host plan V84.
 
 ## ADR-040 License: PolyForm Shield License 1.0.0 (source available)
 - **Context**: NEXQ wants HvPortal to be free for everyone, companies included, with public source code, but does not

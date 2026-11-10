@@ -10,6 +10,7 @@ import { CopyButton, ErrorAlert, HostIcon, KeyValue, Loading, Meter, Notice, Pag
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { DeleteSwitchDialog, NewSwitchDialog } from '@/components/ops/NetworkDialogs';
 import { useOps } from '@/components/ops/OperationsProvider';
+import { IssueList } from '@/components/ops/ClusterDialogs';
 import { EventsTable } from '@/components/tables';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -45,6 +46,8 @@ export function HostPage() {
   if (!h) return data.loading ? <Loading /> : <div className="p-4"><ErrorAlert error={data.error} /></div>;
   const tab: Tab = (TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'summary';
   const vms = inv.vms.filter((v) => v.hostId === h.id);
+  // Problems of the cluster about this node (last read of the cluster).
+  const nodeProblems = (h.clusterId ? inv.clusterById.get(h.clusterId)?.nodeProblems ?? [] : []).find((n) => n.hostId === h.id)?.issues ?? [];
 
   return (
     <Tabs value={tab} onValueChange={(v) => setParams(v === 'summary' ? {} : { tab: v }, { replace: true })} className="flex h-full min-h-0 flex-col gap-0">
@@ -69,6 +72,14 @@ export function HostPage() {
         </TabsList>
       </PageHeader>
       <AgentUpdateNotice host={h} className="mx-4 mt-3" />
+      {nodeProblems.length > 0 && (
+        <div className="px-4 pt-3">
+          <Notice kind={nodeProblems.some((i) => i.level === 'Critical') ? 'danger' : 'warn'} title={t('cl.host.problems', { name: h.clusterName ?? '' })}>
+            <IssueList issues={nodeProblems} />
+            <Link className="mt-1 inline-block text-xs text-primary hover:underline" to={`/clusters/${h.clusterId}`}>{t('cl.open')}</Link>
+          </Notice>
+        </div>
+      )}
       {(h.clusterMismatch || (h.clusterId && h.clusterFacts?.error)) && (
         <div className="space-y-2 px-4 pt-3">
           {h.clusterMismatch && <Notice kind="warn">{t(('cl.mismatch.' + h.clusterMismatch) as TKey, { name: h.clusterFacts?.name ?? '?' })}</Notice>}
