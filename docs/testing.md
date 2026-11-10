@@ -1,5 +1,16 @@
 # Testing
 
+## v0.9.2 — faster console (2026-11-10, development machine)
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Gateway.Tests` | 248 | pass — `ConsoleFrameMessageTests` (3): full frames keep the original binary layout, partial frames carry first row and row count, a band outside the frame is never sent as partial. The console integration test also checks that after `{"t":"caps","partial":true}` the agent is asked for partial frames and the browser receives a type-2 message (row 1, 1 row) |
+| `tests/HvPortal.Agent.Tests` | 134 | pass — `ConsoleFrameTests` (3): equal frames have no changed rows, the band goes from the first to the last changed row, frames of a different size (or a zero stride) are sent whole |
+| `web`: `tsc -b`, `vitest`, `vite build` | 5 | pass |
+
+Not measured: the real frame rate and key-to-screen latency (they depend on how fast Hyper-V produces the thumbnail and
+on the network) — real-host plan V85. The development machine has no Hyper-V rights, so no real frame was captured.
+
 ## v0.9.1 (third part) — backup staging folder on every node of a cluster (2026-11-10, development machine)
 
 | Suite | Count | Result |

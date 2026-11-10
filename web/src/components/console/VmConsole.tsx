@@ -38,6 +38,7 @@ export function VmConsole({ vm, onStart, popout = true, className }: { vm: Vm; o
   const pressed = useRef(new Set<string>());
   const pendingMove = useRef<{ x: number; y: number } | null>(null);
   const raf = useRef<number | null>(null);
+  const imageRef = useRef<ImageData | null>(null);
   const [status, setStatus] = useState<Status>({ state: 'connecting' });
   const [guest, setGuest] = useState<{ w: number; h: number } | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
@@ -61,29 +62,43 @@ export function VmConsole({ vm, onStart, popout = true, className }: { vm: Vm; o
 
   const draw = useCallback(async (buf: ArrayBuffer) => {
     const dv = new DataView(buf);
-    if (buf.byteLength < 10 || dv.getUint8(0) !== 1) return;
+    const kind = buf.byteLength >= 10 ? dv.getUint8(0) : 0;
+    // 1 = full frame; 2 = only the rows that changed (first row, row count), applied over the last full image.
+    if (kind !== 1 && !(kind === 2 && buf.byteLength >= 14)) return;
     const flags = dv.getUint8(1);
     const w = dv.getUint16(2, true);
     const h = dv.getUint16(4, true);
     const gw = dv.getUint16(6, true);
     const gh = dv.getUint16(8, true);
-    const raw = await inflate(new Uint8Array(buf, 10));
+    const top = kind === 2 ? dv.getUint16(10, true) : 0;
+    const rows = kind === 2 ? dv.getUint16(12, true) : h;
+    const raw = await inflate(new Uint8Array(buf, kind === 2 ? 14 : 10));
     const canvas = canvasRef.current;
-    if (!canvas || raw.length < w * h * 2) return;
-    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    if (!canvas || rows === 0 || top + rows > h || raw.length < w * rows * 2) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const img = ctx.createImageData(w, h);
-    const out = new Uint32Array(img.data.buffer);
-    for (let i = 0, n = w * h; i < n; i++) {
+    let img = imageRef.current;
+    if (kind === 2 && (!img || img.width !== w || img.height !== h)) {
+      // A partial frame without the full image it applies to (should not happen): ask for a full one.
+      send({ t: 'refresh' });
+      return;
+    }
+    if (!img || img.width !== w || img.height !== h) {
+      img = ctx.createImageData(w, h);
+      imageRef.current = img;
+    }
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    const out = new Uint32Array(img.data.buffer, top * w * 4, rows * w);
+    for (let i = 0, n = w * rows; i < n; i++) {
       const p = raw[2 * i]! | (raw[2 * i + 1]! << 8);
       out[i] = 0xff000000 | (EXPAND5[p & 0x1f]! << 16) | (EXPAND6[(p >> 5) & 0x3f]! << 8) | EXPAND5[(p >> 11) & 0x1f]!;
     }
-    ctx.putImageData(img, 0, 0);
+    // Only the changed rows are copied to the canvas.
+    ctx.putImageData(img, 0, 0, 0, top, w, rows);
     setHasFrame(true);
     setMouse((flags & 1) === 1);
     setGuest((g) => (g && g.w === gw && g.h === gh ? g : { w: gw, h: gh }));
-  }, []);
+  }, [send]);
 
   // ---------------------------------------------------------------- connection
   useEffect(() => {
@@ -97,7 +112,12 @@ export function VmConsole({ vm, onStart, popout = true, className }: { vm: Vm; o
         const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${r.path}`);
         ws.binaryType = 'arraybuffer';
         wsRef.current = ws;
-        ws.onopen = () => { ws.send(JSON.stringify({ t: 'auth', ticket: r.ticket })); sendSize(); };
+        ws.onopen = () => {
+          imageRef.current = null;
+          ws.send(JSON.stringify({ t: 'auth', ticket: r.ticket }));
+          ws.send(JSON.stringify({ t: 'caps', partial: true }));
+          sendSize();
+        };
         ws.onmessage = (ev) => {
           if (typeof ev.data === 'string') {
             try {

@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.9.1 preview" src="https://img.shields.io/badge/version-0.9.1%20preview-2563eb">
+  <img alt="Version 0.9.2 preview" src="https://img.shields.io/badge/version-0.9.2%20preview-2563eb">
   <img alt="Hyper-V on Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="No telemetry" src="https://img.shields.io/badge/telemetry-none-16a34a">
@@ -92,7 +92,8 @@ you what VMware administrators get from vCenter, for Hyper-V:
   Replica state. Changes made in Hyper-V Manager or PowerShell are detected and recorded.
 - **Browser console**: the screen of the VM as Hyper-V sees it, with keyboard and mouse, also before the operating
   system starts and without network in the guest. It is the Hyper-V console, not an RDP session (low frame rate, no
-  audio or clipboard: [details](docs/console.md)).
+  audio or clipboard: [details](docs/console.md)). Faster in 0.9.2: only the changed part of the screen is sent and
+  keys are shown at once.
 - **Host health**: hardware, physical disks, volumes and free space, storage pools, network adapters, recent hardware
   errors and Hyper-V services. What cannot be read is shown as unknown, never as healthy.
 - **Resource use history** (0.8.0): Hyper-V resource metering turned on from the VM page, a sample every 5 minutes kept
@@ -255,7 +256,7 @@ More: [architecture](docs/architecture.md), [design decisions](docs/decisions.md
 
 ## Project status
 
-HvPortal 0.9.1 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
+HvPortal 0.9.2 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
 tested against a test double of the agent, and the checks still to run on real hosts are listed in the
 [real-host test plan](docs/verification/real-host-test-plan.md). Start in a lab or on non-critical hosts, and do not
 expose the portal or the agent port to the Internet. HvPortal has not had an independent security review yet.

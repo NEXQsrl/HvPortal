@@ -90,6 +90,10 @@ Format: context → decision → consequences. Status of all records: **accepted
 - **Rejected for now.** Proxying VMConnect (RDP on 2179 with a pre-connection blob): undocumented exchange, needs a
   Windows principal authenticated by vmms and a full RDP client in the agent; kept as research.
 - **Consequences.** Works before boot and without guest networking; low frame rate; no clipboard/audio.
+- **0.9.2 (faster, same API).** Only the band of rows that changed is sent (requested with
+  `ConsoleFrameRequest.Partial`, ignored by older agents, which keep sending full frames: no protocol version needed),
+  input wakes the frame pump at once, the active capture interval goes from 120 to 80 ms, and keyboard/mouse no longer
+  wait for a capture in progress on the agent. The rate stays bounded by the thumbnail call; real-host plan V85.
 
 ## ADR-014 CSP: per-response style nonce, scripts unchanged
 - Radix UI inserts a few `<style>` elements at runtime (scroll locking for modal dialogs, Select/ScrollArea

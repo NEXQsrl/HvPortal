@@ -11,7 +11,8 @@ namespace HvPortal.Agent.HyperV;
 ///  - screen: Msvm_VirtualSystemManagementService.GetVirtualSystemThumbnailImage (RGB565), sized from Msvm_VideoHead;
 ///  - keyboard: Msvm_Keyboard.TypeScancodes (set-1 scancodes, layout-independent), TypeCtrlAltDel, TypeText;
 ///  - mouse: Msvm_SyntheticMouse.SetAbsolutePosition / SetButtonState (only when the guest supports it).
-/// Frames are zlib-compressed and sent only when the pixels change. Expected rate: a few frames per second.
+/// Frames are zlib-compressed and sent only when the pixels change; with a 0.9.2+ gateway only the band of rows that
+/// changed. Keyboard and mouse do not wait for a screen capture. Expected rate: a few frames per second.
 /// </summary>
 public sealed class ConsoleService
 {
@@ -40,11 +41,15 @@ public sealed class ConsoleService
         public ManagementObject? Keyboard { get; set; }
         public ManagementObject? Mouse { get; set; }
         public byte[]? LastFrame { get; set; }
+        public int LastWidth { get; set; }
         public int GuestWidth { get; set; }
         public int GuestHeight { get; set; }
         public DateTime ResolutionReadAt { get; set; }
         public DateTime LastUsed { get; set; }
+        /// <summary>Screen capture (one at a time).</summary>
         public readonly SemaphoreSlim Gate = new(1, 1);
+        /// <summary>Keyboard and mouse (one at a time, in order), separate from the capture so that a key never waits for a frame.</summary>
+        public readonly SemaphoreSlim InputGate = new(1, 1);
     }
 
     public async Task<AgentCommandResult> FrameAsync(Guid commandId, ConsoleFrameRequest req, CancellationToken ct)
@@ -98,25 +103,61 @@ public sealed class ConsoleService
         }
 
         var mouseAvailable = s.Mouse is not null && IsMouseEnabled(s);
-        if (!req.ForceFull && s.LastFrame is { } last && last.AsSpan().SequenceEqual(pixels))
+        var last = req.ForceFull || s.LastWidth != w ? null : s.LastFrame;
+        var (top, rows) = last is not null && last.Length == pixels.Length ? ChangedRows(last, pixels, w * 2) : (0, h);
+        if (rows == 0)
         {
             return Result(commandId, new ConsoleFrame { Width = w, Height = h, Unchanged = true, MouseAvailable = mouseAvailable, GuestWidth = gw, GuestHeight = gh });
         }
         s.LastFrame = pixels;
-        using var ms = new MemoryStream(pixels.Length / 4);
+        s.LastWidth = w;
+        // Only the band of rows that changed (typing, a cursor, a progress bar), when the gateway accepts it.
+        var partial = req.Partial && rows < h;
+        var band = partial ? pixels.AsSpan(top * w * 2, rows * w * 2) : pixels;
+        using var ms = new MemoryStream(Math.Max(1024, band.Length / 4));
         using (var z = new ZLibStream(ms, CompressionLevel.Fastest, leaveOpen: true))
         {
-            z.Write(pixels);
+            z.Write(band);
         }
         return Result(commandId, new ConsoleFrame
         {
             Width = w,
             Height = h,
             Data = Convert.ToBase64String(ms.GetBuffer(), 0, (int)ms.Length),
+            Top = partial ? top : 0,
+            Rows = partial ? rows : 0,
             MouseAvailable = mouseAvailable,
             GuestWidth = gw,
             GuestHeight = gh,
         });
+    }
+
+    /// <summary>
+    /// First changed row and number of rows from it to the last changed row of two frames of the same size
+    /// (<paramref name="stride"/> bytes per row); (0, 0) when they are equal.
+    /// </summary>
+    internal static (int Top, int Rows) ChangedRows(ReadOnlySpan<byte> before, ReadOnlySpan<byte> after, int stride)
+    {
+        if (stride <= 0 || before.Length != after.Length || after.Length % stride != 0)
+        {
+            return (0, stride <= 0 ? 0 : after.Length / stride);
+        }
+        var height = after.Length / stride;
+        var first = 0;
+        while (first < height && before.Slice(first * stride, stride).SequenceEqual(after.Slice(first * stride, stride)))
+        {
+            first++;
+        }
+        if (first == height)
+        {
+            return (0, 0);
+        }
+        var lastRow = height - 1;
+        while (lastRow > first && before.Slice(lastRow * stride, stride).SequenceEqual(after.Slice(lastRow * stride, stride)))
+        {
+            lastRow--;
+        }
+        return (first, lastRow - first + 1);
     }
 
     public async Task<AgentCommandResult> InputAsync(Guid commandId, ConsoleInput input, CancellationToken ct)
@@ -126,7 +167,7 @@ public sealed class ConsoleService
         {
             return new AgentCommandResult { CommandId = commandId, Status = AgentCommandStatus.NotFound };
         }
-        await s.Gate.WaitAsync(ct);
+        await s.InputGate.WaitAsync(ct);
         try
         {
             return await Task.Run(() =>
@@ -176,7 +217,7 @@ public sealed class ConsoleService
         }
         finally
         {
-            s.Gate.Release();
+            s.InputGate.Release();
         }
     }
 

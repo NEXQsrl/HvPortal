@@ -211,18 +211,32 @@ public static class ConsoleEndpoints
 ///
 /// Binary frame message (little-endian): [0]=1 (frame) [1]=flags (bit0 synthetic mouse available)
 /// [2..3]=width [4..5]=height [6..7]=guest width [8..9]=guest height, then zlib-compressed RGB565 pixels.
+/// Partial frame (only after the browser sent {"t":"caps","partial":true}): [0]=2, same header, [10..11]=first row,
+/// [12..13]=rows, then the zlib-compressed RGB565 pixels of those rows.
 /// Text messages from the gateway: {"t":"status","state":"running|off|host_offline|unsupported|error","message":...}.
 /// </summary>
 internal sealed class ConsoleRelay(WebSocket ws, VirtualMachine vm, Guid userId, Guid sessionId, IAgentDispatcher agents,
     IServiceScopeFactory scopes, TimeProvider time, ILogger log) : IDisposable
 {
-    public void Dispose() => _sendLock.Dispose();
+    public void Dispose()
+    {
+        _sendLock.Dispose();
+        _wake.Dispose();
+    }
+
+    /// <summary>Interval between captures while the screen changes or the user is typing.</summary>
+    internal static readonly TimeSpan ActiveInterval = TimeSpan.FromMilliseconds(80);
+    /// <summary>Interval on a static screen (any input wakes the pump at once).</summary>
+    internal static readonly TimeSpan IdleInterval = TimeSpan.FromMilliseconds(400);
 
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly Channel<ConsoleInput> _inputs = Channel.CreateBounded<ConsoleInput>(new BoundedChannelOptions(512) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Stopwatch _sinceInput = Stopwatch.StartNew();
     private volatile bool _paused;
     private volatile bool _forceFull = true;
+    private volatile bool _partial;
+    /// <summary>Released by input, refresh and resize: the frame pump captures at once instead of finishing its wait.</summary>
+    private readonly SemaphoreSlim _wake = new(0, 1);
     private int _maxWidth = 1920;
     private int _maxHeight = 1200;
     private string? _lastState;
@@ -297,13 +311,20 @@ internal sealed class ConsoleRelay(WebSocket ws, VirtualMachine vm, Guid userId,
         };
         switch (tEl.GetString())
         {
+            case "caps":
+                _partial = m.TryGetProperty("partial", out var p) && p.ValueKind == JsonValueKind.True;
+                _forceFull = true;
+                Wake();
+                return;
             case "size":
                 _maxWidth = Math.Clamp(Clamp(m, "w"), 320, 1920);
                 _maxHeight = Math.Clamp(Clamp(m, "h"), 200, 1200);
                 _forceFull = true;
+                Wake();
                 return;
             case "refresh":
                 _forceFull = true;
+                Wake();
                 return;
             case "pause":
                 _paused = true;
@@ -311,12 +332,28 @@ internal sealed class ConsoleRelay(WebSocket ws, VirtualMachine vm, Guid userId,
             case "resume":
                 _paused = false;
                 _forceFull = true;
+                Wake();
                 return;
         }
         if (input is not null)
         {
             _sinceInput.Restart();
             _inputs.Writer.TryWrite(input);
+            Wake();
+        }
+    }
+
+    private void Wake()
+    {
+        try
+        {
+            if (_wake.CurrentCount == 0)
+            {
+                _wake.Release();
+            }
+        }
+        catch (Exception ex) when (ex is SemaphoreFullException or ObjectDisposedException)
+        {
         }
     }
 
@@ -359,7 +396,6 @@ internal sealed class ConsoleRelay(WebSocket ws, VirtualMachine vm, Guid userId,
 
     private async Task FramePumpAsync(CancellationToken ct)
     {
-        var interval = TimeSpan.FromMilliseconds(120);
         var unchanged = 0;
         while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
@@ -383,7 +419,7 @@ internal sealed class ConsoleRelay(WebSocket ws, VirtualMachine vm, Guid userId,
                 {
                     CommandId = Guid.NewGuid(),
                     Kind = AgentCommandKind.ConsoleFrame,
-                    FrameRequest = new ConsoleFrameRequest(vm.HyperVId, _maxWidth, _maxHeight, force),
+                    FrameRequest = new ConsoleFrameRequest(vm.HyperVId, _maxWidth, _maxHeight, force, _partial),
                     TimeoutSeconds = 20,
                 }, null, TimeSpan.FromSeconds(20), ct);
             }
@@ -410,12 +446,13 @@ internal sealed class ConsoleRelay(WebSocket ws, VirtualMachine vm, Guid userId,
                 {
                     unchanged++;
                 }
-                // Adaptive rate: fast while the screen changes or the user types, slower on a static screen.
-                var target = _sinceInput.Elapsed < TimeSpan.FromSeconds(2) || unchanged < 5 ? interval : TimeSpan.FromMilliseconds(400);
+                // Adaptive rate: fast while the screen changes or the user types, slower on a static screen; an input
+                // (or refresh/resize) ends the wait at once, so what was typed shows up without waiting for the next tick.
+                var target = _sinceInput.Elapsed < TimeSpan.FromSeconds(2) || unchanged < 5 ? ActiveInterval : IdleInterval;
                 var elapsed = Stopwatch.GetElapsedTime(started);
                 if (target > elapsed)
                 {
-                    await Task.Delay(target - elapsed, ct);
+                    await _wake.WaitAsync(target - elapsed, ct);
                 }
             }
             else if (r.Status == AgentCommandStatus.InvalidState)
@@ -485,17 +522,28 @@ internal sealed class ConsoleRelay(WebSocket ws, VirtualMachine vm, Guid userId,
         }
     }
 
-    private async Task SendFrameAsync(ConsoleFrame f, byte[] data, CancellationToken ct)
+    private async Task SendFrameAsync(ConsoleFrame f, byte[] data, CancellationToken ct) =>
+        await SendAsync(FrameMessage(f, data), WebSocketMessageType.Binary, ct);
+
+    /// <summary>The binary message of a frame for the browser (full, or partial when the agent sent only some rows).</summary>
+    internal static byte[] FrameMessage(ConsoleFrame f, byte[] data)
     {
-        var buffer = new byte[10 + data.Length];
-        buffer[0] = 1;
+        var partial = f.Rows > 0 && f.Top >= 0 && f.Top + f.Rows <= f.Height;
+        var header = partial ? 14 : 10;
+        var buffer = new byte[header + data.Length];
+        buffer[0] = (byte)(partial ? 2 : 1);
         buffer[1] = (byte)(f.MouseAvailable ? 1 : 0);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(2), (ushort)f.Width);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(4), (ushort)f.Height);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(6), (ushort)Math.Clamp(f.GuestWidth, 0, ushort.MaxValue));
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(8), (ushort)Math.Clamp(f.GuestHeight, 0, ushort.MaxValue));
-        data.CopyTo(buffer, 10);
-        await SendAsync(buffer, WebSocketMessageType.Binary, ct);
+        if (partial)
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(10), (ushort)f.Top);
+            BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(12), (ushort)f.Rows);
+        }
+        data.CopyTo(buffer, header);
+        return buffer;
     }
 
     private async Task SendStatusAsync(string state, string? message, CancellationToken ct, bool? mouse = null)

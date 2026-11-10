@@ -242,13 +242,17 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                     return Task.FromResult(new AgentCommandResult { CommandId = command.CommandId, Status = AgentCommandStatus.InvalidState, Message = "The VM is not running." });
                 }
                 var first = _framesSent.TryAdd(fr.VmId, true);
+                // Like the real agent: with Partial, one change of the second row is sent as that row only (once).
+                var partialRow = !first && !fr.ForceFull && fr.Partial && _partialSent.TryAdd(fr.VmId, true);
                 return Task.FromResult(new AgentCommandResult
                 {
                     CommandId = command.CommandId,
                     Status = AgentCommandStatus.Succeeded,
                     Frame = first || fr.ForceFull
                         ? new ConsoleFrame { Width = 4, Height = 2, GuestWidth = 4, GuestHeight = 2, MouseAvailable = true, Data = Convert.ToBase64String(TinyFrame()) }
-                        : new ConsoleFrame { Width = 4, Height = 2, GuestWidth = 4, GuestHeight = 2, MouseAvailable = true, Unchanged = true },
+                        : partialRow
+                            ? new ConsoleFrame { Width = 4, Height = 2, GuestWidth = 4, GuestHeight = 2, MouseAvailable = true, Top = 1, Rows = 1, Data = Convert.ToBase64String(TinyFrame(rows: 1)) }
+                            : new ConsoleFrame { Width = 4, Height = 2, GuestWidth = 4, GuestHeight = 2, MouseAvailable = true, Unchanged = true },
                 });
 
             case AgentCommandKind.ConsoleInput:
@@ -263,14 +267,15 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
     }
 
     private readonly ConcurrentDictionary<Guid, bool> _framesSent = new();
+    private readonly ConcurrentDictionary<Guid, bool> _partialSent = new();
 
-    /// <summary>zlib-compressed 4x2 RGB565 frame.</summary>
-    private static byte[] TinyFrame()
+    /// <summary>zlib-compressed 4x2 RGB565 frame (or its first <paramref name="rows"/> rows).</summary>
+    private static byte[] TinyFrame(int rows = 2)
     {
         using var ms = new MemoryStream();
         using (var z = new System.IO.Compression.ZLibStream(ms, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
         {
-            z.Write(new byte[4 * 2 * 2]);
+            z.Write(new byte[4 * rows * 2]);
         }
         return ms.ToArray();
     }

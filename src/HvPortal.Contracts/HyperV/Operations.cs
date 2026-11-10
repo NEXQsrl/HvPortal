@@ -422,14 +422,23 @@ public sealed record HostDiskInfo(string Path, Guid? VmId, string? VmName, strin
 
 // ---------------------------------------------------------------- console
 
-public sealed record ConsoleFrameRequest(Guid VmId, int MaxWidth, int MaxHeight, bool ForceFull);
+/// <summary>
+/// One console frame. <paramref name="Partial"/> (0.9.2+): the gateway accepts a frame with only the band of rows that
+/// changed since the previous one. An older agent ignores it and keeps sending full frames (Rows = 0), so no protocol
+/// version is needed.
+/// </summary>
+public sealed record ConsoleFrameRequest(Guid VmId, int MaxWidth, int MaxHeight, bool ForceFull, bool Partial = false);
 
 public sealed record ConsoleFrame
 {
     public int Width { get; init; }
     public int Height { get; init; }
-    /// <summary>zlib-compressed RGB565 little-endian pixels, base64. Null when unchanged.</summary>
+    /// <summary>zlib-compressed RGB565 little-endian pixels, base64: the whole frame, or rows Top..Top+Rows-1. Null when unchanged.</summary>
     public string? Data { get; init; }
+    /// <summary>First row of a partial frame (only with <see cref="ConsoleFrameRequest.Partial"/>).</summary>
+    public int Top { get; init; }
+    /// <summary>Number of rows of a partial frame; 0 = full frame.</summary>
+    public int Rows { get; init; }
     public bool Unchanged { get; init; }
     public bool MouseAvailable { get; init; }
     public int GuestWidth { get; init; }

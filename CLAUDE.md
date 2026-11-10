@@ -67,6 +67,13 @@ Practical notes:
   `TrustedPublisher`; they do not give SmartScreen/antivirus reputation. Never claim a build is "trusted" because it is
   signed, and never export or commit the private key (`artifacts/` is git-ignored). No timestamp server by default:
   `-TimestampServer` contacts an external service, so use it only when the user asks.
+- **Never ship new changes under a version that is already released.** Before the first change after a published
+  release (check `git tag` / the GitHub release), bump the patch version: the portal update (ADR-042) and the agent
+  updates (ADR-029) only offer a *higher* version, so a rebuilt 0.9.1 is never installed where 0.9.1 runs. Bump it in
+  `Directory.Build.props` (`Version` + `InformationalVersion`), `web/package.json` and the two top `"version"` fields of
+  `web/package-lock.json`, the image tags in `docker/` (Dockerfile, compose files, `.env.example`, README), the README
+  badges and "HvPortal x.y.z is a preview" lines (EN + IT). Label new features, docs and tests with the new version,
+  not the released one; `AgentProtocol.Version` changes only with the protocol, not with every release.
 
 ## Architecture
 
@@ -96,7 +103,7 @@ Key cross-cutting flows:
 - **Protocol versioning.** `AgentProtocol.Version` (currently 11) is announced in `AgentHello`.
   `AgentProtocol.RequiredVersion(command)` is checked in `AgentConnectionManager.SendAsync` (and mirrored in
   `FakeAgentDispatcher`): never send a command an older agent cannot parse or would silently misinterpret. Bump it
-  when adding enum values or semantics-changing fields. Product version is in `Directory.Build.props` (+ `web/package.json`).
+  when adding enum values or semantics-changing fields. Product version is in `Directory.Build.props` (+ `web/package.json`; see the release-version rule above).
 - **Changes are persistent jobs** (`Jobs/JobService`, `JobRunner`): created at request time, then re-authorized and
   re-validated at execution; server-controlled arguments are re-stamped (`JobRunner.PrepareArguments`: VM Hyper-V id,
   ISO library roots). Unknown outcomes are reconciled, never reported as success. Reads are live agent calls.

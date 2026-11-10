@@ -434,6 +434,17 @@ public sealed class OperationsTests : IAsyncLifetime
                 gotFrame = type == WebSocketMessageType.Binary && data[0] == 1 && BitConverter.ToUInt16(data, 2) == 4;
             }
             Assert.True(gotFrame);
+            // A browser that accepts partial frames gets a full frame first, then only the rows that changed
+            // ([0]=2, first row and row count after the header); the agent is asked for partial frames.
+            await SendAsync(ws, new { t = "caps", partial = true });
+            var gotPartial = false;
+            for (var i = 0; i < 10 && !gotPartial; i++)
+            {
+                var (type, data, _) = await ReceiveAsync(ws);
+                gotPartial = type == WebSocketMessageType.Binary && data[0] == 2 && BitConverter.ToUInt16(data, 10) == 1 && BitConverter.ToUInt16(data, 12) == 1;
+            }
+            Assert.True(gotPartial);
+            Assert.Contains(_app.Agent.Received, cmd => cmd.Kind == HvPortal.Contracts.Agent.AgentCommandKind.ConsoleFrame && cmd.FrameRequest!.Partial);
             await SendAsync(ws, new { t = "k", c = new[] { 0x1e, 0x9e } });
             await SendAsync(ws, new { t = "k", c = new[] { 999 } }); // invalid: ignored, never forwarded
             await SendAsync(ws, new { t = "cad" });
