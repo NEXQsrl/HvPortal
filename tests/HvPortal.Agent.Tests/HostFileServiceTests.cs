@@ -62,6 +62,24 @@ public sealed class HostFileServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task An_upload_never_replaces_a_virtual_disk_but_a_new_one_is_accepted()
+    {
+        // 0.9.4: the files the explorer does not rename or delete are not replaced by an upload either.
+        File.WriteAllBytes(Path.Combine(_root, "vm1.vhdx"), [1, 2, 3]);
+        var refused = Assert.Throws<HostPathException>(() => HostFileService.Begin(new FileWriteBeginRequest(_root, "vm1.vhdx", 2, Overwrite: true)));
+        Assert.StartsWith("protected_file", refused.Message);
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(Path.Combine(_root, "vm1.vhdx")));
+        Assert.Single(Directory.GetFiles(_root)); // no temporary file left behind
+
+        var begin = HostFileService.Begin(new FileWriteBeginRequest(_root, "template.vhdx", 2, Overwrite: true));
+        await HostFileService.ChunkAsync(new FileWriteChunkRequest(begin.UploadId, 0, Convert.ToBase64String(new byte[] { 9, 9 })), CancellationToken.None);
+        // A disk with that name appeared while the upload was running: it is not replaced at the end.
+        File.WriteAllBytes(Path.Combine(_root, "template.vhdx"), [5]);
+        Assert.StartsWith("file_exists", Assert.Throws<HostPathException>(() => HostFileService.Commit(new FileWriteCommitRequest(begin.UploadId, Sha([9, 9])))).Message);
+        Assert.Equal([5], File.ReadAllBytes(Path.Combine(_root, "template.vhdx")));
+    }
+
+    [Fact]
     public void Read_returns_chunks_and_refuses_files_open_for_writing()
     {
         var path = Path.Combine(_root, "a.bin");

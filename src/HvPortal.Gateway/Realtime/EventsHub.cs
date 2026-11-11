@@ -60,6 +60,8 @@ public interface IRealtimeNotifier
     Task GroupsChangedAsync();
     /// <summary>Clusters or their nodes changed (ADR-041): every client re-reads hosts and clusters.</summary>
     Task ClustersChangedAsync();
+    /// <summary>An update of the portal was handed to the updater (0.9.4): every open page shows the waiting page and follows the restart.</summary>
+    Task PortalUpdatingAsync(string version, string from);
 }
 
 public sealed class RealtimeNotifier(IHubContext<EventsHub> hub, ConnectedUsers users, IServiceScopeFactory scopes, ILogger<RealtimeNotifier> logger,
@@ -115,6 +117,19 @@ public sealed class RealtimeNotifier(IHubContext<EventsHub> hub, ConnectedUsers 
         catch (Exception ex)
         {
             logger.LogDebug(ex, "Realtime clusters notification failed");
+        }
+    }
+
+    public async Task PortalUpdatingAsync(string version, string from)
+    {
+        try
+        {
+            // Only the two version numbers, which the sign-in page already shows to anyone.
+            await hub.Clients.All.SendAsync("portalUpdating", new { version, from });
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Realtime update notification failed");
         }
     }
 

@@ -141,7 +141,7 @@ public sealed class InventoryIngestor
             // Agent 0.3.4+ fields (older agents send null: the previous values are kept).
             if (v.Notes is not null && vm.HyperVNotes is not null && !string.Equals(v.Notes, vm.HyperVNotes, StringComparison.Ordinal))
             {
-                Event(hostId, vm.Id, "vm.notes.changed", Truncate(v.Notes, 200), now);
+                Event(hostId, vm.Id, "vm.notes.changed", Truncate(v.Notes, 200) ?? "", now);
             }
             vm.HyperVNotes = v.Notes ?? vm.HyperVNotes;
             vm.HyperVCreatedAt = v.CreatedUtc ?? vm.HyperVCreatedAt;

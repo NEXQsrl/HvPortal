@@ -118,7 +118,7 @@ export interface GroupUsage { vms: number; processors: number; memoryMb: number;
 export interface GroupPolicyLevel { groupId: string; name: string; policy: GroupPolicy; usage: GroupUsage }
 export interface GroupPolicyHost {
   id: string; displayName: string; connected: boolean; ready: boolean; switches: string[]; networksRestricted: boolean; storageRoots: string[];
-  canCreateVm: boolean; canCreateNetwork: boolean; canBrowseFiles: boolean; canUploadFiles: boolean;
+  canCreateVm: boolean; canCreateNetwork: boolean; canBrowseFiles: boolean; canUploadFiles: boolean; canManageFiles?: boolean;
 }
 export interface GroupNetwork { id: string; hostId: string; hostName: string | null; name: string; switchId: string | null; groupId: string; groupName: string | null; createdAt: string; canDelete: boolean }
 export interface GroupPolicyView {

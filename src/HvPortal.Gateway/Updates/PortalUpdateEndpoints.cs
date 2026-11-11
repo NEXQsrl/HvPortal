@@ -81,7 +81,7 @@ public static class PortalUpdateEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> InstallAsync(InstallBody body, HttpContext http, PortalUpdateService updates)
+    private static async Task<IResult> InstallAsync(InstallBody body, HttpContext http, PortalUpdateService updates, Realtime.IRealtimeNotifier notifier)
     {
         if ((await http.GuardAsync(Permissions.SettingsManage, ResourceRef.Global, "system.updates.install") ?? await http.RequireRecentReauthAsync()) is { } denied)
         {
@@ -98,6 +98,8 @@ public static class PortalUpdateEndpoints
             return ApiSupport.Conflict(code, message);
         }
         await http.WriteAuditAsync("system.updates.install", details: new { version, from = ProductInfo.Version });
+        // Everyone who is connected sees the waiting page, not a page that stops answering.
+        await notifier.PortalUpdatingAsync(version, ProductInfo.Version);
         return Results.Accepted(value: new { version, message = "The update was verified and handed to the updater: the portal restarts in a few minutes." });
     }
 }

@@ -30,7 +30,7 @@ let uploadSeq = 0;
  * With <paramref name="groupId"/> the explorer works in the scope of a VM group: it starts from the storage folders of
  * the group on the host and cannot leave them (the server enforces it).
  */
-export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host, 'id'>; groupId?: string; readOnly?: boolean }) {
+export function HostFileExplorer({ host, groupId, readOnly, canManage }: { host: Pick<Host, 'id'>; groupId?: string; readOnly?: boolean; /** Rename and delete are offered (host.files.manage and agent 0.9.4+; the server checks again). */ canManage?: boolean }) {
   const { t, fmtDate } = useI18n();
   const scope = groupId ? `&groupId=${groupId}` : '';
   const [path, setPath] = useLocalStorage<string | null>(`hvp.files.${host.id}${groupId ? '.' + groupId : ''}`, null);
@@ -162,7 +162,7 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
             </TableHeader>
             <TableBody>
               {data.folders.map((f) => (
-                <WithContextMenu key={f.path} label={f.name} items={canUpload ? entryActions({ ...f, folder: true }) : []}>
+                <WithContextMenu key={f.path} label={f.name} items={canManage ? entryActions({ ...f, folder: true }) : []}>
                 <TableRow className="group cursor-pointer" aria-label={t('picker.open', { name: f.name })} tabIndex={0}
                   onClick={(e) => { if (!(e.target as HTMLElement).closest('button, a, [role=menuitem]')) setPath(f.path); }}
                   onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) setPath(f.path); }}>
@@ -170,7 +170,7 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
                   <TableCell /><TableCell className="hidden md:table-cell" />
                   <TableCell className="text-right">
                     <span className="flex items-center justify-end gap-1">
-                      {canUpload && <KebabMenu label={t('files.actionsOf', { name: f.name })} items={entryActions({ ...f, folder: true })} />}
+                      {canManage && <KebabMenu label={t('files.actionsOf', { name: f.name })} items={entryActions({ ...f, folder: true })} />}
                       <ChevronRight className="size-4 text-muted-foreground" />
                     </span>
                   </TableCell>
@@ -178,14 +178,14 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
                 </WithContextMenu>
               ))}
               {data.files.map((f) => (
-                <WithContextMenu key={f.path} label={f.name} items={canUpload ? entryActions({ ...f, folder: false }) : []}>
+                <WithContextMenu key={f.path} label={f.name} items={canManage ? entryActions({ ...f, folder: false }) : []}>
                 <TableRow>
                   <TableCell><span className="flex min-w-0 items-center gap-2"><FileIcon className="size-4 shrink-0 text-muted-foreground" /><span className="truncate">{f.name}</span></span></TableCell>
                   <TableCell className="text-right text-xs whitespace-nowrap tabular">{formatBytes(f.sizeBytes)}</TableCell>
                   <TableCell className="hidden text-xs whitespace-nowrap tabular md:table-cell">{fmtDate(f.modifiedUtc)}</TableCell>
                   <TableCell className="text-right">
                     <span className="flex items-center justify-end gap-1">
-                      {canUpload && <KebabMenu label={t('files.actionsOf', { name: f.name })} items={entryActions({ ...f, folder: false })} />}
+                      {canManage && <KebabMenu label={t('files.actionsOf', { name: f.name })} items={entryActions({ ...f, folder: false })} />}
                       <Button asChild size="icon-sm" variant="ghost" aria-label={t('files.downloadName', { name: f.name })} title={t('files.download')}>
                         <a href={`/api/v1/hosts/${host.id}/files/download?path=${encodeURIComponent(f.path)}${scope}`} download={f.name}><Download /></a>
                       </Button>

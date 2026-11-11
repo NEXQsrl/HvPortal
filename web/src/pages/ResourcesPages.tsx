@@ -113,7 +113,7 @@ export function StoragePage() {
             {fileHost?.storageFolders && fileHost.storageFolders.length > 0 && (
               <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><FolderLock className="size-3.5" />{t('sfold.restricted', { list: fileHost.storageFolders.join(', ') })}</p>
             )}
-            {fileHost ? <HostFileExplorer key={fileHost.id} host={fileHost} /> : <Notice kind="warn">{t('files.noHosts')}</Notice>}
+            {fileHost ? <HostFileExplorer key={fileHost.id} host={fileHost} canManage={fileHost.canManageFiles === true} /> : <Notice kind="warn">{t('files.noHosts')}</Notice>}
           </>
         )}
       </TabsContent>

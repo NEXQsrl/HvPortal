@@ -102,6 +102,20 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-049 Drop-downs drawn by the portal (0.9.4)
+- **Context**: the drop-downs were native `<select>` elements: the closed control followed the design, the open list was
+  drawn by the operating system (grey, square, different in every browser, hard to read in the dark theme).
+- **Decision**: `components/ui/native-select.tsx` keeps its name and the way it is used (`<option>` children, `value`,
+  `onChange` with `e.target.value`, `id` for the label, `disabled`) but renders a Radix Select: the list opens under the
+  control with its width, rounded, with the chosen entry marked, disabled entries dimmed, long texts wrapped, keyboard
+  and type-ahead as in a native list. All 74 drop-downs change at once; none of the pages was edited. The empty value
+  (`""`, the usual "none" entry) is carried under an internal name because Radix refuses empty item values.
+- **Consequences**: the list is a portal element with the CSP style nonce, like the other Radix components. The browser
+  test (`web/e2e/ui-smoke.mjs`) opens the control and clicks the entry instead of `selectOption`. On phones the list is
+  the portal's, not the system picker.
+- **Alternatives**: styling the native list (not possible across browsers); editing every page to use the Radix
+  components directly (74 edits for the same result).
+
 ## ADR-048 Cluster notifications through ClusAPI: proposed, not implemented (0.9.4)
 - **Context**: the cluster is read by polling (`GetClusterStatus` every 120 s, ADR-041). The native API
   `CreateClusterNotifyPortV2` could report node, role, resource, network, quorum and CSV changes at once.
@@ -181,11 +195,15 @@ Format: context → decision → consequences. Status of all records: **accepted
     administrator*; not implied by `host.files.write`). In folder scope only strictly inside the storage paths of the
     folder (a storage path itself is refused). Refused with `path_in_use` when the entry is, or contains, something the
     portal's own records use on that host: template library, ISO libraries, backup staging folder, the folder of a
-    registered VM. Delete needs the name of the entry again (`confirmName`), and the UI a checked confirmation.
+    registered VM, a storage path given to a VM folder (ADR-024). Delete needs the name of the entry again (`confirmName`), and the UI a checked confirmation.
   - Read-only files are not deleted; a file another process has open is `file_in_use`; NTFS refusals are
     `access_denied`. Success, failure (with the agent's code) and every refusal by a rule are audited
     (`host.files.rename`, `host.files.delete`). The calls are synchronous, like *New folder*: authorized at request
     time, validated again by the agent.
+  - An **upload** with *Replace* no longer replaces an existing file of the protected kinds either (protected_file;
+    a new virtual disk under a free name is still accepted), checked when the upload begins and again at its end.
+  - The host list and the view of a VM folder carry canManageFiles (permission and agent protocol 13): the explorer
+    offers *Rename* and *Delete* only then. The endpoints decide whatever the page shows.
 - **Consequences**: no recycle bin: a deleted file is gone. Folders with content must be emptied first. A VM whose files
   the portal does not know (not registered on that host) is protected only by the file-name rule and by Windows' own
   locks. Verified with the test double and on a real NTFS folder of the development machine (links, in-use files,
@@ -212,8 +230,11 @@ Format: context → decision → consequences. Status of all records: **accepted
   - The run is kept in `localStorage` (target and previous version, when it started, whether the gateway was seen down):
     it survives the restart, a reload and a new sign-in, and is dropped after 6 hours. Nothing redirects by itself: when
     the session ended with the restart the page says so and offers *Sign in* (a reload, after the run is cleared).
+  - When the update is handed to the updater the gateway tells every connected browser (SignalR `portalUpdating`, only
+    the two version numbers): they show the same page and follow the same restart, also when another administrator
+    started it.
 - **Consequences**: signature, SHA-256 and publisher checks are untouched (the updater and the download are unchanged).
-  Other users connected during the update still see their requests fail until the gateway is back. The page was not
+  A browser that connects only after the hand-over sees the gateway stop answering as before. The page was not
   run against a real update (the development gateway cannot update itself): real-host plan V88.
 - **Alternatives**: a status endpoint that survives the restart on another port (a second listener for a few minutes of
   use); server-sent progress from the updater (it reports none).

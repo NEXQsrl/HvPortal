@@ -187,6 +187,12 @@ public static class HostFileService
             {
                 throw new HostPathException("file_exists: the file already exists.");
             }
+            // 0.9.4: the files the explorer never renames or deletes are not replaced by an upload either (a new
+            // virtual disk can still be uploaded under a name that is free).
+            if (ProtectedHostFiles.IsProtected(request.Name))
+            {
+                throw new HostPathException("protected_file: an existing virtual disk, checkpoint or VM configuration file is not replaced by an upload. Upload it with another name.");
+            }
             if ((File.GetAttributes(final) & (Excluded | FileAttributes.ReadOnly)) != 0)
             {
                 throw new HostPathException("location_not_allowed: read-only, hidden, system or linked files cannot be replaced.");
@@ -260,7 +266,7 @@ public static class HostFileService
             u.Stream.Dispose();
             u.Access.Run(() =>
             {
-                if (File.Exists(u.FinalPath) && !u.Overwrite)
+                if (File.Exists(u.FinalPath) && (!u.Overwrite || ProtectedHostFiles.IsProtected(Path.GetFileName(u.FinalPath))))
                 {
                     throw new HostPathException("file_exists: the file was created meanwhile.");
                 }

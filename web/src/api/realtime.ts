@@ -1,8 +1,9 @@
 import { HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr';
 
-export type RealtimeEvent = 'inventoryChanged' | 'jobChanged' | 'groupsChanged';
-type Payload = { hostId?: string; jobId?: string; status?: string; progress?: number; targetId?: string };
+export type RealtimeEvent = 'inventoryChanged' | 'jobChanged' | 'groupsChanged' | 'portalUpdating';
+type Payload = { hostId?: string; jobId?: string; status?: string; progress?: number; targetId?: string; /** portalUpdating: the version being installed and the one running. */ version?: string; from?: string };
 type Listener = (payload: Payload) => void;
+/** Events that mean "read your data again": also raised by this page after a reconnection. */
 const EVENTS: RealtimeEvent[] = ['inventoryChanged', 'jobChanged', 'groupsChanged'];
 
 /**
@@ -25,6 +26,7 @@ class Realtime {
     for (const ev of EVENTS) {
       c.on(ev, (payload: Payload) => this.emit(ev, payload ?? {}));
     }
+    c.on('portalUpdating', (payload: Payload) => this.emit('portalUpdating', payload ?? {}));
     c.onreconnecting(() => this.setState('connecting'));
     c.onreconnected(() => {
       this.setState('connected');

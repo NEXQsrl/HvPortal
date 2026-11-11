@@ -124,8 +124,8 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
 - **Rename and delete in the file explorer** (ADR-045, 0.9.4): a permission of its own, `host.files.manage` (not implied
   by `host.files.write`); on a group only strictly inside its storage paths. The gateway refuses, before the agent is
   asked, virtual disks / checkpoints / VM configuration files (by name), a storage path of the group itself, and any
-  folder that is or contains the template library, an ISO library, the backup staging folder or the folder of a
-  registered VM (from its own records, never from the client). The agent checks the real file system again: allowed
+  folder that is or contains the template library, an ISO library, the backup staging folder, the folder of a
+  registered VM or a storage path of a VM folder (from its own records, never from the client). The agent checks the real file system again: allowed
   storage folders, no link on the way or below a renamed folder, no hidden or system entry, no Hyper-V file inside a
   renamed folder. Delete is never recursive and needs the name of the entry repeated in the request. Every success,
   failure and refusal is audited.

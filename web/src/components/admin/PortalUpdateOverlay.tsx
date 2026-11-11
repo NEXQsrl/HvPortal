@@ -1,5 +1,6 @@
 import { ArrowUpCircle, Check, CircleAlert, CircleCheck, Loader2 } from 'lucide-react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { realtime } from '@/api/realtime';
 import { Button } from '@/components/ui/button';
 import { useI18n, type TKey } from '@/i18n';
 import { formatDuration } from '@/lib/format';
@@ -110,6 +111,12 @@ export function PortalUpdateProvider({ children }: { children: ReactNode }) {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, []);
+
+  // Started by another administrator: the gateway tells every open page, which then follows the same update.
+  useEffect(() => realtime.on('portalUpdating', (p) => {
+    if (!p.version || !p.from || current.current) return;
+    update({ target: p.version, from: p.from, startedAt: Date.now(), phase: 'installing', sawDown: false, backOnOtherVersion: 0 });
+  }), [update]);
 
   const api = useMemo(() => ({ begin }), [begin]);
   return (

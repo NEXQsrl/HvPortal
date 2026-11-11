@@ -43,7 +43,7 @@ export function DashboardPage() {
   type Level = 'Critical' | 'Warning' | 'Unknown';
   const attention: { key: string; to: string; icon: ReactNode; name: string; why: string; level: Level }[] = [
     ...offline.map((x) => ({ key: 'h' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected={false} />, name: x.displayName, why: t('dash.offlineHost'), level: 'Warning' as Level })),
-    ...h.filter((x) => x.connected && x.access && x.access !== 'Ok').map((x) => ({ key: 'a' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected access={x.access} />, name: x.displayName, why: t('dash.accessIssue', { a: x.access ?? '' }), level: 'Warning' as Level })),
+    ...h.filter((x) => x.connected && x.access && x.access !== 'Ok').map((x) => ({ key: 'a' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected access={x.access} />, name: x.displayName, why: x.accessCode ? t(('wmi.' + x.accessCode + '.title') as TKey) : t('dash.accessIssue', { a: x.access ?? '' }), level: 'Warning' as Level })),
     ...h.filter((x) => x.connected && x.stale).map((x) => ({ key: 's' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected access={x.access} />, name: x.displayName, why: t('dash.staleHost'), level: 'Unknown' as Level })),
     ...v.filter((x) => x.isCritical).map((x) => ({ key: 'c' + x.id, to: `/vms/${x.id}`, icon: <VmIcon state={x.powerState} critical />, name: x.name, why: t('dash.criticalVm'), level: 'Critical' as Level })),
     ...v.filter((x) => x.isMissing).map((x) => ({ key: 'm' + x.id, to: `/vms/${x.id}`, icon: <VmIcon state={x.powerState} />, name: x.name, why: t('dash.missingVm'), level: 'Warning' as Level })),

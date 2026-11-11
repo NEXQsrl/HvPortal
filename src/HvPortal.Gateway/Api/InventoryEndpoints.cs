@@ -43,7 +43,7 @@ public static class InventoryEndpoints
     // ------------------------------------------------------------------ hosts
 
     private static object HostDto(ManagedHost h, bool connected, int vmCount, DateTimeOffset now, bool canCreateVm = false,
-        bool showRemote = false, string? managementAgentName = null, bool canManageNetworks = false, HostCluster? cluster = null, bool canMaintain = false)
+        bool showRemote = false, string? managementAgentName = null, bool canManageNetworks = false, HostCluster? cluster = null, bool canMaintain = false, bool canManageFiles = false)
     {
         var facts = h.HostFactsJson is null ? null : JsonSerializer.Deserialize<HostFacts>(h.HostFactsJson);
         var clusterFacts = facts?.Cluster;
@@ -93,6 +93,8 @@ public static class InventoryEndpoints
             nativeVmGroups = h.Access == HyperVAccessStatus.Ok && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 2),
             // Agent 0.3.3+ (protocol 5): file explorer (browse, download, upload).
             canBrowseFiles = connected && HostCapabilities.AgentAtLeast(h.AgentVersion, 0, 3, 3),
+            // Agent 0.9.4+ (protocol 13) and host.files.manage on the host: rename and delete in the file explorer.
+            canManageFiles = canManageFiles && connected,
             vmGroupsSyncedAt = h.VmGroupsSyncedAt,
             vmGroupsSyncError = h.VmGroupsSyncError,
             // Agent 0.7.0+ (protocol 9): host health, VM move, backups, new folders.
@@ -189,7 +191,8 @@ public static class InventoryEndpoints
                     manageAll, h.ManagementAgentId is { } ma ? agentNames.GetValueOrDefault(ma) : null,
                     await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Host(h.Id), http.RequestAborted),
                     h.ClusterId is { } cid ? clusters.GetValueOrDefault(cid) : null,
-                    await access.HasAsync(uid, Permissions.HostsMaintenance, ResourceRef.Host(h.Id), http.RequestAborted)));
+                    await access.HasAsync(uid, Permissions.HostsMaintenance, ResourceRef.Host(h.Id), http.RequestAborted),
+                    agents.ProtocolVersionOf(h.Id) >= 13 && await access.HasAsync(uid, Permissions.HostFilesManage, ResourceRef.Host(h.Id), http.RequestAborted)));
             }
         }
         return Results.Ok(result);
@@ -213,7 +216,8 @@ public static class InventoryEndpoints
         return Results.Ok(new { host = HostDto(h, agents.IsConnected(id), count, time.GetUtcNow(),
             await access.HasAsync(uid, Permissions.VmCreate, ResourceRef.Host(id), http.RequestAborted), manageAll, agentName,
             await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Host(id), http.RequestAborted), cluster,
-            await access.HasAsync(uid, Permissions.HostsMaintenance, ResourceRef.Host(id), http.RequestAborted)), events });
+            await access.HasAsync(uid, Permissions.HostsMaintenance, ResourceRef.Host(id), http.RequestAborted),
+            agents.ProtocolVersionOf(id) >= 13 && await access.HasAsync(uid, Permissions.HostFilesManage, ResourceRef.Host(id), http.RequestAborted)), events });
     }
 
     /// <summary>Connection facts an agent needs: names valid in the gateway certificate, port, CA pin, reachability.</summary>

@@ -1414,8 +1414,12 @@ try {
 
             $roles = New-Object System.Collections.ArrayList
             $failed = New-Object System.Collections.ArrayList
+            # Resources and groups are read once and used for the roles and for the core group below (0.9.4).
+            $resources = $null
+            $groups = $null
             try {
                 $resources = @(Get-ClusterResource -ErrorAction Stop)
+                $groups = @(Get-ClusterGroup -ErrorAction Stop)
                 $vmOfGroup = @{}
                 foreach ($r in @($resources | Where-Object { "$($_.ResourceType)" -eq 'Virtual Machine' })) {
                     try { $vmOfGroup["$($r.OwnerGroup)"] = "$((Get-ClusterParameter -InputObject $r -Name VmID -ErrorAction Stop).Value)" } catch { }
@@ -1423,7 +1427,7 @@ try {
                 foreach ($r in @($resources | Where-Object { "$($_.State)" -eq 'Failed' } | Select-Object -First 100)) {
                     [void]$failed.Add(@{ name = "$($r.Name)"; resourceType = "$($r.ResourceType)"; state = "$($r.State)"; ownerGroup = "$($r.OwnerGroup)"; ownerNode = "$($r.OwnerNode)" })
                 }
-                foreach ($g in @(Get-ClusterGroup -ErrorAction Stop | Select-Object -First 2000)) {
+                foreach ($g in @($groups | Select-Object -First 2000)) {
                     $type = "$($g.GroupType)"
                     if ($type -eq 'Cluster' -or $type -eq 'AvailableStorage') { continue }
                     $vmId = $vmOfGroup["$($g.Name)"]
@@ -1436,10 +1440,13 @@ try {
             $coreState = $null
             $core = New-Object System.Collections.ArrayList
             try {
-                $coreGroup = @(Get-ClusterGroup -ErrorAction Stop | Where-Object { "$($_.GroupType)" -eq 'Cluster' }) | Select-Object -First 1
+                # Read again only when the reading above failed (its error is already in the report).
+                if ($null -eq $groups) { $groups = @(Get-ClusterGroup -ErrorAction Stop) }
+                if ($null -eq $resources) { $resources = @(Get-ClusterResource -ErrorAction Stop) }
+                $coreGroup = @($groups | Where-Object { "$($_.GroupType)" -eq 'Cluster' }) | Select-Object -First 1
                 if ($coreGroup) {
                     $coreState = "$($coreGroup.State)"
-                    foreach ($r in @(Get-ClusterResource -ErrorAction Stop | Where-Object { "$($_.OwnerGroup)" -eq "$($coreGroup.Name)" } | Select-Object -First 20)) {
+                    foreach ($r in @($resources | Where-Object { "$($_.OwnerGroup)" -eq "$($coreGroup.Name)" } | Select-Object -First 20)) {
                         [void]$core.Add(@{ name = "$($r.Name)"; resourceType = "$($r.ResourceType)"; state = "$($r.State)"; ownerGroup = "$($r.OwnerGroup)"; ownerNode = "$($r.OwnerNode)" })
                     }
                 }

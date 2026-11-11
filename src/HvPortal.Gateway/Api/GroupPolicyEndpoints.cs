@@ -72,6 +72,7 @@ public static class GroupPolicyEndpoints
         var canCreateNetwork = await access.HasAsync(uid, Permissions.NetworkManage, ResourceRef.Group(id), ct);
         var canReadFiles = await access.HasAsync(uid, Permissions.HostFilesRead, ResourceRef.Group(id), ct);
         var canWriteFiles = await access.HasAsync(uid, Permissions.HostFilesWrite, ResourceRef.Group(id), ct);
+        var canManageFiles = await access.HasAsync(uid, Permissions.HostFilesManage, ResourceRef.Group(id), ct);
         var delegated = GroupPolicyService.DelegatedHosts(chain) ?? [];
         var hostRows = await db.Hosts.AsNoTracking().Where(h => delegated.Contains(h.Id) && h.Status == HostStatus.Active).OrderBy(h => h.DisplayName).ToListAsync(ct);
         var hosts = new List<object>();
@@ -93,6 +94,7 @@ public static class GroupPolicyEndpoints
                 canCreateNetwork = canCreateNetwork && ready && agents.ProtocolVersionOf(h.Id) >= 7,
                 canBrowseFiles = canReadFiles && connected && view.StorageRoots.Count > 0 && agents.ProtocolVersionOf(h.Id) >= 5,
                 canUploadFiles = canWriteFiles && connected && view.StorageRoots.Count > 0 && agents.ProtocolVersionOf(h.Id) >= 5,
+                canManageFiles = canManageFiles && connected && view.StorageRoots.Count > 0 && agents.ProtocolVersionOf(h.Id) >= 13,
             });
         }
         var tree = await GroupTree.LoadAsync(db, ct);

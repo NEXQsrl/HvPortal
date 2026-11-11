@@ -31,6 +31,8 @@ function totp(base32) {
 const results = [];
 const check = (name, ok, detail = '') => { results.push({ name, ok, detail }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); };
 const shot = (page, name) => page.screenshot({ path: join(out, name + '.png') });
+/** Drop-downs are drawn by the portal (0.9.4), not native <select>: open the control by its label, then click the entry. */
+const pick = async (control, option) => { await control.click(); await control.page().getByRole('option', { name: option, exact: true }).click(); };
 
 const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--ignore-certificate-errors'] });
 const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 900 }, locale: 'it-IT', colorScheme: 'light' });
@@ -237,7 +239,7 @@ try {
   check('new user dialog asks type, role and MFA at first sign-in', (await addDlg.getByRole('radio', { name: /Microsoft/ }).isDisabled())
     && (await addDlg.getByLabel('Ruolo').count()) === 1 && (await addDlg.getByRole('checkbox', { name: /autenticazione al primo accesso/ }).isChecked()));
   await addDlg.locator('#nu-name').fill('mario.rossi');
-  await addDlg.getByLabel('Ruolo').selectOption({ label: 'Read only' });
+  await pick(addDlg.getByLabel('Ruolo'), 'Read only');
   await addDlg.getByRole('button', { name: 'Crea utente' }).click();
   const reauthDlg = page.getByRole('dialog', { name: 'Conferma la tua identità' });
   if (await reauthDlg.waitFor({ timeout: 3000 }).then(() => true, () => false)) {
@@ -280,12 +282,12 @@ try {
   const auditDetails = await page.locator('.audit-details').innerText();
   check('audit entry expands to its details (action code, fields)', auditDetails.includes('users.delete') && auditDetails.includes('Codice azione') && auditDetails.includes('mario.rossi'));
   await shot(page, '09-audit');
-  await page.getByLabel('Area').selectOption('groups');
+  await pick(page.getByLabel('Area'), 'Gruppi');
   await deletedUser.waitFor({ state: 'detached' });
   await page.locator('tr.audit-row', { hasText: 'Gruppo creato' }).first().waitFor();
   check('audit filters by area', (await page.locator('.audit-title').allInnerTexts()).every((x) => /grupp/i.test(x)));
   await page.getByPlaceholder('Cerca (nome, utente, indirizzo, testo)…').fill('hv-lab-01');
-  await page.getByLabel('Area').selectOption('');
+  await pick(page.getByLabel('Area'), 'Tutte le aree');
   await page.getByRole('button', { name: 'Cerca', exact: true }).click();
   await page.waitForFunction(() => { const rows = [...document.querySelectorAll('tr.audit-row')]; return rows.length > 0 && rows.every((r) => r.innerText.includes('hv-lab-01')); }, null, { timeout: 15000 }).catch(() => {});
   await shot(page, '09b-audit-search');

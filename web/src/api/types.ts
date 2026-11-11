@@ -111,6 +111,8 @@ export interface Host {
   nativeVmGroups?: boolean;
   /** Agent 0.3.3+: file explorer (browse, download, upload). */
   canBrowseFiles?: boolean;
+  /** Agent 0.9.4+ and host.files.manage on the host: rename and delete in the file explorer. */
+  canManageFiles?: boolean;
   vmGroupsSyncedAt?: string | null;
   vmGroupsSyncError?: string | null;
   /** Agent: an agent runs on the host. Remote: reached by a management agent with stored credentials. */

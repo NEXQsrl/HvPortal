@@ -157,6 +157,11 @@ public sealed class HostFileTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, (await DeleteAsync(writer, otherHost, @"D:\ISO\old.iso", "old.iso")).StatusCode);
 
         var manager = await UserAsync("mg-manager", hostId, Permissions.HostFilesRead, Permissions.HostFilesManage);
+        // The host list tells the page who may rename and delete (the endpoints decide anyway).
+        static async Task<bool> CanManageAsync(HttpClient c, Guid id) =>
+            (await (await c.GetAsync("/api/v1/hosts")).JsonAsync()).EnumerateArray().Single(h => h.GetProperty("id").GetGuid() == id).GetProperty("canManageFiles").GetBoolean();
+        Assert.False(await CanManageAsync(writer, hostId));
+        Assert.True(await CanManageAsync(manager, hostId));
         var renamed = await RenameAsync(manager, hostId, @"D:\ISO\old.iso", "new.iso");
         Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
         Assert.Equal(@"D:\ISO\new.iso", (await renamed.JsonAsync()).GetProperty("newPath").GetString());
@@ -241,6 +246,20 @@ public sealed class HostFileTests : IAsyncLifetime
         Assert.Equal("path_in_use", await (await RenameAsync(manager, hostId, @"D:\ISO", "Images")).CodeAsync());
         Assert.Equal("path_in_use", await (await RenameAsync(manager, hostId, @"D:\Virtual Machines", "VMs")).CodeAsync());
         Assert.Equal("path_in_use", await (await RenameAsync(manager, hostId, @"D:\Virtual Machines\vm1", "vm1-old")).CodeAsync());
+        // An upload does not replace a Hyper-V file either (a new one, under a free name, is still accepted).
+        _app.Agent.Folders[@"D:\Virtual Machines\vm1\Virtual Hard Disks"] = [];
+        Assert.Equal("protected_file", await (await UploadAsync(manager, hostId, @"D:\Virtual Machines\vm1\Virtual Hard Disks", "vm1.vhdx", [7, 7], overwrite: true)).CodeAsync());
+        Assert.Equal(10, _app.Agent.Files[@"D:\Virtual Machines\vm1\Virtual Hard Disks\vm1.vhdx"].Length);
+        Assert.Equal(HttpStatusCode.OK, (await UploadAsync(manager, hostId, @"D:\Virtual Machines\vm1\Virtual Hard Disks", "data.vhdx", [7, 7])).StatusCode);
+        // A storage path given to a VM folder on this host is used by the portal too.
+        await _app.WithDbAsync(async db =>
+        {
+            db.LogicalGroups.Add(new LogicalGroup { Name = "Tenant A", CreatedAt = DateTimeOffset.UtcNow,
+                PolicyJson = System.Text.Json.JsonSerializer.Serialize(new { storage = new[] { new { hostId, path = @"D:\Tenants\A" } } }) });
+            await db.SaveChangesAsync();
+        });
+        Assert.Equal("path_in_use", await (await RenameAsync(manager, hostId, @"D:\Tenants", "Customers")).CodeAsync());
+        Assert.Equal("path_in_use", await (await DeleteAsync(manager, hostId, @"D:\Tenants\A", "A")).CodeAsync());
         // A file inside one of those folders is an ordinary file.
         Assert.Equal(HttpStatusCode.OK, (await RenameAsync(manager, hostId, @"D:\ISO\win.iso", "windows.iso")).StatusCode);
 

@@ -184,7 +184,20 @@ public static class HostFileEndpoints
         }
         var vms = await db.VirtualMachines.AsNoTracking().Where(v => v.HostId == host.Id && !v.IsMissing && v.ConfigurationPath != null)
             .Select(v => new { v.Name, v.ConfigurationPath }).ToListAsync(ct);
-        return vms.FirstOrDefault(v => AtOrBelow(v.ConfigurationPath)) is { } vm ? $"the folder of the virtual machine {vm.Name}" : null;
+        if (vms.FirstOrDefault(v => AtOrBelow(v.ConfigurationPath)) is { } vm)
+        {
+            return $"the folder of the virtual machine {vm.Name}";
+        }
+        // A storage path given to a VM folder on this host (ADR-024): renaming it would leave the folder without storage.
+        var limited = await db.LogicalGroups.AsNoTracking().Where(g => g.PolicyJson != null).Select(g => new { g.Name, g.PolicyJson }).ToListAsync(ct);
+        foreach (var g in limited)
+        {
+            if (GroupPolicy.Parse(g.PolicyJson)?.Storage?.Any(s => s.HostId == host.Id && AtOrBelow(s.Path)) == true)
+            {
+                return $"a storage path of the VM folder {g.Name}";
+            }
+        }
+        return null;
     }
 
     /// <summary>Protocol 9: a new folder inside a folder the user may write to (and inside the host's allowed storage folders).</summary>

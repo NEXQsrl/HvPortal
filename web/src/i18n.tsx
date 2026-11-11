@@ -487,7 +487,7 @@ const itBase: Record<keyof typeof enBase, string> = {
   'dash.vms': 'Macchine virtuali',
   'dash.running': 'in esecuzione',
   'dash.jobs': 'Job attivi',
-  'dash.attention': 'Da verificare',
+  'dash.attention': 'Richiede attenzione',
   'dash.noHosts': 'Nessun host registrato.',
   'dash.addHost': 'Aggiungi un host',
   'dash.recentJobs': 'Job recenti',

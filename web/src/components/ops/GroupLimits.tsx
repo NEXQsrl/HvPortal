@@ -307,7 +307,7 @@ export function GroupLimitsPanel({ group, onQueued }: { group: Group; onQueued: 
               {fileHosts.map((h) => <option key={h.id} value={h.id}>{h.displayName}</option>)}
             </NativeSelect>
           )} bodyClassName="p-3">
-          <HostFileExplorer key={selectedFileHost.id} host={selectedFileHost} groupId={group.id} readOnly={!selectedFileHost.canUploadFiles} />
+          <HostFileExplorer key={selectedFileHost.id} host={selectedFileHost} groupId={group.id} readOnly={!selectedFileHost.canUploadFiles} canManage={selectedFileHost.canManageFiles === true} />
         </Section>
       )}
       {v.levels.some((l) => l.policy.maxMemoryMb != null) && v.canCreateVm && <Notice kind="info">{t('lim.memoryMax')}</Notice>}

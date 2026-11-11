@@ -886,6 +886,7 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 var final = System.IO.Path.Combine(b.Folder, b.Name);
                 if (!Folders.ContainsKey(b.Folder)) return Fail("not_found: folder not found.");
                 if (Files.ContainsKey(final) && !b.Overwrite) return Fail("file_exists: the file already exists.");
+                if (Files.ContainsKey(final) && ProtectedHostFiles.IsProtected(b.Name)) return Fail("protected_file: an existing virtual disk is not replaced by an upload.");
                 var uid = Guid.NewGuid();
                 _uploads[uid] = (final, b.SizeBytes, b.Overwrite, new MemoryStream());
                 return Ok(new FileWriteBeginResult(uid, final));
