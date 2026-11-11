@@ -314,6 +314,190 @@ public static class HostFileService
         });
     }
 
+    // ------------------------------------------------------------------ rename / delete (protocol 13)
+
+    /// <summary>Entries looked at under a folder before it is renamed; a larger folder is refused (it cannot be checked).</summary>
+    public const int MaxRenameScanEntries = 20000;
+
+    private sealed record Entry(string HostPath, string Parent, string Name, string Physical, bool IsFolder);
+
+    /// <summary>
+    /// The file or folder a rename / delete is about, checked against the real file system: its parent is an acceptable
+    /// folder (allowed storage, fixed drive, no link on the way), the entry exists, is not hidden, system or a link, is
+    /// not an allowed storage folder itself nor the mount point of a cluster shared volume, and is not a Hyper-V file.
+    /// Call inside <see cref="HostFileAccess.Run{T}"/>.
+    /// </summary>
+    private static Entry ResolveEntry(string path, HostFileAccess fs)
+    {
+        if (OperationValidation.ValidateEntryPath(path) is { } invalid)
+        {
+            throw new HostPathException(invalid + (invalid == "protected_file"
+                ? ": virtual disks, checkpoints and VM configuration files belong to Hyper-V and cannot be renamed or deleted here."
+                : ": this file or folder cannot be renamed or deleted."));
+        }
+        var normalized = HostPaths.Normalize(path);
+        var cut = normalized.LastIndexOf('\\');
+        var name = normalized[(cut + 1)..];
+        var parent = CheckFolder(cut == 2 ? normalized[..3] : normalized[..cut], true, fs);
+        var hostPath = parent.Length == 3 ? parent + name : parent + @"\" + name;
+        fs.CheckAllowed(hostPath);
+        if (fs.IsStorageRoot(hostPath))
+        {
+            throw new HostPathException("location_not_allowed: an allowed storage folder of the host cannot be renamed or deleted.");
+        }
+        var physical = fs.ToPhysical(hostPath);
+        FileAttributes attributes;
+        try
+        {
+            attributes = File.GetAttributes(physical);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            throw new HostPathException("not_found: file or folder not found.");
+        }
+        if ((attributes & Excluded) != 0)
+        {
+            // Also the mount point of a cluster shared volume (a reparse point): never renamed or deleted from here.
+            throw new HostPathException("location_not_allowed: hidden, system or linked files and folders cannot be renamed or deleted.");
+        }
+        return new Entry(hostPath, parent, name, physical, (attributes & FileAttributes.Directory) != 0);
+    }
+
+    private static HostPathException InUse(IOException ex) =>
+        new("file_in_use: the file or folder is in use by another process (for example a running VM) or cannot be changed (" + ex.Message + ")");
+
+    /// <summary>Sharing violation / lock violation: another process has the file open.</summary>
+    private static bool IsSharingViolation(IOException ex) => ex.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021);
+
+    /// <summary>
+    /// Protocol 13: renames a file or a folder in place (same parent). Never over an existing name. A folder is renamed
+    /// only when nothing below it is a Hyper-V file, a link or unreadable: the paths of registered VMs, checkpoints,
+    /// templates and restore points must not change under Hyper-V.
+    /// </summary>
+    public static PathChangeResult Rename(RenamePathRequest request, HostFileAccess? access = null)
+    {
+        var fs = access ?? HostFileAccess.Local;
+        if (OperationValidation.Validate(request) is { } invalid)
+        {
+            throw new HostPathException(invalid + ": invalid name or location.");
+        }
+        return fs.Run(() =>
+        {
+            var entry = ResolveEntry(request.Path, fs);
+            var newHost = entry.Parent.Length == 3 ? entry.Parent + request.NewName : entry.Parent + @"\" + request.NewName;
+            fs.CheckAllowed(newHost);
+            var target = fs.ToPhysical(newHost);
+            // A change of case only is the same entry; anything else must not exist yet.
+            var caseOnly = string.Equals(entry.Name, request.NewName, StringComparison.OrdinalIgnoreCase);
+            if (!caseOnly && (File.Exists(target) || Directory.Exists(target)))
+            {
+                throw new HostPathException("file_exists: a file or folder with this name already exists.");
+            }
+            try
+            {
+                if (entry.IsFolder)
+                {
+                    CheckFolderContent(entry.Physical);
+                    Directory.Move(entry.Physical, target);
+                }
+                else
+                {
+                    File.Move(entry.Physical, target, overwrite: false);
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw new HostPathException("access_denied: the agent service account cannot rename this (NTFS permissions, or a file inside is in use).");
+            }
+            catch (IOException ex) when (ex is not FileNotFoundException and not DirectoryNotFoundException)
+            {
+                throw InUse(ex);
+            }
+            return new PathChangeResult(entry.HostPath, newHost, entry.IsFolder);
+        });
+    }
+
+    /// <summary>
+    /// Everything below a folder that is about to be renamed: no Hyper-V file, no link, nothing unreadable, and not more
+    /// than <see cref="MaxRenameScanEntries"/> entries (what cannot be checked is refused).
+    /// </summary>
+    private static void CheckFolderContent(string physical)
+    {
+        var all = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = false, AttributesToSkip = 0, ReturnSpecialDirectories = false };
+        var count = 0;
+        try
+        {
+            foreach (var e in new DirectoryInfo(physical).EnumerateFileSystemInfos("*", all))
+            {
+                if (++count > MaxRenameScanEntries)
+                {
+                    throw new HostPathException($"folder_too_large: the folder holds more than {MaxRenameScanEntries} files and folders: it cannot be checked, so it is not renamed.");
+                }
+                if ((e.Attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new HostPathException("protected_content: the folder contains a junction or a symbolic link (" + e.Name + "): it is not renamed.");
+                }
+                if (ProtectedHostFiles.IsProtected(e.Name))
+                {
+                    throw new HostPathException("protected_content: the folder contains virtual disks, checkpoints or VM configuration files (" + e.Name
+                        + "): renaming it would break the VM, template or restore point that uses them. Move the VM storage instead.");
+                }
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new HostPathException("access_denied: part of the folder cannot be read by the agent service account, so it cannot be checked and is not renamed.");
+        }
+    }
+
+    /// <summary>
+    /// Protocol 13: deletes a file, or a folder that is empty (hidden and system entries count: Windows itself refuses
+    /// to remove a folder that holds anything). Never recursive. Read-only files are not deleted.
+    /// </summary>
+    public static PathChangeResult Delete(DeletePathRequest request, HostFileAccess? access = null)
+    {
+        var fs = access ?? HostFileAccess.Local;
+        if (OperationValidation.Validate(request) is { } invalid)
+        {
+            throw new HostPathException(invalid + ": this file or folder cannot be deleted.");
+        }
+        return fs.Run(() =>
+        {
+            var entry = ResolveEntry(request.Path, fs);
+            try
+            {
+                if (entry.IsFolder)
+                {
+                    if (Directory.EnumerateFileSystemEntries(entry.Physical).Any())
+                    {
+                        throw new HostPathException("folder_not_empty: only empty folders can be deleted. Delete or move its content first.");
+                    }
+                    // Not recursive: when something appeared meanwhile, Windows refuses and nothing is lost.
+                    Directory.Delete(entry.Physical, recursive: false);
+                }
+                else
+                {
+                    if ((File.GetAttributes(entry.Physical) & FileAttributes.ReadOnly) != 0)
+                    {
+                        throw new HostPathException("access_denied: the file is read-only: it is not deleted.");
+                    }
+                    File.Delete(entry.Physical);
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw new HostPathException("access_denied: the agent service account cannot delete this (NTFS permissions).");
+            }
+            catch (IOException ex) when (ex is not FileNotFoundException and not DirectoryNotFoundException)
+            {
+                throw entry.IsFolder && !IsSharingViolation(ex)
+                    ? new HostPathException("folder_not_empty: the folder is not empty or is in use (" + ex.Message + ")")
+                    : InUse(ex);
+            }
+            return new PathChangeResult(entry.HostPath, null, entry.IsFolder);
+        });
+    }
+
     private static Upload Get(Guid id) =>
         Uploads.TryGetValue(id, out var u) ? u : throw new HostPathException("upload_not_found: unknown or expired upload.");
 

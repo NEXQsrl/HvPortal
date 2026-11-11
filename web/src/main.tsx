@@ -6,6 +6,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Loading } from './components/common';
 import { InventoryProvider } from './components/inventory/InventoryProvider';
 import { OperationsProvider } from './components/ops/OperationsProvider';
+import { PortalUpdateProvider } from './components/admin/PortalUpdateOverlay';
 import { IdleGuard } from './components/IdleGuard';
 import { ReauthDialog } from './components/ReauthDialog';
 import { AppShell } from './components/shell/AppShell';
@@ -104,10 +105,13 @@ createRoot(document.getElementById('root')!).render(
       <SessionProvider>
         <BrowserRouter>
           <TooltipProvider delayDuration={400}>
-            <Gate />
-            <SignedInIdleGuard />
-            <ReauthDialog />
-            <Toaster />
+            {/* Outside the session gate: the update page must stay up while the gateway restarts and the session is lost. */}
+            <PortalUpdateProvider>
+              <Gate />
+              <SignedInIdleGuard />
+              <ReauthDialog />
+              <Toaster />
+            </PortalUpdateProvider>
           </TooltipProvider>
         </BrowserRouter>
       </SessionProvider>

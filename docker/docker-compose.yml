@@ -1,13 +1,13 @@
 # HvPortal gateway on Docker (Portainer: Stacks > Add stack > Web editor, paste this file, load docker/.env.example
 # under "Environment variables" and fill in the values). The image must exist on the Docker host or in your registry:
-#   docker build -f docker/Dockerfile -t hvportal-gateway:0.9.3 .        (from the repository root)
+#   docker build -f docker/Dockerfile -t hvportal-gateway:0.9.4 .        (from the repository root)
 # Hyper-V hosts keep the Windows agent; it connects to this container on HVP_AGENT_PORT (mutual TLS, no proxy).
 
 name: hvportal
 
 services:
   gateway:
-    image: ${HVP_IMAGE:-hvportal-gateway:0.9.3}
+    image: ${HVP_IMAGE:-hvportal-gateway:0.9.4}
     # The image is private (not on Docker Hub): import it on the Docker host first (Portainer > Images > Import,
     # or docker load). "never" = use the local image, never try to pull it. With a private registry use "missing"/"always".
     pull_policy: ${HVP_PULL_POLICY:-never}

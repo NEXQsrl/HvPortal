@@ -33,8 +33,16 @@ if (-not $script:RemoteRequest) {
     [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 }
 
+# Timing of this run, for the diagnostics of the agent (0.9.4): how long powershell.exe took to reach the script, how
+# long until the Hyper-V module was loaded, how long the whole script ran. Measured, never estimated.
+$script:Clock = [Diagnostics.Stopwatch]::StartNew()
+$script:StartupMs = $null
+$script:ModuleMs = $null
+try { $script:StartupMs = [int64]((Get-Date) - (Get-Process -Id $PID -ErrorAction Stop).StartTime).TotalMilliseconds } catch { }
+
 function Write-Response([bool]$ok, $result, [string]$errorText, $applied) {
-    $obj = @{ ok = $ok; result = $result; error = $errorText; applied = @($applied) }
+    $obj = @{ ok = $ok; result = $result; error = $errorText; applied = @($applied)
+        timing = @{ startupMs = $script:StartupMs; moduleMs = $script:ModuleMs; scriptMs = [int64]$script:Clock.ElapsedMilliseconds } }
     $json = ConvertTo-Json -InputObject $obj -Depth 8 -Compress
     if ($script:RemoteRequest) { Write-Output $json } else { [Console]::Out.Write($json) }
 }
@@ -334,6 +342,7 @@ try {
     $script:StorageFolders = @(@($req.storageFolders) | Where-Object { $_ } | ForEach-Object { ([string]$_).TrimEnd('\') })
     $script:StorageError = [string]$req.storageError
     Import-Module Hyper-V -ErrorAction Stop
+    $script:ModuleMs = [int64]$script:Clock.ElapsedMilliseconds
 
     switch ([string]$req.op) {
         'GetHostDefaults' {
@@ -1339,16 +1348,6 @@ try {
                             })
                         }
                     } catch { [void]$errors.Add("virtualDisks: $($_.Exception.Message)") }
-                    try {
-                        foreach ($j in @(Get-StorageJob -ErrorAction Stop | Where-Object { "$($_.JobState)" -ne 'Completed' })) {
-                            $elapsed = Get-Opt $j 'ElapsedTime'
-                            [void]$jobs.Add(@{
-                                name = "$($j.Name)"; state = "$($j.JobState)"; percentComplete = Get-OptInt $j 'PercentComplete'
-                                bytesTotal = [int64](Get-Opt $j 'BytesTotal'); bytesProcessed = [int64](Get-Opt $j 'BytesProcessed')
-                                elapsedSeconds = $(if ($elapsed -is [timespan]) { [int64]$elapsed.TotalSeconds } else { $null })
-                            })
-                        }
-                    } catch { [void]$errors.Add("storageJobs: $($_.Exception.Message)") }
                     # Health Service of Storage Spaces Direct (Windows Server 2019+): faults with the recommended action.
                     if (Get-Command Get-HealthFault -ErrorAction SilentlyContinue) {
                         try {
@@ -1362,7 +1361,54 @@ try {
                         } catch { [void]$errors.Add("healthFaults: $($_.Exception.Message)") }
                     }
                 }
-                $storage = @{ s2dEnabled = $s2dEnabled; s2dState = $s2dState; cacheState = $cacheState; pools = @($pools); virtualDisks = @($vdisks)
+                # Storage jobs of Windows (repair, regeneration, rebalance, resynchronization), with or without Storage
+                # Spaces Direct. Every job Windows reports, the completed ones too: a job that is no longer listed is
+                # never taken for a completed one. One entry per job id (a job can be listed by more than one subsystem).
+                if (Get-Command Get-StorageJob -ErrorAction SilentlyContinue) {
+                    try {
+                        $seen = @{}
+                        $storageJobs = @(Get-StorageJob -ErrorAction Stop | Select-Object -First 200)
+                        # The virtual disks each job works on: asked only while jobs are listed (one query per disk).
+                        $jobDisks = @{}
+                        if ($storageJobs.Count -gt 0) {
+                            try {
+                                foreach ($v in @(Get-VirtualDisk -ErrorAction Stop | Select-Object -First 64)) {
+                                    foreach ($vj in @(Get-StorageJob -VirtualDisk $v -ErrorAction SilentlyContinue)) {
+                                        $key = "$(Get-Opt $vj 'UniqueId')"
+                                        if (-not $key) { continue }
+                                        if (-not $jobDisks.ContainsKey($key)) { $jobDisks[$key] = New-Object System.Collections.ArrayList }
+                                        if ($jobDisks[$key].Count -lt 16) { [void]$jobDisks[$key].Add("$($v.FriendlyName)") }
+                                    }
+                                }
+                            } catch { [void]$errors.Add("storageJobResources: $($_.Exception.Message)") }
+                        }
+                        foreach ($j in $storageJobs) {
+                            $jobId = "$(Get-Opt $j 'UniqueId')"
+                            if ($jobId) {
+                                if ($seen.ContainsKey($jobId)) { continue }
+                                $seen[$jobId] = $true
+                            }
+                            $elapsed = Get-Opt $j 'ElapsedTime'
+                            $started = Get-Opt $j 'StartTime'
+                            $total = Get-Opt $j 'BytesTotal'
+                            $done = Get-Opt $j 'BytesProcessed'
+                            $jobError = "$(Get-Opt $j 'ErrorDescription')".Trim()
+                            if ($jobError.Length -gt 500) { $jobError = $jobError.Substring(0, 500) }
+                            [void]$jobs.Add(@{
+                                id = $(if ($jobId) { $jobId } else { $null })
+                                name = "$($j.Name)"; state = "$($j.JobState)"; percentComplete = Get-OptInt $j 'PercentComplete'
+                                description = $(if ("$(Get-Opt $j 'Description')") { "$(Get-Opt $j 'Description')" } else { $null })
+                                bytesTotal = $(if ($null -ne $total) { [int64]$total } else { $null })
+                                bytesProcessed = $(if ($null -ne $done) { [int64]$done } else { $null })
+                                elapsedSeconds = $(if ($elapsed -is [timespan]) { [int64]$elapsed.TotalSeconds } else { $null })
+                                startedUtc = $(if ($started -is [datetime]) { $started.ToUniversalTime().ToString('o') } else { $null })
+                                resources = $(if ($jobId -and $jobDisks.ContainsKey($jobId)) { @($jobDisks[$jobId]) } else { @() })
+                                error = $(if ($jobError) { $jobError } else { $null })
+                            })
+                        }
+                    } catch { [void]$errors.Add("storageJobs: $($_.Exception.Message)") }
+                } else { [void]$errors.Add('storageJobs: the Storage module (Get-StorageJob) is not available on this node.') }
+                $storage =@{ s2dEnabled = $s2dEnabled; s2dState = $s2dState; cacheState = $cacheState; pools = @($pools); virtualDisks = @($vdisks)
                     physicalDisks = @($pdisks); jobs = @($jobs) }
             } catch { [void]$errors.Add("storage: $($_.Exception.Message)") }
 

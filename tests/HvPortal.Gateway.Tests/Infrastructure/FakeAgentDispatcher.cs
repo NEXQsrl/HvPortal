@@ -453,6 +453,14 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
                 Folders[nf.Parent] = [.. parentSubs, nf.Name];
                 Folders[created] = [];
                 return Ok(new FolderEntry(nf.Name, created));
+            case HvOperation.RenamePath:
+                var rn = HvOperations.FromElement<RenamePathRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(rn) is { } badRename) return new HvOperationOutcome { Ok = false, Error = "Rejected by agent validation: " + badRename };
+                return ChangePath(rn.Path, rn.NewName);
+            case HvOperation.DeletePath:
+                var dp = HvOperations.FromElement<DeletePathRequest>(command.OperationArgs)!;
+                if (OperationValidation.Validate(dp) is { } badDelete) return new HvOperationOutcome { Ok = false, Error = "Rejected by agent validation: " + badDelete };
+                return ChangePath(dp.Path, null);
             case HvOperation.GetBackupReadiness or HvOperation.BackupVm or HvOperation.VerifyBackup or HvOperation.RemoveBackup or HvOperation.ListBackups
                 or HvOperation.RestoreBackup or HvOperation.RestoreBackupDisk or HvOperation.MountBackupDisk or HvOperation.DismountBackupDisk
                 or HvOperation.ListBackupFiles or HvOperation.ReadBackupFile:
@@ -719,6 +727,52 @@ public sealed class FakeAgentDispatcher : IAgentDispatcher
     }
 
     /// <summary>Simulated template folders per host: folder path -> disk files in it (NewTemplate / RemoveTemplate / NewVm from a template).</summary>
+    /// <summary>
+    /// RenamePath (newName given) / DeletePath (newName null) on the simulated files and folders, with the rules of the
+    /// agent that matter to the gateway: missing entry, existing name, file in use, folder that is not empty or holds
+    /// Hyper-V files.
+    /// </summary>
+    private HvOperationOutcome ChangePath(string path, string? newName)
+    {
+        static HvOperationOutcome Refuse(string error) => new() { Ok = false, Error = error };
+        static HvOperationOutcome Ok(object result, string applied) => new() { Ok = true, Result = HvOperations.ToElement(result), Applied = [applied] };
+        var parent = System.IO.Path.GetDirectoryName(path)!;
+        var name = System.IO.Path.GetFileName(path);
+        var target = newName is null ? null : System.IO.Path.Combine(parent, newName);
+        if (target is not null && (Files.ContainsKey(target) || Folders.ContainsKey(target))) return Refuse("file_exists: a file or folder with this name already exists.");
+        if (Files.TryGetValue(path, out var content))
+        {
+            if (FilesInUse.Contains(path)) return Refuse("file_in_use: the file or folder is in use by another process.");
+            Files.TryRemove(path, out _);
+            if (target is not null) Files[target] = content;
+            return Ok(new PathChangeResult(path, target, false), newName is null ? "deleted" : "renamed");
+        }
+        if (!Folders.TryGetValue(path, out var subs)) return Refuse("not_found: file or folder not found.");
+        var inside = Files.Keys.Where(f => f.StartsWith(path + @"\", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (target is null)
+        {
+            if (subs.Length > 0 || inside.Count > 0) return Refuse("folder_not_empty: only empty folders can be deleted.");
+            Folders.Remove(path);
+        }
+        else
+        {
+            if (inside.Any(f => ProtectedHostFiles.IsProtected(f))) return Refuse("protected_content: the folder contains virtual disks, checkpoints or VM configuration files.");
+            Folders.Remove(path);
+            Folders[target] = subs;
+            foreach (var f in inside)
+            {
+                Files.TryRemove(f, out var bytes);
+                Files[target + f[path.Length..]] = bytes!;
+            }
+        }
+        if (Folders.TryGetValue(parent, out var siblings))
+        {
+            Folders[parent] = target is null ? siblings.Where(s => !s.Equals(name, StringComparison.OrdinalIgnoreCase)).ToArray()
+                : siblings.Select(s => s.Equals(name, StringComparison.OrdinalIgnoreCase) ? newName! : s).ToArray();
+        }
+        return Ok(new PathChangeResult(path, target, true), newName is null ? "deleted" : "renamed");
+    }
+
     public ConcurrentDictionary<Guid, ConcurrentDictionary<string, HashSet<string>>> TemplateFolders { get; } = new();
 
     public ConcurrentDictionary<string, HashSet<string>> TemplateFoldersOf(Guid hostId) =>

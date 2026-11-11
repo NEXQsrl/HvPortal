@@ -111,6 +111,7 @@ namespace HvPortal.Gateway
 
             builder.Services.AddScoped<AccessEvaluator>();
             builder.Services.AddScoped<HvPortal.Gateway.Quotas.GroupPolicyService>();
+            builder.Services.AddSingleton<HvPortal.Gateway.Clusters.StorageJobTracker>();
             builder.Services.AddScoped<HvPortal.Gateway.Clusters.ClusterService>();
             builder.Services.AddHttpClient(HvPortal.Gateway.Updates.GitHubReleaseSource.ClientName, c =>
             {

@@ -99,7 +99,16 @@ export function HostPage() {
       {(h.stale && h.status === 'Active') || (h.access && h.access !== 'Ok') || h.partial ? (
         <div className="space-y-2 px-4 pt-3">
           {h.stale && h.status === 'Active' && <Notice kind="warn">{t('stale.banner')}</Notice>}
-          {h.access && h.access !== 'Ok' && <Notice kind="danger">{h.access}: {h.accessMessage}</Notice>}
+          {h.access && h.access !== 'Ok' && (h.accessCode ? (
+            // Agent 0.9.4+: what the failure means and what to check, then the original error (also in the agent log).
+            <Notice kind="danger" title={t(('wmi.' + h.accessCode + '.title') as TKey)}>
+              <p>{t(('wmi.' + h.accessCode + '.hint') as TKey)}</p>
+              <details className="mt-1 text-xs">
+                <summary className="cursor-pointer text-muted-foreground">{t('wmi.technical')}</summary>
+                <p className="mt-1 font-mono [overflow-wrap:anywhere]">{h.access}: {h.accessMessage}</p>
+              </details>
+            </Notice>
+          ) : <Notice kind="danger">{h.access}: {h.accessMessage}</Notice>)}
           {h.partial && <Notice kind="warn">{t('partial.banner')} {h.warnings.join(' · ')}</Notice>}
         </div>
       ) : null}

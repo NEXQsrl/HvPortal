@@ -92,6 +92,241 @@ public sealed class HostFileServiceTests : IDisposable
     [InlineData("x*?.iso", false)]
     public void File_names(string name, bool ok) => Assert.Equal(ok, HostPaths.IsValidFileName(name));
 
+    // ------------------------------------------------------------------ 0.9.4: rename and delete (protocol 13)
+
+    /// <summary>
+    /// A folder for the rename / delete tests next to the test binaries: unlike the temp folder (under C:\Users, a
+    /// system folder for the portal) it passes the real path rules. Null when the build output itself is under a system
+    /// folder: those tests then have nowhere to run and return at once.
+    /// </summary>
+    private static string? WorkFolder()
+    {
+        var folder = Path.Combine(AppContext.BaseDirectory.TrimEnd('\\'), "fx-" + Guid.NewGuid().ToString("N")[..8]);
+        if (!HostPaths.IsValidLocalFolder(folder) || HostPaths.IsBlocked(folder) || folder.Length > 150)
+        {
+            return null;
+        }
+        Directory.CreateDirectory(folder);
+        return folder;
+    }
+
+    private static string Code(Action action) => Assert.Throws<HostPathException>(action).Message.Split(':')[0];
+
+    /// <summary>
+    /// A change that must succeed, tried again for a moment when the file is busy: on the development machine the
+    /// antivirus opens files that were just written, and Windows then refuses to rename or delete them for an instant.
+    /// </summary>
+    private static T Eventually<T>(Func<T> change)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return change();
+            }
+            catch (HostPathException ex) when (attempt < 20 && (ex.Message.StartsWith("file_in_use", StringComparison.Ordinal)
+                                                               || ex.Message.StartsWith("access_denied", StringComparison.Ordinal)
+                                                               || ex.Message.StartsWith("folder_not_empty: the folder is not empty or is in use", StringComparison.Ordinal)))
+            {
+                Thread.Sleep(100);
+            }
+        }
+    }
+
+    [Fact]
+    public void Rename_never_replaces_an_existing_name_and_never_touches_hyper_v_files()
+    {
+        if (WorkFolder() is not { } root)
+        {
+            return;
+        }
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "notes.txt"), "a");
+            File.WriteAllText(Path.Combine(root, "other.txt"), "b");
+            File.WriteAllText(Path.Combine(root, "disk.vhdx"), "c");
+
+            var renamed = Eventually(() => HostFileService.Rename(new RenamePathRequest(Path.Combine(root, "notes.txt"), "readme.txt")));
+            Assert.False(renamed.IsFolder);
+            Assert.Equal(Path.Combine(root, "readme.txt"), renamed.NewPath);
+            Assert.True(File.Exists(Path.Combine(root, "readme.txt")));
+            Assert.False(File.Exists(Path.Combine(root, "notes.txt")));
+
+            Assert.Equal("file_exists", Code(() => HostFileService.Rename(new RenamePathRequest(Path.Combine(root, "readme.txt"), "other.txt"))));
+            Assert.Equal("b", File.ReadAllText(Path.Combine(root, "other.txt")));
+            Assert.Equal("not_found", Code(() => HostFileService.Rename(new RenamePathRequest(Path.Combine(root, "missing.txt"), "x.txt"))));
+
+            // Hyper-V files: neither renamed, nor is anything renamed into one.
+            Assert.Equal("protected_file", Code(() => HostFileService.Rename(new RenamePathRequest(Path.Combine(root, "disk.vhdx"), "disk.old"))));
+            Assert.Equal("protected_file", Code(() => HostFileService.Rename(new RenamePathRequest(Path.Combine(root, "readme.txt"), "readme.avhdx"))));
+            Assert.Equal("protected_file", Code(() => HostFileService.Delete(new DeletePathRequest(Path.Combine(root, "disk.vhdx")))));
+            Assert.True(File.Exists(Path.Combine(root, "disk.vhdx")));
+
+            // A file another process has open is not renamed.
+            using (new FileStream(Path.Combine(root, "other.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                Assert.Equal("file_in_use", Code(() => HostFileService.Rename(new RenamePathRequest(Path.Combine(root, "other.txt"), "busy.txt"))));
+            }
+            // Hidden entries are not part of what the portal manages.
+            File.SetAttributes(Path.Combine(root, "other.txt"), FileAttributes.Hidden);
+            Assert.Equal("location_not_allowed", Code(() => HostFileService.Rename(new RenamePathRequest(Path.Combine(root, "other.txt"), "x.txt"))));
+            Assert.Equal("location_not_allowed", Code(() => HostFileService.Delete(new DeletePathRequest(Path.Combine(root, "other.txt")))));
+            File.SetAttributes(Path.Combine(root, "other.txt"), FileAttributes.Normal);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void A_folder_is_renamed_only_when_nothing_inside_belongs_to_hyper_v_or_is_a_link()
+    {
+        if (WorkFolder() is not { } root)
+        {
+            return;
+        }
+        try
+        {
+            var plain = Directory.CreateDirectory(Path.Combine(root, "iso", "old")).Parent!.FullName;
+            File.WriteAllText(Path.Combine(plain, "old", "a.iso"), "x");
+            var renamed = Eventually(() => HostFileService.Rename(new RenamePathRequest(plain, "ISO library")));
+            Assert.True(renamed.IsFolder);
+            Assert.True(File.Exists(Path.Combine(root, "ISO library", "old", "a.iso")));
+
+            var vm = Directory.CreateDirectory(Path.Combine(root, "vm1", "Virtual Hard Disks")).Parent!.FullName;
+            File.WriteAllText(Path.Combine(vm, "Virtual Hard Disks", "vm1.vhdx"), "x");
+            Assert.Equal("protected_content", Code(() => HostFileService.Rename(new RenamePathRequest(vm, "vm1-old"))));
+            Assert.True(Directory.Exists(vm));
+            File.Delete(Path.Combine(vm, "Virtual Hard Disks", "vm1.vhdx"));
+            File.WriteAllText(Path.Combine(vm, "Virtual Hard Disks", "vm1.VMCX"), "x");
+            Assert.Equal("protected_content", Code(() => HostFileService.Rename(new RenamePathRequest(vm, "vm1-old"))));
+
+            // A junction inside the folder: what it points to is outside what was checked.
+            var linked = Directory.CreateDirectory(Path.Combine(root, "linked")).FullName;
+            try
+            {
+                Directory.CreateSymbolicLink(Path.Combine(linked, "elsewhere"), Path.Combine(root, "ISO library"));
+                Assert.Equal("protected_content", Code(() => HostFileService.Rename(new RenamePathRequest(linked, "linked2"))));
+                // The link itself is not something the portal renames or deletes.
+                Assert.Equal("location_not_allowed", Code(() => HostFileService.Delete(new DeletePathRequest(Path.Combine(linked, "elsewhere")))));
+                Assert.True(Directory.Exists(Path.Combine(root, "ISO library")));
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                // Creating symbolic links needs a privilege this account does not have: that part cannot run here.
+            }
+        }
+        finally
+        {
+            // The link first: a recursive delete must never follow it.
+            var link = Path.Combine(root, "linked", "elsewhere");
+            if (Directory.Exists(link))
+            {
+                Directory.Delete(link);
+            }
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Delete_removes_a_file_or_an_empty_folder_and_nothing_else()
+    {
+        if (WorkFolder() is not { } root)
+        {
+            return;
+        }
+        try
+        {
+            var folder = Directory.CreateDirectory(Path.Combine(root, "logs")).FullName;
+            File.WriteAllText(Path.Combine(folder, "a.log"), "x");
+            File.WriteAllText(Path.Combine(folder, "ro.log"), "x");
+            File.SetAttributes(Path.Combine(folder, "ro.log"), FileAttributes.ReadOnly);
+
+            Assert.Equal("folder_not_empty", Code(() => HostFileService.Delete(new DeletePathRequest(folder))));
+            Assert.True(File.Exists(Path.Combine(folder, "a.log")));
+
+            using (new FileStream(Path.Combine(folder, "a.log"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                Assert.Equal("file_in_use", Code(() => HostFileService.Delete(new DeletePathRequest(Path.Combine(folder, "a.log")))));
+            }
+            var deleted = Eventually(() => HostFileService.Delete(new DeletePathRequest(Path.Combine(folder, "a.log"))));
+            Assert.False(deleted.IsFolder);
+            Assert.Null(deleted.NewPath);
+            Assert.False(File.Exists(Path.Combine(folder, "a.log")));
+
+            Assert.Equal("access_denied", Code(() => HostFileService.Delete(new DeletePathRequest(Path.Combine(folder, "ro.log")))));
+            File.SetAttributes(Path.Combine(folder, "ro.log"), FileAttributes.Normal);
+            Eventually(() => HostFileService.Delete(new DeletePathRequest(Path.Combine(folder, "ro.log"))));
+
+            // A hidden file still makes the folder "not empty": nothing the user cannot see is removed with it.
+            File.WriteAllText(Path.Combine(folder, "hidden.tmp"), "x");
+            File.SetAttributes(Path.Combine(folder, "hidden.tmp"), FileAttributes.Hidden);
+            Assert.Equal("folder_not_empty", Code(() => HostFileService.Delete(new DeletePathRequest(folder))));
+            File.SetAttributes(Path.Combine(folder, "hidden.tmp"), FileAttributes.Normal);
+            File.Delete(Path.Combine(folder, "hidden.tmp"));
+
+            Assert.True(Eventually(() => HostFileService.Delete(new DeletePathRequest(folder))).IsFolder);
+            Assert.False(Directory.Exists(folder));
+            Assert.Equal("not_found", Code(() => HostFileService.Delete(new DeletePathRequest(folder))));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Rename_and_delete_need_protocol_13_and_are_validated_before_the_file_system_is_touched()
+    {
+        AgentCommand Op(HvOperation op) => new() { CommandId = Guid.NewGuid(), Kind = AgentCommandKind.HyperVOperation, Operation = op };
+        Assert.Equal(13, AgentProtocol.Version);
+        Assert.Equal("0.9.4", AgentProtocol.MinimumAgentFor(13));
+        Assert.Equal("0.9.1", AgentProtocol.MinimumAgentFor(12));
+        Assert.Equal(13, AgentProtocol.RequiredVersion(Op(HvOperation.RenamePath)));
+        Assert.Equal(13, AgentProtocol.RequiredVersion(Op(HvOperation.DeletePath)));
+        Assert.Equal(12, AgentProtocol.RequiredVersion(Op(HvOperation.MoveClusterSharedVolume)));
+        Assert.True(CommandExecutor.IsMutating(Op(HvOperation.RenamePath)));
+        Assert.True(CommandExecutor.IsMutating(Op(HvOperation.DeletePath)));
+
+        string? Rename(string path, string name) => PowerShellOperationRunner.Validate(HvOperation.RenamePath, HvOperations.ToElement(new RenamePathRequest(path, name)));
+        string? Delete(string path) => PowerShellOperationRunner.Validate(HvOperation.DeletePath, HvOperations.ToElement(new DeletePathRequest(path)));
+        Assert.Null(Rename(@"D:\ISO\win.iso", "windows.iso"));
+        Assert.Null(Delete(@"D:\ISO\old"));
+        // Traversal, drives, system folders, streams, device names.
+        Assert.Equal("invalid_path", Delete(@"D:\ISO\..\Windows"));
+        Assert.Equal("invalid_path", Delete(@"\\server\share\x"));
+        Assert.Equal("invalid_path", Delete(@"D:\ISO\a.txt:stream"));
+        Assert.Equal("location_not_allowed", Delete(@"D:\"));
+        Assert.Equal("location_not_allowed", Delete(@"C:\Windows\System32\drivers\etc\hosts"));
+        Assert.Equal("location_not_allowed", Delete(@"C:\ProgramData"));
+        Assert.Equal("location_not_allowed", Delete(@"D:\$RECYCLE.BIN"));
+        Assert.Equal("location_not_allowed", Delete(@"D:\ISO\.hidden"));
+        Assert.Equal("invalid_file_name", Rename(@"D:\ISO\win.iso", @"..\win.iso"));
+        Assert.Equal("invalid_file_name", Rename(@"D:\ISO\win.iso", @"sub\win.iso"));
+        Assert.Equal("invalid_file_name", Rename(@"D:\ISO\win.iso", "CON"));
+        Assert.Equal("invalid_file_name", Rename(@"D:\ISO\win.iso", "$x"));
+        Assert.Equal("same_name", Rename(@"D:\ISO\win.iso", "win.iso"));
+        Assert.Equal("location_not_allowed", Rename(@"D:\data", "Windows"));
+        Assert.Equal("path_too_long", Rename(@"D:\" + new string('a', 150) + @"\x.txt", new string('b', 60)));
+        // Hyper-V files, whatever the case of the extension.
+        foreach (var name in new[] { "vm.vhdx", "vm.VHDX", "vm.vhd", "vm_1234.avhdx", "vm.vmcx", "vm.vmrs", "vm.vmgs", "vm.vsv", "shared.vhds", "vm.hrl", "vm.vhdx.rct", "vm.vhdx.mrt" })
+        {
+            Assert.True(ProtectedHostFiles.IsProtected(name), name);
+            Assert.Equal("protected_file", Delete(@"D:\VMs\" + name));
+            Assert.Equal("protected_file", Rename(@"D:\VMs\" + name, "x.txt"));
+            Assert.Equal("protected_file", Rename(@"D:\VMs\x.txt", name));
+        }
+        Assert.False(ProtectedHostFiles.IsProtected("win.iso"));
+        Assert.False(ProtectedHostFiles.IsProtected("vhdx-notes.txt"));
+
+        // A long refused input is refused at once (no backtracking in the path rules).
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Assert.Equal("invalid_path", Delete(@"D:\" + new string('a', 180) + "*" + new string('b', 5000)));
+        Assert.Equal("invalid_file_name", Rename(@"D:\ISO\win.iso", new string('a', 199) + "|" + new string(' ', 5000)));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1));
+    }
+
     [Fact]
     public void File_operations_need_protocol_5_and_are_validated()
     {

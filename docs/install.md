@@ -147,6 +147,17 @@ Optional, for hosts on which nothing should be installed (typically workgroup ho
 management server (Windows Server, no Hyper-V needed) and reaches the hosts with an administrator account stored,
 encrypted, in the portal. The agent on the host (section 4) remains the recommended mode: it stores no credentials.
 
+**This is the advanced mode** (0.9.4: the portal says so when a host is added). It depends on WMI/DCOM (TCP 135 and
+dynamic RPC ports), WinRM (5985/5986) and SMB (445) between the management server and the host, on firewall rules and
+TrustedHosts, and on a stored administrator password; failover clusters, cluster shared volumes and browsing the files of
+a backup are not available through it. Prefer an agent on every host, also in a workgroup or outside the domain; use a
+management agent only where nothing can be installed on the host. When something fails the host page tells an
+unreachable host from refused credentials, denied access and WMI problems (`docs/troubleshooting.md`).
+
+**Limits of the agent** (0.9.4, both modes): at most 8 PowerShell operations run at once per host, 2 of the slots kept
+for short operations; change it in the `appsettings.json` of the agent (`Agent:Operations:MaxConcurrent`,
+`Agent:Operations:ReservedForShort`) and restart the service. See `docs/performance-powershell.md`.
+
 1. Portal → Inventory → **Management agents** → *New management agent*. Install it on the management server with the
    same package and guide, adding `-Management`:
    ```powershell

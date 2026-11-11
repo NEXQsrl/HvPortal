@@ -107,6 +107,23 @@ public sealed class PortalUpdateTests : IAsyncLifetime
         Assert.Equal("99.0.0", request.RootElement.GetProperty("version").GetString());
         Assert.Equal(64, request.RootElement.GetProperty("sha256").GetString()!.Length);
         Assert.Equal(1, await _app.WithDbAsync(db => db.AuditEntries.CountAsync(a => a.Action == "system.updates.install" && a.Outcome == AuditOutcome.Success)));
+
+        // 0.9.4: the page that waits for the update reads its outcome from the gateway. Handed to the updater: pending.
+        var install = (await (await admin.GetAsync("/api/v1/system/updates")).JsonAsync()).GetProperty("install");
+        Assert.Equal("pending", install.GetProperty("outcome").GetString());
+        Assert.Equal("99.0.0", install.GetProperty("version").GetString());
+        // The updater refuses the setup (for example another publisher): failed, with its reason, and the version did not change.
+        await File.WriteAllTextAsync(Path.Combine(UpdateFolder(), "last-result.json"),
+            JsonSerializer.Serialize(new { timeUtc = DateTimeOffset.UtcNow.AddSeconds(5), status = "failed", version = "99.0.0", message = "The setup is not signed by the publisher of the installed gateway." }));
+        install = (await (await admin.GetAsync("/api/v1/system/updates")).JsonAsync()).GetProperty("install");
+        Assert.Equal("failed", install.GetProperty("outcome").GetString());
+        Assert.Contains("not signed", install.GetProperty("message").GetString(), StringComparison.Ordinal);
+        // The version the portal runs is public (sign-in page) and is what the waiting page compares with the requested one.
+        var anonymous = _app.CreateClient();
+        var state = await (await anonymous.GetAsync("/api/v1/auth/state")).JsonAsync();
+        Assert.Equal(ProductInfo.Version, state.GetProperty("version").GetString());
+        Assert.False(state.GetProperty("authenticated").GetBoolean());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/v1/system/updates")).StatusCode);
     }
 
     [Fact]

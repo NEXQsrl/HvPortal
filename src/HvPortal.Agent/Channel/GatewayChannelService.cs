@@ -218,12 +218,14 @@ public sealed class GatewayChannelService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("Inventory of remote host {Host} failed: {Message}", target.Target.Display, ex.Message);
+            // The whole exception in the log; the portal gets what it means (unreachable, timeout, credentials, ...).
+            var problem = WmiDiagnostics.Classify(ex, target.Target.Display, remote: true, target.Target.UserName);
+            _logger.LogWarning(ex, "Inventory of remote host {Host} failed: {Code}", target.Target.Display, problem.Code);
             inv = new HostInventory
             {
                 CollectedAtUtc = DateTimeOffset.UtcNow,
-                Access = HyperVAccessStatus.Error,
-                AccessMessage = ex is OperationCanceledException ? $"No answer from {target.Target.Display} within 2 minutes." : $"{target.Target.Display}: {ex.Message}",
+                Access = problem.IsDenied ? HyperVAccessStatus.AccessDenied : HyperVAccessStatus.Error,
+                AccessMessage = problem.Message,
                 Host = new HostFacts
                 {
                     ComputerName = target.Target.Display,

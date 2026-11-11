@@ -40,7 +40,7 @@ public sealed class CommandExecutor
         AgentCommandKind.HyperVOperation => c.Operation is HvOperation.SetVmConfig or HvOperation.NewVm or HvOperation.NewCheckpoint
             or HvOperation.RestoreCheckpoint or HvOperation.RemoveCheckpoint or HvOperation.SyncVmGroups
             or HvOperation.NewSwitch or HvOperation.RemoveSwitch or HvOperation.NewTemplate or HvOperation.RemoveTemplate
-            or HvOperation.MoveVm or HvOperation.MoveVmStorage or HvOperation.NewFolder
+            or HvOperation.MoveVm or HvOperation.MoveVmStorage or HvOperation.NewFolder or HvOperation.RenamePath or HvOperation.DeletePath
             or HvOperation.BackupVm or HvOperation.RemoveBackup or HvOperation.RestoreBackup or HvOperation.RestoreBackupDisk
             or HvOperation.MountBackupDisk or HvOperation.DismountBackupDisk
             or HvOperation.SetVmResourceMetering or HvOperation.ResetVmResourceMetering

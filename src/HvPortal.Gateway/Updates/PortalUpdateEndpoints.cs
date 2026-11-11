@@ -24,8 +24,11 @@ public static class PortalUpdateEndpoints
     {
         await Task.CompletedTask;
         var latest = state.Latest;
+        var lastResult = updates.ReadLastResult();
         return new
         {
+            // What became of the last update asked from here (0.9.4): the update page waits on this, not on its own guesses.
+            install = PortalUpdateService.InstallStatusOf(state, lastResult, ProductInfo.Version),
             current = ProductInfo.Version,
             state.AutoCheck,
             state.LastCheckAt,
@@ -40,7 +43,7 @@ public static class PortalUpdateEndpoints
             installBlocker = updates.InstallBlocker(),
             state.InstallRequestedAt,
             state.InstallRequestedVersion,
-            lastResult = updates.ReadLastResult(),
+            lastResult,
         };
     }
 

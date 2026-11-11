@@ -153,6 +153,17 @@ export function AddHostDialog({ onCreated, onRemoteCreated, onClusterCreated, on
         </>
       )}
       {mode === 'cluster' && <ClusterHostFields value={cluster} onChange={setCluster} />}
+      {mode === 'remote' && (
+        // The agent on the host is the recommended way; this one stays available and says what it costs.
+        <Notice kind="warn" title={t('remote.advancedTitle')}>
+          <ul className="list-disc space-y-1 pl-4 text-xs">
+            <li>{t('remote.advanced1')}</li>
+            <li>{t('remote.advanced2')}</li>
+            <li>{t('remote.advanced3')}</li>
+            <li>{t('remote.advanced4')}</li>
+          </ul>
+        </Notice>
+      )}
       {mode === 'remote' && (agents.loading && !agents.data ? <Loading /> : usable.length === 0 ? (
         <Notice kind="warn" title={t('remote.noAgents')}>
           <p className="text-xs">{t('remote.noAgentsHelp')}</p>

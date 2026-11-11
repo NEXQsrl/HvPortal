@@ -1,10 +1,13 @@
-import { CircleCheck, LayoutDashboard, ListChecks, Monitor, Plus, Server, TriangleAlert } from 'lucide-react';
-import { useCallback } from 'react';
+import { Boxes, CircleCheck, LayoutDashboard, ListChecks, Monitor, Plus, Server, TriangleAlert } from 'lucide-react';
+import { useCallback, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { get } from '@/api/client';
 import type { Job } from '@/api/types';
 import { rowLink } from '@/components/actions';
-import { Empty, ErrorAlert, HostIcon, Loading, Meter, PageHeader, Section, StatCard, VmIcon } from '@/components/common';
+import { Empty, ErrorAlert, HostIcon, Loading, Meter, PageHeader, Section, StatCard, StatusBadge, VmIcon } from '@/components/common';
+import { useIssueText } from '@/components/ops/ClusterDialogs';
+import { clusterAttention, levelRank } from '@/lib/cluster-issues';
+import { cn } from '@/lib/utils';
 import { OutdatedAgentsNotice } from '@/components/infra/AgentUpdates';
 import { PortalUpdateNotice } from '@/components/admin/PortalUpdates';
 import { useInventory } from '@/components/inventory/InventoryProvider';
@@ -12,7 +15,7 @@ import { useOps } from '@/components/ops/OperationsProvider';
 import { JobTable } from '@/components/tables';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useI18n } from '@/i18n';
+import { useI18n, type TKey } from '@/i18n';
 import { formatBytes, percent } from '@/lib/format';
 import { isActive } from '@/lib/jobs';
 import { useLive, useLoad } from '@/lib/hooks';
@@ -24,6 +27,7 @@ export function DashboardPage() {
   const inv = useInventory();
   const ops = useOps();
   const navigate = useNavigate();
+  const issueText = useIssueText();
   const jobs = useLoad(() => get<{ job: Job; requestedBy: string | null }[]>('/api/v1/jobs?take=10'));
   const reloadJobs = useCallback(() => jobs.reload(), [jobs.reload]);
   useLive(reloadJobs, ['jobChanged'], 500);
@@ -32,13 +36,23 @@ export function DashboardPage() {
   const h = inv.hosts;
   const v = inv.vms;
   const active = (jobs.data ?? []).filter((j) => isActive(j.job.status)).length;
-  const attention = [
-    ...h.filter((x) => x.status === 'Active' && !x.connected).map((x) => ({ key: 'h' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected={false} />, name: x.displayName, why: t('dash.offlineHost') })),
-    ...h.filter((x) => x.connected && x.access && x.access !== 'Ok').map((x) => ({ key: 'a' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected access={x.access} />, name: x.displayName, why: t('dash.accessIssue', { a: x.access ?? '' }) })),
-    ...h.filter((x) => x.connected && x.stale).map((x) => ({ key: 's' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected access={x.access} />, name: x.displayName, why: t('dash.staleHost') })),
-    ...v.filter((x) => x.isCritical).map((x) => ({ key: 'c' + x.id, to: `/vms/${x.id}`, icon: <VmIcon state={x.powerState} critical />, name: x.name, why: t('dash.criticalVm') })),
-    ...v.filter((x) => x.isMissing).map((x) => ({ key: 'm' + x.id, to: `/vms/${x.id}`, icon: <VmIcon state={x.powerState} />, name: x.name, why: t('dash.missingVm') })),
-  ];
+  const offline = h.filter((x) => x.status === 'Active' && !x.connected);
+  // Problems of the failover clusters (last read by the monitor): gravity, cluster, problem; the link opens the tab
+  // that explains it. Only for who may read the cluster status (the server leaves the list empty otherwise).
+  const clusterItems = clusterAttention(inv.clusters, new Set(offline.map((x) => x.id)));
+  type Level = 'Critical' | 'Warning' | 'Unknown';
+  const attention: { key: string; to: string; icon: ReactNode; name: string; why: string; level: Level }[] = [
+    ...offline.map((x) => ({ key: 'h' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected={false} />, name: x.displayName, why: t('dash.offlineHost'), level: 'Warning' as Level })),
+    ...h.filter((x) => x.connected && x.access && x.access !== 'Ok').map((x) => ({ key: 'a' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected access={x.access} />, name: x.displayName, why: t('dash.accessIssue', { a: x.access ?? '' }), level: 'Warning' as Level })),
+    ...h.filter((x) => x.connected && x.stale).map((x) => ({ key: 's' + x.id, to: `/hosts/${x.id}`, icon: <HostIcon connected access={x.access} />, name: x.displayName, why: t('dash.staleHost'), level: 'Unknown' as Level })),
+    ...v.filter((x) => x.isCritical).map((x) => ({ key: 'c' + x.id, to: `/vms/${x.id}`, icon: <VmIcon state={x.powerState} critical />, name: x.name, why: t('dash.criticalVm'), level: 'Critical' as Level })),
+    ...v.filter((x) => x.isMissing).map((x) => ({ key: 'm' + x.id, to: `/vms/${x.id}`, icon: <VmIcon state={x.powerState} />, name: x.name, why: t('dash.missingVm'), level: 'Warning' as Level })),
+    ...clusterItems.map((x) => ({
+      key: x.key, to: x.to, name: x.clusterName, why: issueText(x.issue), level: (x.issue.level === 'Critical' || x.issue.level === 'Warning' ? x.issue.level : 'Unknown') as Level,
+      icon: <Boxes className={cn('size-4 shrink-0', x.issue.level === 'Critical' ? 'text-destructive' : x.issue.level === 'Warning' ? 'text-warning' : 'text-muted-foreground')} />,
+    })),
+  ].sort((a, b) => levelRank(a.level) - levelRank(b.level));
+  const SHOWN = 15;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -89,10 +103,20 @@ export function DashboardPage() {
           )}
           <Section title={t('dash.attentionList')}>
             {attention.length === 0 ? <Empty icon={<CircleCheck className="size-6 text-success" />}>{t('dash.allGood')}</Empty> : (
-              <ul className="divide-y">
-                {attention.slice(0, 12).map((a) => (
-                  <li key={a.key}><Link to={a.to} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50">{a.icon}<span className="font-medium">{a.name}</span><span className="ml-auto text-xs text-muted-foreground">{a.why}</span></Link></li>
+              <ul className="max-h-[28rem] divide-y overflow-auto">
+                {attention.slice(0, SHOWN).map((a) => (
+                  <li key={a.key}>
+                    <Link to={a.to} className="flex items-start gap-2 px-3 py-2 text-sm hover:bg-accent/50">
+                      <span className="mt-0.5 shrink-0">{a.icon}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium">{a.name}</span>
+                        <span className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">{a.why}</span>
+                      </span>
+                      <StatusBadge tone={a.level === 'Critical' ? 'danger' : a.level === 'Warning' ? 'warn' : 'muted'} className="shrink-0">{t(('health.' + a.level) as TKey)}</StatusBadge>
+                    </Link>
+                  </li>
                 ))}
+                {attention.length > SHOWN && <li className="px-3 py-2 text-xs text-muted-foreground">{t('dash.attentionMore', { n: attention.length - SHOWN })}</li>}
               </ul>
             )}
           </Section>

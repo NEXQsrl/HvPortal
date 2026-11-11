@@ -77,6 +77,10 @@ public static class ClusterEndpoints
             }
             // Problems of the last read (tree icons, host pages): only for who may read the cluster status.
             var (problems, byHost) = readStatus ? await service.StoredProblemsAsync(c, http.RequestAborted) : ([], []);
+            // Never better than what is known now: a cluster that cannot be read (no agent, old status) is Unknown, not Ok.
+            var level = !readStatus ? null
+                : c.LastStatusLevel is null && problems.Count == 0 ? null
+                : HealthLevel.Worst(problems.Select(p => p.Level).Append(c.LastStatusLevel));
             list.Add(new
             {
                 c.Id,
@@ -86,9 +90,10 @@ public static class ClusterEndpoints
                 nodeIds = visibleNodes,
                 nodesConnected = nodes[c.Id].Count(n => agents.IsConnected(n.Id)),
                 nodesTotal = nodes[c.Id].Count(),
-                status = readStatus ? c.LastStatusLevel : null,
+                status = level,
                 statusAt = readStatus ? c.LastStatusAt : null,
                 problems = problems.Take(20),
+                problemCount = problems.Count,
                 nodeProblems = byHost.Where(kv => visibleNodes.Contains(kv.Key)).Select(kv => new { hostId = kv.Key, issues = kv.Value.Take(10) }),
                 can = new { manage, readStatus },
             });
@@ -132,6 +137,11 @@ public static class ClusterEndpoints
         var issues = report is null && !live && cluster.LastStatusAt is null && cluster.LastStatusError is null
             ? [] // never read yet: the page asks for a live read
             : ClusterRules.Evaluate(report, facts, capacity, read.Error);
+        // A stored status that cannot be taken for the present state (no agent connected, read too long ago) says so.
+        if (!live && (report is not null || cluster.LastStatusError is not null) && clusters.Staleness(cluster, hosts) is { } stale)
+        {
+            issues.Insert(0, stale);
+        }
         var manage = await access.HasAsync(uid, Permissions.HostsManage, ResourceRef.Global, http.RequestAborted);
         var nodes = new List<object>();
         foreach (var n in facts)
@@ -206,6 +216,30 @@ public static class ClusterEndpoints
                 report,
                 issues,
                 capacity,
+            },
+            // Storage jobs of Windows across reads (0.9.4): those going on and those no longer listed, with what is known
+            // of their end. Not the jobs of the portal (/api/v1/jobs).
+            storageJobs = new
+            {
+                readable = report is not null && !StorageJobTracker.JobsUnreadable(report),
+                jobs = clusters.StorageJobs(id, report).Select(j => new
+                {
+                    j.Key,
+                    j.Job.Name,
+                    j.Job.Description,
+                    j.Job.State,
+                    j.Job.PercentComplete,
+                    j.Job.BytesTotal,
+                    j.Job.BytesProcessed,
+                    j.Job.ElapsedSeconds,
+                    j.Job.StartedUtc,
+                    j.Job.Resources,
+                    j.Job.Error,
+                    j.FirstSeenUtc,
+                    j.LastSeenUtc,
+                    j.Outcome,
+                    j.EndedUtc,
+                }),
             },
         });
     }

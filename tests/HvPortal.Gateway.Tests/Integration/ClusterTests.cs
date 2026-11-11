@@ -483,6 +483,111 @@ public sealed class ClusterTests : IAsyncLifetime
         Assert.Equal(0, limited.GetProperty("nodeProblems").GetArrayLength());
     }
 
+    // ------------------------------------------------------------------ 0.9.4: dashboard problems, storage jobs
+
+    private static async Task<JsonElement> ListItemAsync(HttpClient c) => (await (await c.GetAsync("/api/v1/clusters")).JsonAsync()).EnumerateArray().Single();
+
+    [Fact]
+    public async Task A_cluster_that_cannot_be_read_now_is_never_shown_as_healthy()
+    {
+        var (clusterId, hv01, hv02, _) = await ClusterAsync();
+        var admin = await UserAsync("st-admin", BuiltInRoles.InfrastructureAdmin);
+        await admin.GetAsync($"/api/v1/clusters/{clusterId}/status");
+        var healthy = await ListItemAsync(admin);
+        Assert.Equal("Ok", healthy.GetProperty("status").GetString());
+        Assert.Equal(0, healthy.GetProperty("problems").GetArrayLength());
+
+        // The last read is old (the monitor did not get an answer for a long time): the stored "Ok" says nothing about now.
+        await _app.WithDbAsync(db => db.Clusters.Where(c => c.Id == clusterId).ExecuteUpdateAsync(u => u.SetProperty(c => c.LastStatusAt, DateTimeOffset.UtcNow.AddHours(-2))));
+        var stale = await ListItemAsync(admin);
+        Assert.Equal("Unknown", stale.GetProperty("status").GetString());
+        Assert.Contains(stale.GetProperty("problems").EnumerateArray(), p => p.GetProperty("code").GetString() == "status_stale" && p.GetProperty("level").GetString() == "Unknown");
+        var stored = await (await admin.GetAsync($"/api/v1/clusters/{clusterId}")).JsonAsync();
+        Assert.Equal("Unknown", stored.GetProperty("status").GetProperty("level").GetString());
+        Assert.Contains(stored.GetProperty("status").GetProperty("issues").EnumerateArray(), p => p.GetProperty("code").GetString() == "status_stale");
+
+        // No node agent connected: nothing can be read, whatever the last status was.
+        await _app.WithDbAsync(db => db.Clusters.Where(c => c.Id == clusterId).ExecuteUpdateAsync(u => u.SetProperty(c => c.LastStatusAt, DateTimeOffset.UtcNow)));
+        Assert.Equal("Ok", (await ListItemAsync(admin)).GetProperty("status").GetString());
+        _app.Agent.DisconnectHost(hv01);
+        _app.Agent.DisconnectHost(hv02);
+        var offline = await ListItemAsync(admin);
+        // Not "Ok": the disconnected agents are warnings, and the state of the cluster itself is listed as unknown.
+        Assert.Equal("Warning", offline.GetProperty("status").GetString());
+        Assert.Contains(offline.GetProperty("problems").EnumerateArray(), p => p.GetProperty("code").GetString() == "no_node_connected");
+        Assert.True(offline.GetProperty("problemCount").GetInt32() >= 1);
+
+        // Who may not read the cluster status gets neither the status nor the problems.
+        var hostReader = await UserAsync("st-host", BuiltInRoles.ReadOnly, ScopeType.Host, hv01.ToString("D"));
+        var limited = await ListItemAsync(hostReader);
+        Assert.Equal(JsonValueKind.Null, limited.GetProperty("status").ValueKind);
+        Assert.Equal(0, limited.GetProperty("problems").GetArrayLength());
+        Assert.Equal(HttpStatusCode.NotFound, (await hostReader.GetAsync($"/api/v1/clusters/{clusterId}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Storage_jobs_are_followed_across_reads_and_a_job_that_disappears_is_not_called_completed()
+    {
+        var (clusterId, _, _, _) = await ClusterAsync();
+        var admin = await UserAsync("sj-admin", BuiltInRoles.InfrastructureAdmin);
+        ClusterStatusReport WithJobs(string[]? errors = null, params ClusterStorageJobStatus[] jobs) =>
+            Report(("HV01", "Up"), ("HV02", "Up")) with { Storage = Report(("HV01", "Up")).Storage! with { Jobs = jobs }, Errors = errors ?? [] };
+        async Task<(JsonElement Detail, Dictionary<string, JsonElement> Jobs)> ReadAsync()
+        {
+            var d = await (await admin.GetAsync($"/api/v1/clusters/{clusterId}/status")).JsonAsync();
+            return (d, d.GetProperty("storageJobs").GetProperty("jobs").EnumerateArray().ToDictionary(j => j.GetProperty("name").GetString()!));
+        }
+        static bool Has(JsonElement detail, string code) => detail.GetProperty("status").GetProperty("issues").EnumerateArray().Any(i => i.GetProperty("code").GetString() == code);
+
+        _app.Agent.Cluster = WithJobs(null,
+            new ClusterStorageJobStatus { Id = "J1", Name = "Repair", State = "Running", PercentComplete = 40, Resources = ["Volume1"] },
+            // Listed twice by Windows (two subsystems): one job.
+            new ClusterStorageJobStatus { Id = "J1", Name = "Repair", State = "Running", PercentComplete = 40 },
+            new ClusterStorageJobStatus { Id = "J2", Name = "Rebalance", State = "Running" });
+        var (first, jobs) = await ReadAsync();
+        Assert.True(first.GetProperty("storageJobs").GetProperty("readable").GetBoolean());
+        Assert.Equal(2, jobs.Count);
+        Assert.Equal(JsonValueKind.Null, jobs["Repair"].GetProperty("outcome").ValueKind);
+        Assert.Equal(40, jobs["Repair"].GetProperty("percentComplete").GetInt32());
+        Assert.Equal("Volume1", jobs["Repair"].GetProperty("resources")[0].GetString());
+        // No percentage from Windows: none is made up.
+        Assert.Equal(JsonValueKind.Null, jobs["Rebalance"].GetProperty("percentComplete").ValueKind);
+        Assert.True(Has(first, "storage_repair_running"));
+        Assert.Equal("Warning", first.GetProperty("status").GetProperty("level").GetString());
+
+        // The storage section could not be read: nothing is concluded about the jobs.
+        _app.Agent.Cluster = WithJobs(["storageJobs: access denied"]);
+        var (unreadable, kept) = await ReadAsync();
+        Assert.False(unreadable.GetProperty("storageJobs").GetProperty("readable").GetBoolean());
+        Assert.All(kept.Values, j => Assert.Equal(JsonValueKind.Null, j.GetProperty("outcome").ValueKind));
+
+        // Repair is reported as completed; Rebalance is simply no longer listed: its end is not known.
+        _app.Agent.Cluster = WithJobs(null, new ClusterStorageJobStatus { Id = "J1", Name = "Repair", State = "Completed", PercentComplete = 100 });
+        var (second, after) = await ReadAsync();
+        Assert.Equal("Completed", after["Repair"].GetProperty("outcome").GetString());
+        Assert.Equal("NotReported", after["Rebalance"].GetProperty("outcome").GetString());
+        Assert.False(Has(second, "storage_repair_running"));
+        Assert.Equal("Ok", second.GetProperty("status").GetProperty("level").GetString());
+
+        // A job that ended in error is a problem of its own, not "a sync in progress".
+        _app.Agent.Cluster = WithJobs(null, new ClusterStorageJobStatus { Id = "J3", Name = "Regeneration", State = "Killed", Error = "The pool is degraded" });
+        var (third, failed) = await ReadAsync();
+        Assert.Equal("Failed", failed["Regeneration"].GetProperty("outcome").GetString());
+        Assert.True(Has(third, "storage_job_failed"));
+        Assert.False(Has(third, "storage_repair_running"));
+        Assert.Equal("Critical", third.GetProperty("status").GetProperty("level").GetString());
+        // Earlier outcomes are kept, not rewritten.
+        Assert.Equal("NotReported", failed["Rebalance"].GetProperty("outcome").GetString());
+        Assert.Equal("Completed", failed["Repair"].GetProperty("outcome").GetString());
+
+        // Maintenance of a node stays blocked while a job is going on, also when Windows gives no percentage.
+        _app.Agent.Cluster = WithJobs(null, new ClusterStorageJobStatus { Id = "J4", Name = "Repair", State = "Running" });
+        var hv01 = (await _app.WithDbAsync(db => db.Hosts.AsNoTracking().FirstAsync(h => h.DisplayName == "hv01"))).Id;
+        var check = await (await admin.GetAsync($"/api/v1/hosts/{hv01}/maintenance?action=Enter")).JsonAsync();
+        Assert.False(check.GetProperty("allowed").GetBoolean());
+        Assert.Contains(check.GetProperty("blocking").EnumerateArray(), b => b.GetProperty("code").GetString() == "storage_repair_running_no_progress");
+    }
+
     // ------------------------------------------------------------------ backup staging folder
 
     private static async Task<HttpResponseMessage> PutAsync(HttpClient c, string url, object body)

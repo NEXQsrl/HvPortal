@@ -12,8 +12,49 @@ namespace HvPortal.Gateway.Clusters;
 /// sent to one connected node agent and, when that node does not answer, to the next one: the portal keeps managing
 /// the cluster while a node or its agent is down (high availability of the agents).
 /// </summary>
-public sealed class ClusterService(PortalDbContext db, IAgentDispatcher agents, TimeProvider time, ILogger<ClusterService> logger)
+public sealed class ClusterService(PortalDbContext db, IAgentDispatcher agents, TimeProvider time, ILogger<ClusterService> logger, StorageJobTracker storageJobs,
+    Microsoft.Extensions.Options.IOptions<Configuration.GatewayOptions> options)
 {
+    /// <summary>Storage jobs of the cluster as last seen, with what became of those no longer listed (0.9.4).</summary>
+    public IReadOnlyList<TrackedStorageJob> StorageJobs(Guid clusterId, ClusterStatusReport? report)
+    {
+        var tracked = storageJobs.Get(clusterId);
+        // Nothing seen since the gateway started: the jobs of the stored report, as they were when it was read.
+        return tracked.Count > 0 || report is null || StorageJobTracker.JobsUnreadable(report)
+            ? tracked
+            : StorageJobTracker.Merge([], report.Storage!.Jobs, report.CollectedUtc);
+    }
+
+    /// <summary>
+    /// A stored status older than this says nothing about now: three monitor intervals (at least 10 minutes), so that a
+    /// monitor pass that is late or a single failed read does not hide the last good status.
+    /// </summary>
+    public TimeSpan StaleAfter => TimeSpan.FromSeconds(Math.Max(600, 3 * Math.Clamp(options.Value.Clusters.MonitorIntervalSeconds, 30, 3600)));
+
+    /// <summary>
+    /// Why the stored status cannot be taken for the present state (0.9.4), or null: no node agent is connected, or the
+    /// last read is too old. A cluster that cannot be read is Unknown, never healthy.
+    /// </summary>
+    public ClusterIssue? Staleness(HostCluster cluster, IReadOnlyList<ManagedHost> nodes)
+    {
+        if (nodes.Count == 0)
+        {
+            return null; // nothing to read yet: the cluster has no nodes in the portal
+        }
+        if (!nodes.Any(n => agents.IsConnected(n.Id)))
+        {
+            return new ClusterIssue(HealthLevel.Unknown, "no_node_connected",
+                "No node agent is connected: the state of the cluster is not known" + (cluster.LastStatusAt is { } at ? $" (last read {at:u})." : "."),
+                null, new Dictionary<string, string> { ["at"] = cluster.LastStatusAt?.ToString("o") ?? "" });
+        }
+        if (cluster.LastStatusAt is { } last && time.GetUtcNow() - last > StaleAfter && cluster.LastStatusError is null)
+        {
+            return new ClusterIssue(HealthLevel.Unknown, "status_stale", $"The cluster has not been read since {last:u}: its state now is not known.",
+                null, new Dictionary<string, string> { ["at"] = last.ToString("o") });
+        }
+        return null;
+    }
+
     /// <summary>Agent protocol needed for clusters (agent 0.9.0).</summary>
     public const int Protocol = 11;
     private const int StatusTimeoutSeconds = 120;
@@ -92,6 +133,10 @@ public sealed class ClusterService(PortalDbContext db, IAgentDispatcher agents, 
                 read = read with { Error = ex.Message };
             }
         }
+        if (read.Report is { } readReport)
+        {
+            storageJobs.Observe(cluster.Id, readReport, time.GetUtcNow());
+        }
         await StoreAsync(cluster.Id, read, nodes, ct);
         return read;
     }
@@ -139,14 +184,21 @@ public sealed class ClusterService(PortalDbContext db, IAgentDispatcher agents, 
     public async Task<(List<ClusterIssue> Issues, Dictionary<Guid, List<ClusterIssue>> ByHost)> StoredProblemsAsync(HostCluster cluster, CancellationToken ct)
     {
         var report = LastReport(cluster);
+        var hosts = await NodesAsync(cluster.Id, ct);
+        var stale = Staleness(cluster, hosts);
         if (report is null && cluster.LastStatusError is null)
         {
-            return ([], []);
+            return (stale is null ? [] : [stale], []);
         }
-        var hosts = await NodesAsync(cluster.Id, ct);
         var facts = await NodeFactsAsync(hosts, report, ct);
         var issues = ClusterRules.Evaluate(report, facts, ClusterRules.Capacity(facts, report), cluster.LastStatusError)
             .Where(i => i.Level != ClusterRules.Info).ToList();
+        if (stale is not null)
+        {
+            issues.Insert(0, stale);
+        }
+        // Most serious first (the lists shown elsewhere are cut): Critical, Warning, Unknown.
+        issues = issues.OrderBy(i => i.Level switch { HealthLevel.Critical => 0, HealthLevel.Warning => 1, _ => 2 }).ToList();
         var byHost = new Dictionary<Guid, List<ClusterIssue>>();
         foreach (var n in facts.Where(n => n.HostId is not null))
         {

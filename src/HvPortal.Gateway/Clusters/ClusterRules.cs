@@ -145,8 +145,13 @@ public static class ClusterRules
         }
         foreach (var r in report.Replication.Where(r => r.Status is { Length: > 0 } st && !st.Equals("ContinuouslyReplicating", StringComparison.OrdinalIgnoreCase)))
         {
-            issues.Add(Issue(HealthLevel.Warning, "replication_not_in_sync", $"Storage Replica group {r.Name} is {r.Status} ({r.BytesRemaining ?? 0} bytes still to copy).",
-                r.Name, ("status", r.Status), ("remaining", r.BytesRemaining)));
+            // A copy that is going on (initial copy, resynchronization) is expected work; a replication that stopped is an error.
+            var stopped = r.Status!.Contains("Error", StringComparison.OrdinalIgnoreCase) || r.Status.Contains("Fail", StringComparison.OrdinalIgnoreCase)
+                || r.Status.Contains("Suspend", StringComparison.OrdinalIgnoreCase);
+            issues.Add(stopped
+                ? Issue(HealthLevel.Critical, "replication_stopped", $"Storage Replica group {r.Name} is {r.Status}: the data is not being replicated.", r.Name, ("status", r.Status))
+                : Issue(HealthLevel.Warning, "replication_not_in_sync", $"Storage Replica group {r.Name} is {r.Status} ({r.BytesRemaining ?? 0} bytes still to copy).",
+                    r.Name, ("status", r.Status), ("remaining", r.BytesRemaining)));
         }
         foreach (var e in report.Errors)
         {
@@ -258,6 +263,10 @@ public static class ClusterRules
 
     private static void StorageIssues(List<ClusterIssue> issues, ClusterStatusReport report, CapacityReport capacity)
     {
+        if (report.Storage is { } any)
+        {
+            StorageJobIssues(issues, any);
+        }
         if (report.Storage is not { S2dEnabled: true } s)
         {
             return;
@@ -288,18 +297,51 @@ public static class ClusterRules
             issues.Add(Issue(HealthLevel.Warning, "physical_disk_problem", $"Physical disk {d.Name} ({d.SerialNumber}) is {d.HealthStatus}, {d.OperationalStatus}, usage {d.Usage}: replace it.",
                 d.Name, ("serial", d.SerialNumber), ("health", d.HealthStatus), ("status", d.OperationalStatus), ("usage", d.Usage)));
         }
-        if (s.Jobs.Count > 0)
-        {
-            var percent = s.Jobs.Where(j => j.PercentComplete is not null).Select(j => j.PercentComplete!.Value).DefaultIfEmpty(0).Min();
-            issues.Add(Issue(HealthLevel.Warning, "storage_repair_running", $"{s.Jobs.Count} storage repair job(s) running ({percent}% for the slowest): until they end the data is not fully resilient; do not take another node down.",
-                null, ("jobs", s.Jobs.Count), ("percent", percent)));
-        }
         if (capacity is { PoolFreeBytes: { } free, PoolReserveBytes: { } reserve } && free < reserve)
         {
             issues.Add(Issue(HealthLevel.Warning, "pool_reserve_low", "The storage pool has less unallocated capacity than one capacity disk per node (up to 4): after a disk failure the data cannot be repaired in place.",
                 null, ("free", free), ("reserve", reserve)));
         }
     }
+
+    /// <summary>Storage jobs that are going on (not completed, not ended in error).</summary>
+    public static List<ClusterStorageJobStatus> RunningJobs(ClusterStorageStatus? storage) =>
+        storage is null ? [] : storage.Jobs.Where(j => StorageJobStates.IsActive(j.State) && !StorageJobStates.IsStalled(j.State)).ToList();
+
+    /// <summary>Lowest percentage among the jobs that report one; null when none does (never a made-up number).</summary>
+    public static int? SlowestPercent(IEnumerable<ClusterStorageJobStatus> jobs) =>
+        jobs.Where(j => j.PercentComplete is not null).Select(j => (int?)j.PercentComplete!.Value).DefaultIfEmpty(null).Min();
+
+    /// <summary>
+    /// Storage jobs: a job that is running is the expected resynchronization after a node or a disk came back (a
+    /// warning: the data is not fully resilient until it ends); a job that ended in error or is suspended is a problem
+    /// of its own. Completed jobs are not problems.
+    /// </summary>
+    private static void StorageJobIssues(List<ClusterIssue> issues, ClusterStorageStatus s)
+    {
+        var running = RunningJobs(s);
+        if (running.Count > 0)
+        {
+            var percent = SlowestPercent(running);
+            issues.Add(percent is { } p
+                ? Issue(HealthLevel.Warning, "storage_repair_running", $"{running.Count} storage job(s) running ({p}% for the slowest): the data is being resynchronized; until they end it is not fully resilient, do not take another node down.",
+                    null, ("jobs", running.Count), ("percent", p))
+                : Issue(HealthLevel.Warning, "storage_repair_running_no_progress", $"{running.Count} storage job(s) running (Windows does not report their progress): the data is being resynchronized; until they end it is not fully resilient, do not take another node down.",
+                    null, ("jobs", running.Count)));
+        }
+        foreach (var j in s.Jobs.Where(j => StorageJobStates.IsFailed(j.State)))
+        {
+            issues.Add(Issue(HealthLevel.Critical, "storage_job_failed", $"Storage job {j.Name} ended as {j.State}{(j.Error is { Length: > 0 } e ? ": " + e : "")}: the data may not be fully resilient; check the virtual disks.",
+                JobSubject(j), ("name", j.Name), ("state", j.State), ("error", j.Error)));
+        }
+        foreach (var j in s.Jobs.Where(j => StorageJobStates.IsStalled(j.State)))
+        {
+            issues.Add(Issue(HealthLevel.Warning, "storage_job_suspended", $"Storage job {j.Name} is {j.State}: it does not go on by itself; until it ends the data is not fully resilient.",
+                JobSubject(j), ("name", j.Name), ("state", j.State)));
+        }
+    }
+
+    private static string JobSubject(ClusterStorageJobStatus j) => j.Resources.Count > 0 ? string.Join(", ", j.Resources) : j.Name;
 
     private static void AgentIssues(List<ClusterIssue> issues, IReadOnlyList<NodeFacts> nodes, ClusterStatusReport? report)
     {
@@ -499,11 +541,15 @@ public static class ClusterRules
         }
         if (report.Storage is { S2dEnabled: true } s)
         {
-            if (s.Jobs.Count > 0)
+            // Running or suspended: either way the data is not back in sync yet.
+            var pending = s.Jobs.Where(j => StorageJobStates.IsActive(j.State)).ToList();
+            if (pending.Count > 0)
             {
-                var slowest = s.Jobs.Where(j => j.PercentComplete is not null).Select(j => j.PercentComplete!.Value).DefaultIfEmpty(0).Min();
-                blocking.Add(Issue(HealthLevel.Warning, "storage_repair_running", "Storage Spaces Direct is still repairing data (storage jobs running): wait until they end, otherwise the data could become unavailable.",
-                    null, ("jobs", s.Jobs.Count), ("percent", slowest)));
+                blocking.Add(SlowestPercent(pending) is { } slowest
+                    ? Issue(HealthLevel.Warning, "storage_repair_running", "Storage Spaces Direct is still repairing data (storage jobs running): wait until they end, otherwise the data could become unavailable.",
+                        null, ("jobs", pending.Count), ("percent", slowest))
+                    : Issue(HealthLevel.Warning, "storage_repair_running_no_progress", "Storage Spaces Direct is still repairing data (storage jobs running): wait until they end, otherwise the data could become unavailable.",
+                        null, ("jobs", pending.Count)));
             }
             foreach (var v in s.VirtualDisks.Where(v => !Healthy(v.HealthStatus)))
             {

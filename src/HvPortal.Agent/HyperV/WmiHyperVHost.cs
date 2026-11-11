@@ -137,7 +137,7 @@ public sealed class WmiHyperVHost : IHyperVHost
             if (results.Count == 0)
             {
                 return (HyperVAccessStatus.AccessDenied,
-                    "root\\virtualization\\v2 returned no Msvm_VirtualSystemManagementService instance. " +
+                    WmiProblemCodes.AccessDenied + ": root\\virtualization\\v2 returned no Msvm_VirtualSystemManagementService instance. " +
                     (_target.IsLocal
                         ? "The agent identity is probably not a member of 'Hyper-V Administrators' (S-1-5-32-578)."
                         : $"The account {_target.UserName} is probably not an administrator of {_target.Display}."));
@@ -146,24 +146,25 @@ public sealed class WmiHyperVHost : IHyperVHost
         }
         catch (ManagementException ex) when (ex.ErrorCode == ManagementStatus.InvalidNamespace)
         {
-            return (HyperVAccessStatus.NotInstalled, "The root\\virtualization\\v2 WMI namespace does not exist.");
+            return (HyperVAccessStatus.NotInstalled, Diagnose(ex, VirtualizationNamespace).Message);
         }
-        catch (ManagementException ex) when (ex.ErrorCode == ManagementStatus.AccessDenied)
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
         {
-            return (HyperVAccessStatus.AccessDenied, AccessDeniedMessage());
+            // Unreachable, provider not available, timeout, refused credentials, access denied, Hyper-V error: told apart.
+            var problem = Diagnose(ex, VirtualizationNamespace);
+            return (problem.IsDenied ? HyperVAccessStatus.AccessDenied : HyperVAccessStatus.Error, problem.Message);
         }
-        catch (UnauthorizedAccessException)
-        {
-            return (HyperVAccessStatus.AccessDenied, AccessDeniedMessage());
-        }
-        catch (ManagementException ex)
-        {
-            return (HyperVAccessStatus.Error, $"WMI error: {ex.ErrorCode}");
-        }
-        catch (System.Runtime.InteropServices.COMException ex)
-        {
-            return (HyperVAccessStatus.Error, $"Cannot reach {_target.Display} over WMI/DCOM: {ex.Message}");
-        }
+    }
+
+    /// <summary>
+    /// What a failed WMI call means (WmiDiagnostics), with the original exception written to the agent log: the message
+    /// for the portal is an explanation, the log keeps everything.
+    /// </summary>
+    private WmiDiagnostics.Problem Diagnose(Exception ex, string ns)
+    {
+        var problem = WmiDiagnostics.Classify(ex, _target.Display, !_target.IsLocal, _target.UserName, ns);
+        _logger.LogWarning(ex, "WMI call to {Host} ({Namespace}) failed: {Code}", _target.Display, ns, problem.Code);
+        return problem;
     }
 
     /// <summary>Remote targets only: null when root\cimv2 accepts the connection, otherwise the reason.</summary>
@@ -174,20 +175,12 @@ public sealed class WmiHyperVHost : IHyperVHost
             Connect(CimV2Namespace);
             return null;
         }
-        catch (Exception ex) when (ex is UnauthorizedAccessException || (ex is ManagementException me && me.ErrorCode == ManagementStatus.AccessDenied))
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
         {
-            return (HyperVAccessStatus.AccessDenied, AccessDeniedMessage());
-        }
-        catch (Exception ex) when (ex is ManagementException or System.Runtime.InteropServices.COMException)
-        {
-            return (HyperVAccessStatus.Error, $"Cannot reach {_target.Display} over WMI/DCOM (TCP 135 and dynamic RPC ports): {ex.Message}");
+            var problem = Diagnose(ex, CimV2Namespace);
+            return (problem.IsDenied ? HyperVAccessStatus.AccessDenied : HyperVAccessStatus.Error, problem.Message);
         }
     }
-
-    private string AccessDeniedMessage() => _target.IsLocal
-        ? "Access denied to root\\virtualization\\v2."
-        : $"Access denied by {_target.Display} for {_target.UserName}: check user name and password and that the account is a local "
-          + "administrator of the host; for local accounts other than the built-in Administrator see LocalAccountTokenFilterPolicy in docs/install.md.";
 
     private HostFacts ReadHostFacts(List<string> warnings)
     {
@@ -840,14 +833,12 @@ public sealed class WmiHyperVHost : IHyperVHost
         {
             scope = Connect(VirtualizationNamespace);
         }
-        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
         {
-            return new PowerOutcome(AgentCommandStatus.AccessDenied, "Cannot connect to root\\virtualization\\v2: " + ex.Message, null, null);
-        }
-        catch (System.Runtime.InteropServices.COMException ex)
-        {
-            // Nothing was sent to the host: a definite failure, not an unknown outcome.
-            return new PowerOutcome(AgentCommandStatus.Failed, $"Cannot reach {_target.Display}: {ex.Message}", null, null);
+            // Nothing was sent to the host: a definite failure, not an unknown outcome. Refused credentials and missing
+            // rights are "access denied"; an unreachable host, a missing provider or a timeout are failures.
+            var problem = Diagnose(ex, VirtualizationNamespace);
+            return new PowerOutcome(problem.IsDenied ? AgentCommandStatus.AccessDenied : AgentCommandStatus.Failed, problem.Message, null, null);
         }
 
         using var vm = FindVmObject(scope, vmId);

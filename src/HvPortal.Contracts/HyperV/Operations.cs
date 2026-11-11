@@ -103,7 +103,47 @@ public enum HvOperation
     /// MoveSharedVolumeRequest). The data stays where it is; VMs keep running (I/O pauses for a moment).
     /// </summary>
     MoveClusterSharedVolume,
+    /// <summary>
+    /// Protocol 13. Rename a file or a folder of the file explorer (RenamePathRequest), in place: same parent folder,
+    /// never over an existing name. Refused for Hyper-V files (ProtectedHostFiles) and for folders that contain them.
+    /// In-process in the agent.
+    /// </summary>
+    RenamePath,
+    /// <summary>
+    /// Protocol 13. Delete a file, or a folder that is EMPTY, of the file explorer (DeletePathRequest). Never recursive;
+    /// refused for Hyper-V files (ProtectedHostFiles). In-process in the agent.
+    /// </summary>
+    DeletePath,
 }
+
+/// <summary>
+/// Files the file explorer never renames or deletes (0.9.4): virtual disks and their checkpoints, VM configuration and
+/// state, replica and change-tracking files. They belong to Hyper-V: a VM, a checkpoint chain or a backup may depend on
+/// them even when no process has them open. They are removed with the VM, checkpoint, template or restore point they
+/// belong to. Decided by the name only, on the gateway and again on the agent.
+/// </summary>
+public static class ProtectedHostFiles
+{
+    public static readonly string[] Extensions =
+    [
+        ".vhd", ".vhdx", ".avhd", ".avhdx", ".vhds", ".vhdpmem", // virtual disks, differencing disks of checkpoints, shared disks
+        ".vmcx", ".vmrs", ".vmgs", ".vsv", ".vmtx",              // VM configuration, runtime state, guest state, saved state
+        ".hrl", ".rct", ".mrt",                                  // Hyper-V Replica log, resilient change tracking
+    ];
+
+    /// <summary>True when the name (of a file, or of a folder named like one) ends with a protected extension.</summary>
+    public static bool IsProtected(string? name) =>
+        name is not null && Extensions.Any(e => name.TrimEnd().EndsWith(e, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>Protocol 13. <see cref="Path"/> = the file or folder; <see cref="NewName"/> = its new name in the same folder.</summary>
+public sealed record RenamePathRequest(string Path, string NewName);
+
+/// <summary>Protocol 13. <see cref="Path"/> = a file, or a folder that must be empty.</summary>
+public sealed record DeletePathRequest(string Path);
+
+/// <summary>What RenamePath / DeletePath did: the entry, its new path after a rename, whether it was a folder.</summary>
+public sealed record PathChangeResult(string Path, string? NewPath, bool IsFolder);
 
 public static class HvOperations
 {

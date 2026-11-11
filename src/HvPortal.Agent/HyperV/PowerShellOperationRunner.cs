@@ -23,6 +23,14 @@ public sealed class PowerShellOperationRunner
     private readonly string _powershell;
     private readonly HostTarget _target;
     private readonly HostFileAccess _files;
+    // One queue per host (this runner belongs to one host): OperationLimits, read when the runner is created.
+    private readonly OperationGate _gate = new(OperationLimits.MaxConcurrent, OperationLimits.ReservedForShort);
+
+    /// <summary>Totals of the operations script of this host since the agent started (also written to the log).</summary>
+    public OperationMetrics Metrics { get; } = new();
+
+    /// <summary>The queue in front of the operations script of this host.</summary>
+    public OperationGate Gate => _gate;
 
     public PowerShellOperationRunner(ILogger<PowerShellOperationRunner> logger) : this(logger, HostTarget.Local, HostFileAccess.Local)
     {
@@ -79,18 +87,24 @@ public sealed class PowerShellOperationRunner
                 };
             }
         }
-        if (operation is HvOperation.NewFolder or HvOperation.ListBackupFiles or HvOperation.ReadBackupFile)
+        if (operation is HvOperation.NewFolder or HvOperation.RenamePath or HvOperation.DeletePath or HvOperation.ListBackupFiles or HvOperation.ReadBackupFile)
         {
-            // Plain file-system work in-process: a new folder in the explorer, read-only browsing of an attached backup disk.
+            // Plain file-system work in-process: new folder, rename and delete in the explorer, read-only browsing of an attached backup disk.
             try
             {
-                if (operation != HvOperation.NewFolder && !_target.IsLocal)
+                if (operation is HvOperation.ListBackupFiles or HvOperation.ReadBackupFile && !_target.IsLocal)
                 {
                     return new HvOperationOutcome { Ok = false, Error = "not_supported: browsing backup files needs the agent installed on the host. Restore the disk to a VM instead." };
+                }
+                if (operation is HvOperation.RenamePath or HvOperation.DeletePath)
+                {
+                    _logger.LogWarning("File explorer {Operation} on {Host}: {Args}", operation, _target.Display, args?.GetRawText());
                 }
                 object result = operation switch
                 {
                     HvOperation.NewFolder => HostFileService.NewFolder(HvOperations.FromElement<NewFolderRequest>(args)!, _files),
+                    HvOperation.RenamePath => HostFileService.Rename(HvOperations.FromElement<RenamePathRequest>(args)!, _files),
+                    HvOperation.DeletePath => HostFileService.Delete(HvOperations.FromElement<DeletePathRequest>(args)!, _files),
                     HvOperation.ListBackupFiles => BackupFileService.List(HvOperations.FromElement<BackupFileListRequest>(args)!),
                     _ => BackupFileService.Read(HvOperations.FromElement<BackupFileReadRequest>(args)!),
                 };
@@ -217,6 +231,31 @@ public sealed class PowerShellOperationRunner
             psi.ArgumentList.Add(a);
         }
 
+        // One powershell.exe per operation (ADR-012), but not an unlimited number of them at once: the operation waits
+        // its turn (OperationGate). The wait counts against the time it was given; an operation that could not start
+        // within that time did nothing and says so.
+        var budget = timeout ?? DefaultTimeout;
+        var longRunning = IsLongRunning(operation, args);
+        var queued = Stopwatch.StartNew();
+        using var lease = await _gate.EnterAsync(longRunning, budget, ct);
+        var queueMs = queued.ElapsedMilliseconds;
+        if (lease is null)
+        {
+            Metrics.RecordBusy(operation, queueMs);
+            _logger.LogWarning("Hyper-V operation {Operation} on {Host} not started: no free slot in {QueueMs} ms ({Running} of {Max} running, {Waiting} waiting)",
+                operation, _target.Display, queueMs, _gate.Running, _gate.MaxConcurrent, _gate.Waiting);
+            return new HvOperationOutcome
+            {
+                Ok = false,
+                Error = $"host_busy: the operation was not started: {_gate.MaxConcurrent} operations were already running on this host for the {budget.TotalSeconds:0}s it could wait. Nothing was changed; try again.",
+            };
+        }
+        var remaining = budget - queued.Elapsed;
+        if (remaining < TimeSpan.FromSeconds(1))
+        {
+            remaining = TimeSpan.FromSeconds(1);
+        }
+
         using var process = new Process { StartInfo = psi };
         var sw = Stopwatch.StartNew();
         process.Start();
@@ -225,7 +264,8 @@ public sealed class PowerShellOperationRunner
         var stdout = process.StandardOutput.ReadToEndAsync(ct);
         var stderr = process.StandardError.ReadToEndAsync(ct);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(timeout ?? DefaultTimeout);
+        cts.CancelAfter(remaining);
+        var memory = SamplePeakMemoryAsync(process, cts.Token);
         try
         {
             await process.WaitForExitAsync(cts.Token);
@@ -239,14 +279,25 @@ public sealed class PowerShellOperationRunner
             catch (InvalidOperationException)
             {
             }
-            return new HvOperationOutcome { Ok = false, Error = $"Operation {operation} timed out after {(timeout ?? DefaultTimeout).TotalSeconds:0}s." };
+            var cancelled = ct.IsCancellationRequested;
+            Record(new OperationRun(operation, false, !cancelled, queueMs, sw.ElapsedMilliseconds, null, null, await memory), process: null);
+            return new HvOperationOutcome
+            {
+                Ok = false,
+                Error = cancelled ? $"Operation {operation} cancelled: the agent is stopping."
+                    : $"Operation {operation} timed out after {budget.TotalSeconds:0}s" + (queueMs >= 1000 ? $" ({queueMs / 1000}s of them waiting for a free slot)." : "."),
+            };
         }
 
         var output = (await stdout).Trim();
         var errors = (await stderr).Trim();
-        _logger.LogInformation("Hyper-V operation {Operation} on {Host} finished in {Ms} ms (exit {Code})", operation, _target.Display, sw.ElapsedMilliseconds, process.ExitCode);
+        var runMs = sw.ElapsedMilliseconds;
+        var peak = await memory;
         if (output.Length == 0)
         {
+            Record(new OperationRun(operation, false, false, queueMs, runMs, null, null, peak), process);
+            // The original text of the script error stays in the agent log; the caller gets its first part.
+            _logger.LogWarning("Hyper-V operation {Operation} on {Host} wrote nothing (exit {Code}). stderr: {Errors}", operation, _target.Display, process.ExitCode, Truncate(errors, 4000));
             return new HvOperationOutcome { Ok = false, Error = "No output from the operations script. " + Truncate(errors, 500) };
         }
         try
@@ -254,6 +305,14 @@ public sealed class PowerShellOperationRunner
             using var doc = JsonDocument.Parse(output);
             var root = doc.RootElement;
             var ok = root.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True;
+            long? Timing(string name) => root.TryGetProperty("timing", out var t) && t.ValueKind == JsonValueKind.Object
+                && t.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var ms) ? ms : null;
+            Record(new OperationRun(operation, ok, false, queueMs, runMs, Timing("startupMs"), Timing("scriptMs"), peak), process, Timing("moduleMs"));
+            if (!ok && root.TryGetProperty("error", out var failure) && failure.ValueKind == JsonValueKind.String)
+            {
+                // The complete error of the script goes to the agent log; the gateway gets it cut to 2000 characters.
+                _logger.LogWarning("Hyper-V operation {Operation} on {Host} failed: {Error}", operation, _target.Display, failure.GetString());
+            }
             return new HvOperationOutcome
             {
                 Ok = ok,
@@ -266,7 +325,59 @@ public sealed class PowerShellOperationRunner
         }
         catch (JsonException)
         {
+            Record(new OperationRun(operation, false, false, queueMs, runMs, null, null, peak), process);
             return new HvOperationOutcome { Ok = false, Error = "Invalid output from the operations script: " + Truncate(output, 300) };
+        }
+    }
+
+    /// <summary>
+    /// Operations that copy whole virtual disks or drain a node (hours): they never take the slots reserved for reads and
+    /// short changes. Same list as the longer timeout of the command executor.
+    /// </summary>
+    internal static bool IsLongRunning(HvOperation operation, JsonElement? args) =>
+        operation is HvOperation.NewTemplate or HvOperation.BackupVm or HvOperation.VerifyBackup or HvOperation.RestoreBackup
+            or HvOperation.RestoreBackupDisk or HvOperation.MountBackupDisk or HvOperation.MoveVm or HvOperation.MoveVmStorage
+            or HvOperation.SetClusterNodeMaintenance
+        || (operation == HvOperation.NewVm && args is { ValueKind: JsonValueKind.Object } a
+            && a.TryGetProperty("templateDisks", out var d) && d.ValueKind == JsonValueKind.Array && d.GetArrayLength() > 0);
+
+    /// <summary>
+    /// Peak working set of the powershell.exe of an operation, sampled while it runs (the numbers of a process are gone
+    /// once it has exited). Null when it could not be read. Only that process: not WinRM on a remote host.
+    /// </summary>
+    private static async Task<long?> SamplePeakMemoryAsync(Process process, CancellationToken ct)
+    {
+        long? peak = null;
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                process.Refresh();
+                if (process.HasExited)
+                {
+                    break;
+                }
+                peak = Math.Max(peak ?? 0, process.PeakWorkingSet64);
+                await Task.Delay(250, ct);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or OperationCanceledException or NotSupportedException)
+        {
+            // The process ended between two samples, or its counters are not readable: keep what was measured.
+        }
+        return peak;
+    }
+
+    private void Record(OperationRun run, Process? process, long? moduleMs = null)
+    {
+        _logger.LogInformation(
+            "Hyper-V operation {Operation} on {Host} finished in {Ms} ms (exit {Code}); queue {QueueMs} ms; powershell start {StartupMs} ms; module loaded after {ModuleMs} ms; script {ScriptMs} ms; peak memory {PeakMb} MB; {Running}/{Max} running, {Waiting} waiting",
+            run.Operation, _target.Display, run.RunMs, process?.ExitCode, run.QueueMs, run.StartupMs, moduleMs, run.ScriptMs,
+            run.PeakMemoryBytes is { } bytes ? bytes / (1024 * 1024) : (long?)null, _gate.Running, _gate.MaxConcurrent, _gate.Waiting);
+        if (Metrics.Record(run))
+        {
+            _logger.LogInformation("Operations script totals on {Host} (most time first; at most {Peak} at once, limit {Max}): {Totals}",
+                _target.Display, _gate.PeakRunning, _gate.MaxConcurrent, OperationMetrics.Format(Metrics.Snapshot()));
         }
     }
 
@@ -313,6 +424,11 @@ public sealed class PowerShellOperationRunner
                     return HvOperations.FromElement<MoveSharedVolumeRequest>(args) is { } moveCsv ? OperationValidation.Validate(moveCsv) : "invalid_arguments";
                 case HvOperation.NewFolder:
                     return HvOperations.FromElement<NewFolderRequest>(args) is { } nf ? OperationValidation.Validate(nf) : "invalid_arguments";
+                // Protocol 13: the real file system is checked by HostFileService (parent folder, links, content).
+                case HvOperation.RenamePath:
+                    return HvOperations.FromElement<RenamePathRequest>(args) is { } rn ? OperationValidation.Validate(rn) : "invalid_arguments";
+                case HvOperation.DeletePath:
+                    return HvOperations.FromElement<DeletePathRequest>(args) is { } dl ? OperationValidation.Validate(dl) : "invalid_arguments";
                 case HvOperation.MoveVm:
                     // The destination folder is on the other host: the gateway checks it against that host's allowed folders.
                     return HvOperations.FromElement<MoveVmRequest>(args) is { } mv ? OperationValidation.Validate(mv) : "invalid_arguments";

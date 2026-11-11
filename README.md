@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.9.3 preview" src="https://img.shields.io/badge/version-0.9.3%20preview-2563eb">
+  <img alt="Version 0.9.4 preview" src="https://img.shields.io/badge/version-0.9.4%20preview-2563eb">
   <img alt="Hyper-V on Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="No telemetry" src="https://img.shields.io/badge/telemetry-none-16a34a">
@@ -120,6 +120,12 @@ you what VMware administrators get from vCenter, for Hyper-V:
 - **Owner of a shared volume** (0.9.1) moved from one node to another from the Storage tab.
 - **Backups of cluster VMs to a NAS with credentials** (0.9.1): the backup staging folder set on every node at once,
   with a warning on the cluster and on the repository when a node has none.
+- **Storage jobs of Windows** (0.9.4): repair, regeneration, rebalance and resynchronization jobs (`Get-StorageJob`) in
+  their own section of the Storage tab, with or without Storage Spaces Direct: state, progress bar when Windows reports a
+  percentage, data copied, elapsed time, the virtual disk. The list refreshes by itself; a job that Windows no longer
+  lists is shown as *no longer reported, outcome not verified*, never as completed.
+- **Cluster problems on the dashboard** (0.9.4): *Needs attention* lists the problems of every cluster you may read, with
+  severity, and opens the tab that explains each one. A cluster that cannot be read now is *Unknown*, never healthy.
 
 ### Virtual machines
 - **Power**: start, guest shutdown and restart, turn off, reset, pause, resume, save.
@@ -143,6 +149,9 @@ you what VMware administrators get from vCenter, for Hyper-V:
   follow; change the VLAN of a network and re-tag the adapters already on it.
 - **Host files**: browse, download, upload with SHA-256 check. **Storage folders** chosen at agent setup limit what the
   portal can see on a host.
+- **Rename and delete** (0.9.4, permission `host.files.manage`): files and empty folders, with an explicit confirmation
+  and an audit entry. Virtual disks, checkpoints and VM configuration files, the folders that contain them and the
+  folders the portal itself uses are never renamed or deleted from here.
 
 ### Backups
 - **Repositories** on a NAS or SMB share (also outside the domain, with stored credentials) or in a local folder.
@@ -158,9 +167,15 @@ you what VMware administrators get from vCenter, for Hyper-V:
 - **Portal updates from GitHub** (0.9.1): check (on request, or twice a day if turned on) and install the new release
   from *Settings > System*. The setup is downloaded, its SHA-256 compared with the one published with the release, and
   installed by a Windows scheduled task only if signed by the same publisher as the installed portal
-  ([how it works](INSTALL.md#9-updating)).
+  ([how it works](INSTALL.md#9-updating)). From 0.9.4 a waiting page follows the update through the restart of the
+  portal, reconnects by itself and reports success only when the portal answers with the new version.
 - **Agent updates from the portal** for signed releases, accepted only if signed by the same publisher.
-- **Hosts without an agent** (optional), through a management agent with stored credentials.
+- **An agent on every host is the recommended setup.** Hosts without an agent (through a management agent with stored
+  credentials) remain available as an advanced mode, with its limits shown when a host is added.
+- **Diagnostics** (0.9.4): when a host cannot be read, its page says whether it does not answer, WMI is not available,
+  the request timed out, the credentials were refused or access is denied, with the original error below. The agent
+  limits how many PowerShell processes run at once per host and logs what each operation cost
+  ([docs/performance-powershell.md](docs/performance-powershell.md)).
 - **Backup of the portal itself** from Settings, plus automatic daily copies of its database.
 
 ### Sign-in and audit
@@ -256,7 +271,7 @@ More: [architecture](docs/architecture.md), [design decisions](docs/decisions.md
 
 ## Project status
 
-HvPortal 0.9.3 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
+HvPortal 0.9.4 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
 tested against a test double of the agent, and the checks still to run on real hosts are listed in the
 [real-host test plan](docs/verification/real-host-test-plan.md). Start in a lab or on non-critical hosts, and do not
 expose the portal or the agent port to the Internet. HvPortal has not had an independent security review yet.

@@ -27,8 +27,9 @@ public static class AgentProtocol
     /// 11 = v0.9.0: failover clusters (HostFacts.Cluster, GetClusterStatus, SetClusterNodeMaintenance, MoveClusterVm,
     ///     NewVm.HighlyAvailable) and VM folders on cluster shared volumes.
     /// 12 = v0.9.1: owner of a cluster shared volume moved to another node (MoveClusterSharedVolume).
+    /// 13 = v0.9.4: rename and delete in the file explorer (RenamePath, DeletePath).
     /// </summary>
-    public const int Version = 12;
+    public const int Version = 13;
 
     /// <summary>Agent port: the agent package, for agents updating themselves (mutual TLS, same checks as the channel).</summary>
     public const string PackagePath = "/agent/v1/package";
@@ -36,7 +37,8 @@ public static class AgentProtocol
     /// <summary>Agent version shipped with each protocol (messages for agents that are too old).</summary>
     public static string MinimumAgentFor(int protocol) => protocol switch
     {
-        >= 12 => "0.9.1",
+        >= 13 => "0.9.4",
+        12 => "0.9.1",
         11 => "0.9.0",
         10 => "0.8.0",
         9 => "0.7.0",
@@ -63,6 +65,10 @@ public static class AgentProtocol
         if (command.Kind is AgentCommandKind.DeleteVm && command.DeleteDisks == true)
         {
             return 9;
+        }
+        if (command.Operation is >= HvOperation.RenamePath)
+        {
+            return 13;
         }
         if (command.Operation is >= HvOperation.MoveClusterSharedVolume)
         {

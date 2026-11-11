@@ -19,6 +19,8 @@ export interface ClusterSummary {
   can: { manage: boolean; readStatus: boolean };
   /** Problems of the last read (notes left out); empty for who may not read the cluster status. */
   problems?: ClusterIssue[];
+  /** Number of problems of the last read (the list above is cut at 20). */
+  problemCount?: number;
   /** Problems about each node (issue subject = node or host name). */
   nodeProblems?: { hostId: string; issues: ClusterIssue[] }[];
 }
@@ -157,7 +159,31 @@ export interface ClusterNodeView {
   canMaintain: boolean;
 }
 
+/** A storage job of Windows as last seen by the gateway, and what became of it (0.9.4). */
+export interface TrackedStorageJob {
+  key: string;
+  name: string;
+  description: string | null;
+  state: string | null;
+  /** Null when Windows does not report a percentage: never replaced by a made-up value. */
+  percentComplete: number | null;
+  bytesTotal: number | null;
+  bytesProcessed: number | null;
+  elapsedSeconds: number | null;
+  startedUtc: string | null;
+  /** Virtual disks the job works on (agent 0.9.4+), empty when not known. */
+  resources: string[];
+  error: string | null;
+  firstSeenUtc: string;
+  lastSeenUtc: string;
+  /** Null while the job is going on. NotReported = it disappeared while running: the end is not known. */
+  outcome: 'Completed' | 'Failed' | 'NotReported' | null;
+  endedUtc: string | null;
+}
+
 export interface ClusterDetail {
+  /** Storage jobs of Windows across reads; readable = the last report could read them. */
+  storageJobs: { readable: boolean; jobs: TrackedStorageJob[] };
   id: string;
   name: string;
   description: string | null;

@@ -130,8 +130,32 @@ public sealed record ClusterStorageStatus
     public IReadOnlyList<ClusterPoolStatus> Pools { get; init; } = [];
     public IReadOnlyList<ClusterVirtualDiskStatus> VirtualDisks { get; init; } = [];
     public IReadOnlyList<ClusterPhysicalDiskStatus> PhysicalDisks { get; init; } = [];
-    /// <summary>Repair / rebalance jobs running on the pool (Get-StorageJob): the data is not fully resilient until they end.</summary>
+    /// <summary>
+    /// Storage jobs of Windows (Get-StorageJob): repair, regeneration, rebalance, resynchronization. Agents up to 0.9.3
+    /// list them only with Storage Spaces Direct and leave out the completed ones; agent 0.9.4+ lists them on every
+    /// cluster and includes the completed jobs Windows still reports (see <see cref="StorageJobStates"/>).
+    /// </summary>
     public IReadOnlyList<ClusterStorageJobStatus> Jobs { get; init; } = [];
+}
+
+/// <summary>JobState of a storage job of Windows (MSFT_StorageJob), as text.</summary>
+public static class StorageJobStates
+{
+    public const string Completed = "Completed";
+
+    private static bool Is(string? state, string value) => string.Equals(state, value, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Windows says the job ended well.</summary>
+    public static bool IsCompleted(string? state) => Is(state, Completed);
+
+    /// <summary>Windows says the job ended without completing (Killed, Terminated, Exception).</summary>
+    public static bool IsFailed(string? state) => Is(state, "Killed") || Is(state, "Terminated") || Is(state, "Exception");
+
+    /// <summary>The job is not going on by itself (Suspended, or Service: it waits for an administrator).</summary>
+    public static bool IsStalled(string? state) => Is(state, "Suspended") || Is(state, "Service");
+
+    /// <summary>Not ended: new, starting, running, shutting down, suspended, or a state this version does not know.</summary>
+    public static bool IsActive(string? state) => !IsCompleted(state) && !IsFailed(state);
 }
 
 public sealed record ClusterPoolStatus
@@ -177,6 +201,16 @@ public sealed record ClusterStorageJobStatus
     public long? BytesProcessed { get; init; }
     /// <summary>Agent 0.9.1+. Seconds the job has been running (Get-StorageJob ElapsedTime).</summary>
     public long? ElapsedSeconds { get; init; }
+    /// <summary>Agent 0.9.4+. UniqueId of the job in Windows: the same job read again (or from another node) has the same id.</summary>
+    public string? Id { get; init; }
+    /// <summary>Agent 0.9.4+. Description of the job given by Windows, when there is one.</summary>
+    public string? Description { get; init; }
+    /// <summary>Agent 0.9.4+. Virtual disks the job works on (Get-StorageJob -VirtualDisk); empty when Windows does not say.</summary>
+    public IReadOnlyList<string> Resources { get; init; } = [];
+    /// <summary>Agent 0.9.4+. When the job started, when Windows reports it.</summary>
+    public DateTimeOffset? StartedUtc { get; init; }
+    /// <summary>Agent 0.9.4+. Error reported by Windows for the job (ErrorDescription), when there is one.</summary>
+    public string? Error { get; init; }
 }
 
 /// <summary>A fault of the Health Service (Get-HealthFault): what is wrong and what Microsoft recommends doing.</summary>

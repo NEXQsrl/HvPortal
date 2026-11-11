@@ -202,6 +202,42 @@ public sealed class PortalUpdateService(PortalDbContext db, IReleaseSource relea
 
     public sealed record LastResult(DateTimeOffset? TimeUtc, string? Status, string? Version, string? Message);
 
+    /// <summary>What became of the last update asked from the portal (0.9.4), for the page that waits for it.</summary>
+    public static class InstallOutcomes
+    {
+        /// <summary>No update was asked from the portal.</summary>
+        public const string None = "none";
+        /// <summary>Handed to the updater; no result yet and the portal still runs another version.</summary>
+        public const string Pending = "pending";
+        /// <summary>The running portal IS the requested version: the only proof that the update was installed.</summary>
+        public const string Installed = "installed";
+        /// <summary>The updater wrote a failure after the request (the previous version keeps running, or was restored).</summary>
+        public const string Failed = "failed";
+    }
+
+    public sealed record InstallStatus(string Outcome, string? Version, DateTimeOffset? RequestedAt, string? Message);
+
+    /// <summary>
+    /// The outcome of the last requested update from facts only: the version that is running now and the result file
+    /// the updater wrote after the request. A result older than the request belongs to an earlier update and is ignored.
+    /// </summary>
+    public static InstallStatus InstallStatusOf(State state, LastResult? last, string runningVersion)
+    {
+        if (state.InstallRequestedVersion is not { } requested || state.InstallRequestedAt is not { } at)
+        {
+            return new InstallStatus(InstallOutcomes.None, null, null, null);
+        }
+        if (AgentVersions.Parse(requested) is { } wanted && AgentVersions.Parse(runningVersion) is { } running && running >= wanted)
+        {
+            return new InstallStatus(InstallOutcomes.Installed, requested, at, null);
+        }
+        var fresh = last is { TimeUtc: { } when } && when >= at;
+        return fresh && !string.Equals(last!.Status, "ok", StringComparison.OrdinalIgnoreCase)
+            ? new InstallStatus(InstallOutcomes.Failed, requested, at, last.Message)
+            // "ok" from the updater while another version runs is not a verified update: still pending (or wrong).
+            : new InstallStatus(InstallOutcomes.Pending, requested, at, fresh ? last!.Message : null);
+    }
+
     public string UpdateFolder => Path.Combine(paths.Root, "update");
 
     public async Task<State> LoadAsync(CancellationToken ct)
@@ -336,12 +372,14 @@ public sealed class PortalUpdateService(PortalDbContext db, IReleaseSource relea
         {
             File.Delete(partial);
         }
+        // The moment of the request is taken before the task starts: a result the updater writes at once is still after it.
+        var requestedAt = time.GetUtcNow();
         var (started, error) = launcher.Start();
         if (!started)
         {
             return ("updater_failed", "The setup was verified but the updater task could not be started: " + error);
         }
-        await SaveAsync(state with { InstallRequestedAt = time.GetUtcNow(), InstallRequestedVersion = latest.Version }, ct);
+        await SaveAsync(state with { InstallRequestedAt = requestedAt, InstallRequestedVersion = latest.Version }, ct);
         return (null, null);
     }
 }

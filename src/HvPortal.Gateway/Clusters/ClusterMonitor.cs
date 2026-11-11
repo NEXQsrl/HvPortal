@@ -15,7 +15,7 @@ namespace HvPortal.Gateway.Clusters;
 /// when it is back to normal. Read-only: it never changes anything in the cluster.
 /// </summary>
 public sealed class ClusterMonitor(IServiceScopeFactory scopes, IAgentDispatcher agents, NotificationService notifications, TimeProvider time,
-    IOptions<GatewayOptions> options, ILogger<ClusterMonitor> logger) : BackgroundService
+    IOptions<GatewayOptions> options, ILogger<ClusterMonitor> logger, Realtime.IRealtimeNotifier notifier) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -63,6 +63,8 @@ public sealed class ClusterMonitor(IServiceScopeFactory scopes, IAgentDispatcher
             var after = await db.Clusters.AsNoTracking().Where(c => c.Id == cluster.Id).Select(c => c.LastStatusLevel).FirstOrDefaultAsync(ct);
             if (after is not null && before != after)
             {
+                // The dashboards and trees that are open read the clusters again (their problems changed).
+                await notifier.ClustersChangedAsync();
                 await NotifyAsync(service, cluster, before, after, read, ct);
             }
         }

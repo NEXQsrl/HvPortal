@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versione 0.9.3 anteprima" src="https://img.shields.io/badge/versione-0.9.3%20anteprima-2563eb">
+  <img alt="Versione 0.9.4 anteprima" src="https://img.shields.io/badge/versione-0.9.4%20anteprima-2563eb">
   <img alt="Hyper-V su Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="Nessuna telemetria" src="https://img.shields.io/badge/telemetria-nessuna-16a34a">
@@ -125,6 +125,14 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
 - **Proprietario di un volume condiviso** (0.9.1) spostato da un nodo all'altro dalla scheda Storage.
 - **Backup delle VM del cluster su un NAS con credenziali** (0.9.1): la cartella di appoggio dei backup impostata su
   tutti i nodi in un colpo solo, con un avviso sul cluster e sul repository quando un nodo non ce l'ha.
+- **Job di storage di Windows** (0.9.4): job di riparazione, rigenerazione, ribilanciamento e risincronizzazione
+  (`Get-StorageJob`) in una sezione propria della scheda Storage, con o senza Storage Spaces Direct: stato, barra di
+  avanzamento quando Windows riporta una percentuale, dati copiati, tempo trascorso, disco virtuale. L'elenco si aggiorna
+  da solo; un job che Windows non elenca più viene mostrato come *non più riportato, esito non verificato*, mai come
+  completato.
+- **Problemi dei cluster nella dashboard** (0.9.4): *Richiede attenzione* elenca i problemi di ogni cluster che puoi
+  leggere, con la gravità, e apre la scheda che spiega ciascuno. Un cluster che ora non si riesce a leggere è
+  *Sconosciuto*, mai sano.
 
 ### Macchine virtuali
 - **Alimentazione**: avvio, arresto e riavvio del guest, spegnimento, reset, pausa, ripresa, salvataggio.
@@ -151,6 +159,9 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
   cambia la VLAN di una rete e ritagga le schede già collegate.
 - **File degli host**: sfoglia, scarica, carica con verifica SHA-256. Le **cartelle storage** scelte all'installazione
   dell'agent limitano ciò che il portale può vedere su un host.
+- **Rinomina ed elimina** (0.9.4, permesso `host.files.manage`): file e cartelle vuote, con conferma esplicita e voce
+  nell'audit. Dischi virtuali, checkpoint e file di configurazione delle VM, le cartelle che li contengono e le cartelle
+  usate dal portale stesso non vengono mai rinominati né eliminati da qui.
 
 ### Backup
 - **Repository** su NAS o condivisione SMB (anche fuori dominio, con credenziali salvate) o in una cartella locale.
@@ -168,9 +179,16 @@ necessario. HvPortal dà a Hyper-V quello che gli amministratori VMware hanno co
 - **Aggiornamenti del portale da GitHub** (0.9.1): controlla (su richiesta, o due volte al giorno se attivato) e
   installa la nuova release da *Impostazioni > Sistema*. Il setup viene scaricato, il suo SHA-256 confrontato con quello
   pubblicato con la release, e installato da un'attività pianificata di Windows solo se firmato dallo stesso editore del
-  portale installato ([come funziona](INSTALL_IT.md#9-aggiornare)).
+  portale installato ([come funziona](INSTALL_IT.md#9-aggiornare)). Dalla 0.9.4 una pagina di attesa segue
+  l'aggiornamento durante il riavvio del portale, si ricollega da sola e segnala il successo solo quando il portale
+  risponde con la nuova versione.
 - **Aggiornamento degli agent dal portale** per le release firmate, accettato solo se firmato dallo stesso editore.
-- **Host senza agent** (facoltativo), tramite un agent di gestione con credenziali salvate.
+- **Un agent su ogni host è la configurazione raccomandata.** Gli host senza agent (tramite un agent di gestione con
+  credenziali salvate) restano disponibili come modalità avanzata, con i suoi limiti mostrati quando si aggiunge un host.
+- **Diagnostica** (0.9.4): quando un host non si riesce a leggere, la sua pagina dice se non risponde, se WMI non è
+  disponibile, se la richiesta è scaduta, se le credenziali sono state rifiutate o se l'accesso è negato, con l'errore
+  originale sotto. L'agent limita quanti processi PowerShell girano insieme per host e registra quanto è costata ogni
+  operazione ([docs/performance-powershell.md](docs/performance-powershell.md)).
 - **Backup del portale stesso** dalle Impostazioni, più copie automatiche giornaliere del suo database.
 
 ### Accesso e audit
@@ -268,7 +286,7 @@ Approfondimenti: [architettura](docs/architecture.md), [decisioni di progetto](d
 
 ## Stato del progetto
 
-HvPortal 0.9.3 è un'**anteprima**. Ha un'ampia suite di test automatici; le operazioni che richiedono un host Hyper-V
+HvPortal 0.9.4 è un'**anteprima**. Ha un'ampia suite di test automatici; le operazioni che richiedono un host Hyper-V
 reale sono provate contro un sostituto di prova dell'agent, e le verifiche ancora da fare su host reali sono elencate
 nel [piano di test sugli host reali](docs/verification/real-host-test-plan.md). Comincia in laboratorio o su host non
 critici, e non esporre il portale né la porta degli agent su Internet. HvPortal non ha ancora avuto una revisione di

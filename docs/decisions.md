@@ -102,6 +102,158 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-048 Cluster notifications through ClusAPI: proposed, not implemented (0.9.4)
+- **Context**: the cluster is read by polling (`GetClusterStatus` every 120 s, ADR-041). The native API
+  `CreateClusterNotifyPortV2` could report node, role, resource, network, quorum and CSV changes at once.
+- **Decision**: nothing is implemented. `docs/proposals/clusapi-notifications.md` compares polling and notifications
+  (latency, cost, what each can read, lost events, native interop inside the privileged agent) and proposes a hybrid:
+  notifications only *trigger* a normal snapshot read (coalesced and debounced), the periodic read stays as the
+  reconciliation, the listener is off by default. ClusAPI says nothing about Storage Spaces Direct, storage jobs or the
+  Health Service, so the snapshot remains the only source of state.
+- **Consequences**: no change in behaviour. The proposal lists the ten tests that must pass on real clusters (2019,
+  2022, 2025, workgroup) before a listener is enabled; lowering `MonitorIntervalSeconds` is to be measured first.
+- **Alternatives**: a rewrite of the cluster reading on ClusAPI (refused: no storage information, a second source of
+  state, nothing to test it on here); WMI event subscriptions on `root\MSCluster` (same loss-of-event problem, less
+  complete than ClusAPI).
+
+## ADR-047 WMI failures told apart; hosts through a management agent are the advanced mode (0.9.4)
+- **Context**: a host that could not be read showed `Error: WMI error: <status>` or `Cannot reach ...` — the same words
+  for a host that is off, a refused password, a stopped WMI service or a timeout. Administrators also asked which of
+  the two ways of connecting a host is the one to use.
+- **Decision**:
+  - `WmiDiagnostics` (agent) classifies what a WMI call threw, from its type, HRESULT and WMI status only:
+    `wmi_unreachable`, `wmi_provider_unavailable`, `wmi_timeout`, `wmi_authentication_failed`, `wmi_access_denied`,
+    `hyperv_error`, `wmi_error` (`WmiProblemCodes`, Contracts). `AccessMessage` becomes
+    `"<code>: <what to check> [<exception type> <HRESULT> <status>: <original message>]"`; the complete exception is
+    written to the agent log. `Access` stays `AccessDenied` for refused credentials and missing rights, `Error` for the
+    rest, `NotInstalled` for a missing Hyper-V namespace. Used for the access check, the reachability of remote hosts,
+    the inventory of remote hosts (also "no answer within 2 minutes" = timeout) and the connection of power operations.
+  - The gateway returns `accessCode` with each host (parsed from the message, known codes only: no database change);
+    the host page shows a title and what to check by code, in the user's language, and the original error under
+    *Original error*. Messages of older agents are shown as before.
+  - *Add host*: "Agent on the host" stays the recommended choice; "Through a management agent" is labelled *advanced* and
+    explains, before the fields, what it depends on (WMI/DCOM, WinRM, SMB, firewall, TrustedHosts, a stored
+    administrator password) and what is not available through it (clusters, cluster shared volumes, browsing backup
+    files). Nothing was removed and workgroup hosts work as before in both modes.
+- **Consequences**: no new access state and no protocol version (the code travels in an existing text field). The
+  classification is unit tested from HRESULTs; **which error a real host produces in each situation is not verified**
+  (real-host plan V92). A WMI error with an HRESULT the table does not know stays `wmi_error` — never guessed.
+- **Alternatives**: new values of `HyperVAccessStatus` (older gateways would not parse them); a structured field in the
+  inventory (a database column for something that fits the existing message).
+
+## ADR-046 A queue in front of the operations script, and measurements (0.9.4)
+- **Context**: every script operation is one `powershell.exe` (ADR-012). Measured on the development machine: 1.3–1.9 s
+  and about 140 MB per operation before Hyper-V does anything; eight at once ≈ 1.1 GB (`docs/performance-powershell.md`).
+  Nothing limited how many ran at once on a host.
+- **Decision**:
+  - `OperationGate`, one per host (per `PowerShellOperationRunner`): at most `Agent:Operations:MaxConcurrent` scripts
+    (default 8) run; the others wait. Operations that copy disks or drain a node use at most
+    `MaxConcurrent - ReservedForShort` slots (default 2 reserved) so that reads are never stuck behind hours-long copies.
+  - The wait is part of the operation's timeout. Not started in time = `host_busy`, a definite failure (nothing was
+    done), never an unknown outcome. Cancellation ends the wait; the per-VM lock and one process per operation stay.
+  - The script returns its own `timing` (engine start, module load, total); the agent samples the peak working set of
+    the process and logs one line per operation plus totals per operation every 100 runs (`OperationMetrics`). When a
+    script fails, its complete error goes to the agent log (the gateway still gets the first 2000 characters).
+  - No operation was moved to C# in this release: the document ranks the candidates (`ListIsos`, `GetHostDefaults`,
+    `ListSwitches`, `ListCheckpoints`, then `GetVmConfig`) and keeps every change in PowerShell.
+- **Consequences**: with the defaults, behaviour changes only for a host asked to run more than 8 scripts at once (or
+  more than 6 long copies): the extra ones wait instead of starting. In-process operations (WMI, files, console) are not
+  queued. The figures are from a workstation without Hyper-V rights; a loaded host is real-host plan V91.
+- **Alternatives**: a long-lived PowerShell runspace or server process (one crash or leak would affect every operation,
+  and state would be shared between requests: ADR-012 chose isolation); no limit (memory grows with the requests).
+
+## ADR-045 Rename and delete in the file explorer (agent protocol 13, 0.9.4)
+- **Context**: the explorer could browse, download, upload and create folders (ADR-018, ADR-034). Leftover ISO files and
+  empty folders had to be removed on the host itself.
+- **Decision**:
+  - Operations `RenamePath` and `DeletePath`, in-process in the agent (`HostFileService`), protocol **13** (agents before
+    0.9.4 are never asked: 501 `agent_outdated`). Rename is in place (same parent), never over an existing name. Delete
+    removes a **file**, or a **folder that is empty** — never recursive; hidden and system entries count as content.
+  - **Never touched** (`ProtectedHostFiles`, by name, gateway and agent): `.vhd .vhdx .avhd .avhdx .vhds .vhdpmem .vmcx
+    .vmrs .vmgs .vsv .vmtx .hrl .rct .mrt`, as source and as new name. They are removed with the VM, checkpoint,
+    template or restore point they belong to. A **folder** is renamed only when nothing below it is one of those files,
+    a junction or symbolic link, or unreadable, and it holds at most 20 000 entries (what cannot be checked is refused).
+  - Same folder rules as every explorer operation, re-checked by the agent on the real file system: allowed storage
+    folders, fixed drives, no system top-level folders, no drive root, no name starting with `$` or `.`, no hidden /
+    system / reparse-point entry (so not the mount point of a CSV), not an allowed storage folder itself.
+  - **Gateway**: `POST /hosts/{id}/files/rename {path, newName, groupId?}` and `/files/delete {path, confirmName,
+    groupId?}`. New permission **`host.files.manage`** (Global / Cluster / Host / VM folder; in the built-in *Folder
+    administrator*; not implied by `host.files.write`). In folder scope only strictly inside the storage paths of the
+    folder (a storage path itself is refused). Refused with `path_in_use` when the entry is, or contains, something the
+    portal's own records use on that host: template library, ISO libraries, backup staging folder, the folder of a
+    registered VM. Delete needs the name of the entry again (`confirmName`), and the UI a checked confirmation.
+  - Read-only files are not deleted; a file another process has open is `file_in_use`; NTFS refusals are
+    `access_denied`. Success, failure (with the agent's code) and every refusal by a rule are audited
+    (`host.files.rename`, `host.files.delete`). The calls are synchronous, like *New folder*: authorized at request
+    time, validated again by the agent.
+- **Consequences**: no recycle bin: a deleted file is gone. Folders with content must be emptied first. A VM whose files
+  the portal does not know (not registered on that host) is protected only by the file-name rule and by Windows' own
+  locks. Verified with the test double and on a real NTFS folder of the development machine (links, in-use files,
+  read-only, hidden); not on CSV paths, administrative shares of a remote host or files locked by vmms (real-host plan
+  V90).
+- **Alternatives**: recursive delete (one click from an emptied datastore); reusing `host.files.write` (uploading is not
+  permission to delete); a job per operation (nothing long runs here; the audit already records who did what).
+
+## ADR-044 A waiting page for the update of the portal, verified by the running version (0.9.4)
+- **Context**: installing an update from Settings (ADR-042) showed a toast; minutes later the gateway restarted and the
+  page showed connection errors until someone reloaded it. Nothing said whether the update had been installed.
+- **Decision**:
+  - The gateway computes what became of the last requested update (`install` in `GET /system/updates`,
+    `PortalUpdateService.InstallStatusOf`): `installed` **only** when the running version is at least the requested one;
+    `failed` when the updater wrote a failure **after** the request; otherwise `pending` — also when the updater wrote
+    "ok" but another version runs. The request time is taken before the task starts.
+  - The SPA shows a full-screen page (`PortalUpdateOverlay`, mounted outside the session gate) from the moment the
+    install is confirmed: the four real steps (download and SHA-256 check, signature check and installation, restart,
+    version check), the elapsed time, no percentage. It polls the anonymous `GET /auth/state` (which already returns the
+    version) with a 6 s timeout and backoff 2 → 10 s while the gateway is down, and `GET /system/updates` while the
+    session is valid. Rules (`lib/portal-update.ts`, unit tested): success = the gateway answers with the requested
+    version; failure = the updater's failure with its message, or the gateway back on another version four polls in a
+    row after a restart (rollback); after 15 minutes it says it is slow and offers to stop waiting.
+  - The run is kept in `localStorage` (target and previous version, when it started, whether the gateway was seen down):
+    it survives the restart, a reload and a new sign-in, and is dropped after 6 hours. Nothing redirects by itself: when
+    the session ended with the restart the page says so and offers *Sign in* (a reload, after the run is cleared).
+- **Consequences**: signature, SHA-256 and publisher checks are untouched (the updater and the download are unchanged).
+  Other users connected during the update still see their requests fail until the gateway is back. The page was not
+  run against a real update (the development gateway cannot update itself): real-host plan V88.
+- **Alternatives**: a status endpoint that survives the restart on another port (a second listener for a few minutes of
+  use); server-sent progress from the updater (it reports none).
+
+## ADR-043 Storage jobs across reads, cluster problems on the dashboard, a stale status is not healthy (0.9.4)
+- **Context**: storage jobs were read (`Get-StorageJob`) only with Storage Spaces Direct, without the completed ones, and
+  shown inside the S2D section: a job that ended simply vanished and the page then said "no repair running". The
+  dashboard's *Needs attention* listed hosts and VMs but none of the cluster problems the monitor already computes. With
+  every node agent disconnected the monitor skipped the cluster and its stored status stayed "Ok".
+- **Decision**:
+  - *Agent* (0.9.4, no protocol change: additional result fields): storage jobs are read on every cluster, completed
+    ones included, one entry per job id, with description, start time, error text and the virtual disks the job works on
+    (`Get-StorageJob -VirtualDisk`, asked only while jobs are listed). A failure of that read is reported as
+    `storageJobs: ...` in `errors`.
+  - *Gateway*: `StorageJobTracker` (memory) keeps the jobs seen for each cluster. A job listed as Completed is
+    *completed*; Killed / Terminated / Exception is *failed*; a job that was going on and is **no longer listed** is
+    *not reported, outcome not verified* — never completed. A report whose storage section could not be read changes
+    nothing. Ended jobs are kept 24 hours (50 at most); after a gateway restart the list starts from the stored report.
+    Returned as `storageJobs` by `GET /clusters/{id}` and `/status`.
+  - *Rules*: a running job is a Warning (`storage_repair_running`, or `..._no_progress` when Windows gives no
+    percentage: no number is made up); a failed job is Critical (`storage_job_failed`); a suspended one a Warning;
+    completed jobs are not problems; jobs count also without S2D. Storage Replica: a copy in progress is a Warning, a
+    replication that is suspended or in error is Critical (`replication_stopped`).
+  - *UI*: the Storage tab of the cluster has its own section *Storage jobs of Windows* (state, progress bar only with a
+    reported percentage, bytes, elapsed time, virtual disks; ended and no-longer-reported jobs below), separate from the
+    jobs of the portal, and reads the cluster again every 20 s while jobs are going on, 60 s otherwise.
+  - *Dashboard*: *Needs attention* includes the problems of every cluster whose status the user may read, with cluster
+    name, text and severity, most serious first; each opens the tab of the cluster page that explains it; a problem is
+    listed once and the "agent not connected" of a node already listed as an offline host is not repeated. The monitor
+    tells open pages to reload when a cluster's level changes.
+  - *Never healthy by default*: when no node agent is connected, or the stored read is older than three monitor
+    intervals (at least 10 minutes), the cluster carries an Unknown problem (`no_node_connected`, `status_stale`) in the
+    list, the tree, the dashboard and the stored view of the page.
+- **Consequences**: the tracker is in memory: outcomes of ended jobs are lost at a gateway restart (running jobs come
+  back with the next read). Agents before 0.9.4 keep the old behaviour (S2D only, no ids: jobs are matched by name).
+  Verified with the test double; what Windows really returns for each job state and how long it keeps ended jobs is
+  real-host plan V87.
+- **Alternatives**: a database table for storage jobs (history of something the host itself forgets in minutes); showing
+  vanished jobs as completed (the data may not be resilient).
+
 ## ADR-042 Portal updates from the GitHub releases, installed by a SYSTEM updater task
 - **Context**: updating the gateway meant copying the new setup to the server and running it there. Administrators want
   to see from the portal that a new release exists and install it from there, like the agent updates (ADR-029). The

@@ -398,6 +398,28 @@ public sealed class FolderLimitsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, (await tenant.PostAsync($"/api/v1/hosts/{h1}/files/upload?groupId={folder}&folder={Uri.EscapeDataString(@"D:\Tenants\A\iso")}&name=x.iso",
             new ByteArrayContent("data"u8.ToArray()))).StatusCode);
         Assert.True(_app.Agent.Files.ContainsKey(@"D:\Tenants\A\iso\x.iso"));
+
+        // 0.9.4: rename and delete stay inside the storage paths of the folder; a storage path itself is never touched.
+        Assert.Equal("storage_not_allowed", await (await tenant.PostJsonAsync($"/api/v1/hosts/{h1}/files/delete",
+            new { path = @"D:\Tenants\B\secret.txt", confirmName = "secret.txt", groupId = folder })).CodeAsync());
+        Assert.Equal("storage_not_allowed", await (await tenant.PostJsonAsync($"/api/v1/hosts/{h1}/files/rename",
+            new { path = @"D:\Tenants\B", newName = "Mine", groupId = folder })).CodeAsync());
+        Assert.Equal("storage_not_allowed", await (await tenant.PostJsonAsync($"/api/v1/hosts/{h1}/files/rename",
+            new { path = @"D:\Tenants\A", newName = "Mine", groupId = folder })).CodeAsync());
+        Assert.Equal("storage_not_allowed", await (await tenant.PostJsonAsync($"/api/v1/hosts/{h1}/files/delete",
+            new { path = @"D:\Tenants\A", confirmName = "A", groupId = folder })).CodeAsync());
+        Assert.Equal(2, await AuditCountAsync("host.files.delete", AuditOutcome.Denied));
+        Assert.Equal(2, await AuditCountAsync("host.files.rename", AuditOutcome.Denied));
+        Assert.True(_app.Agent.Files.ContainsKey(@"D:\Tenants\B\secret.txt"));
+        Assert.True(_app.Agent.Folders.ContainsKey(@"D:\Tenants\A"));
+        Assert.Empty(_app.Agent.OperationsReceived(HvOperation.DeletePath));
+        Assert.Empty(_app.Agent.OperationsReceived(HvOperation.RenamePath));
+        // Without the folder scope the tenant has no access to the host at all.
+        Assert.Equal(HttpStatusCode.NotFound, (await tenant.PostJsonAsync($"/api/v1/hosts/{h1}/files/delete",
+            new { path = @"D:\Tenants\A\readme.txt", confirmName = "readme.txt" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await tenant.PostJsonAsync($"/api/v1/hosts/{h1}/files/delete",
+            new { path = @"D:\Tenants\A\readme.txt", confirmName = "readme.txt", groupId = folder })).StatusCode);
+        Assert.False(_app.Agent.Files.ContainsKey(@"D:\Tenants\A\readme.txt"));
     }
 
     // ------------------------------------------------------------------ users

@@ -60,6 +60,8 @@ switch (verb)
 var builder = Host.CreateApplicationBuilder(args.Length > 0 && args[0] == "run" ? args[1..] : args);
 builder.Services.AddWindowsService(o => o.ServiceName = "HvPortalAgent");
 builder.Services.Configure<AgentRuntimeOptions>(builder.Configuration.GetSection("Agent"));
+// How many PowerShell processes run at once per host (Agent:Operations:MaxConcurrent / ReservedForShort), before any runner exists.
+OperationLimits.Configure(builder.Configuration.GetValue<int?>("Agent:Operations:MaxConcurrent"), builder.Configuration.GetValue<int?>("Agent:Operations:ReservedForShort"));
 builder.Services.AddSingleton(store);
 builder.Services.AddSingleton<IHyperVHost, WmiHyperVHost>();
 builder.Services.AddSingleton<PowerShellOperationRunner>();

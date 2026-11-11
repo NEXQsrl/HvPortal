@@ -488,6 +488,7 @@ function StorageGuide() {
           <Step n={1} id="files-1" title={t('topic.sto.f1.title')}><Text>{t('topic.sto.f1.help')}</Text><Needs perms={['host.files.read']} /></Step>
           <Step n={2} id="files-2" title={t('files.download')}><Text>{t('topic.sto.f2.help')}</Text></Step>
           <Step n={3} id="files-3" title={t('files.upload')}><Text>{t('topic.sto.f3.help')}</Text><Needs perms={['host.files.write']} /></Step>
+          <Step n={4} id="files-4" title={t('topic.sto.f4.title')}><Text>{t('topic.sto.f4.help')}</Text><Needs perms={['host.files.manage']} /></Step>
         </Steps>
       </Block>
       <Block title={t('topic.h.notes')}>

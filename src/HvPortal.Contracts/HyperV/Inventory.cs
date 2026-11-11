@@ -17,6 +17,42 @@ public enum HyperVAccessStatus
     Error,
 }
 
+/// <summary>
+/// Why the agent could not talk to Windows management on a host (0.9.4). The agent puts the code at the start of
+/// <c>HostInventory.AccessMessage</c> ("wmi_timeout: ...") followed by what to check and, in square brackets, the original
+/// error; the portal shows an explanation by code and keeps the original text. Messages of older agents have no code.
+/// </summary>
+public static class WmiProblemCodes
+{
+    /// <summary>The host does not answer on the network (RPC server unavailable, name not resolved, firewall).</summary>
+    public const string Unreachable = "wmi_unreachable";
+    /// <summary>The host answers but WMI or its Hyper-V provider is not available (service stopped, namespace or class missing, provider failed to load).</summary>
+    public const string ProviderUnavailable = "wmi_provider_unavailable";
+    /// <summary>No answer within the time allowed.</summary>
+    public const string Timeout = "wmi_timeout";
+    /// <summary>The credentials were refused (wrong user name or password, account locked, disabled or expired).</summary>
+    public const string Authentication = "wmi_authentication_failed";
+    /// <summary>The account is accepted but has no right to do this (not in Hyper-V Administrators, DCOM / WMI namespace permissions, UAC remote filter).</summary>
+    public const string AccessDenied = "wmi_access_denied";
+    /// <summary>WMI works; the Hyper-V management API itself returned an error.</summary>
+    public const string HyperV = "hyperv_error";
+    /// <summary>Any other WMI error.</summary>
+    public const string Other = "wmi_error";
+
+    public static readonly string[] All = [Unreachable, ProviderUnavailable, Timeout, Authentication, AccessDenied, HyperV, Other];
+
+    /// <summary>The code at the start of a message ("code: text"), or null when the message has none of the known codes.</summary>
+    public static string? CodeOf(string? message)
+    {
+        if (message is null)
+        {
+            return null;
+        }
+        var colon = message.IndexOf(':', StringComparison.Ordinal);
+        return colon > 0 && All.Contains(message[..colon], StringComparer.Ordinal) ? message[..colon] : null;
+    }
+}
+
 public sealed record HostFacts
 {
     public required string ComputerName { get; init; }

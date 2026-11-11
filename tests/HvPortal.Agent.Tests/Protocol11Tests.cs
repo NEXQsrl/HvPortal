@@ -34,7 +34,7 @@ public sealed class Protocol11Tests
     [Fact]
     public void Cluster_operations_need_protocol_11_and_only_the_changes_are_mutating()
     {
-        Assert.Equal(12, AgentProtocol.Version);
+        Assert.Equal(13, AgentProtocol.Version);
         Assert.Equal("0.9.0", AgentProtocol.MinimumAgentFor(11));
         Assert.Equal("0.8.0", AgentProtocol.MinimumAgentFor(10));
         foreach (var op in new[] { HvOperation.GetClusterStatus, HvOperation.SetClusterNodeMaintenance, HvOperation.MoveClusterVm })

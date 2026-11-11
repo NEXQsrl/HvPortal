@@ -9,8 +9,8 @@ import { Switch } from '@/components/ui/switch';
 import { useI18n, type TKey } from '@/i18n';
 import { formatBytes } from '@/lib/format';
 import { useLoad } from '@/lib/hooks';
-import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { usePortalUpdate } from './PortalUpdateOverlay';
 
 export interface PortalUpdateStatus {
   current: string;
@@ -28,6 +28,8 @@ export interface PortalUpdateStatus {
   installRequestedAt: string | null;
   installRequestedVersion: string | null;
   lastResult: { timeUtc: string | null; status: string | null; version: string | null; message: string | null } | null;
+  /** What became of the last update asked from the portal: none | pending | installed (the running version is the requested one) | failed. */
+  install: { outcome: 'none' | 'pending' | 'installed' | 'failed'; version: string | null; requestedAt: string | null; message: string | null };
 }
 
 /**
@@ -41,6 +43,7 @@ export function PortalUpdatesSection() {
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [confirm, setConfirm] = useState(false);
+  const updater = usePortalUpdate();
   const s = data.data;
 
   const check = async () => {
@@ -73,7 +76,7 @@ export function PortalUpdatesSection() {
               <span className="text-xs [overflow-wrap:anywhere]">{s.lastResult.message}</span>
             </Notice>
           )}
-          {s.installRequestedVersion && s.installRequestedVersion !== s.current && (!s.lastResult?.timeUtc || (s.installRequestedAt && s.lastResult.timeUtc < s.installRequestedAt)) && (
+          {s.install.outcome === 'pending' && s.installRequestedVersion && (
             <Notice kind="info">{t('pupd.inProgress', { version: s.installRequestedVersion, at: fmtDate(s.installRequestedAt) })}</Notice>
           )}
           {s.updateAvailable && s.latest && (
@@ -98,9 +101,11 @@ export function PortalUpdatesSection() {
       {confirm && s?.latest && (
         <ActionDialog title={t('pupd.confirmTitle', { version: s.latest.version })} confirmLabel={t('pupd.install')} onClose={() => setConfirm(false)}
           onConfirm={async () => {
-            await post('/api/v1/system/updates/install', { version: s.latest!.version });
-            toast.success(t('pupd.started'), t('pupd.startedHelp'));
-            data.reload();
+            // The dialog closes at once; the waiting page takes over (download, check, install, restart, version check).
+            const version = s.latest!.version;
+            setError(null);
+            void updater.begin(version, s.current, () => post('/api/v1/system/updates/install', { version }))
+              .then(() => data.reload(), (e: unknown) => setError(e));
           }}>
           <ul className="list-disc space-y-1 pl-4 text-sm">
             <li>{t('pupd.step1', { size: formatBytes(s.latest.gatewaySetup?.size) })}</li>

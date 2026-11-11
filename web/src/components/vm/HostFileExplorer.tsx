@@ -1,8 +1,9 @@
-import { ArrowUp, ChevronRight, Download, File as FileIcon, Folder, FolderOpen, FolderPlus, HardDrive, RefreshCw, Upload, X } from 'lucide-react';
+import { ArrowUp, ChevronRight, Download, File as FileIcon, Folder, FolderOpen, FolderPlus, HardDrive, Pencil, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { ApiError, get, post, uploadFile } from '@/api/client';
 import type { FolderEntry, FolderListing } from '@/api/ops-types';
 import type { Host } from '@/api/types';
+import { KebabMenu, WithContextMenu, type Action } from '@/components/actions';
 import { ErrorAlert, Notice } from '@/components/common';
 import { ActionDialog, Field } from '@/components/dialogs';
 import { Button } from '@/components/ui/button';
@@ -41,6 +42,8 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
   const [conflict, setConflict] = useState<{ file: File; folder: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState<ExplorerEntry | null>(null);
+  const [deleting, setDeleting] = useState<ExplorerEntry | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -87,6 +90,16 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
     e.preventDefault();
     setDragOver(false);
     pick(e.dataTransfer.files);
+  };
+
+  // Rename / delete of a row (agent 0.9.4, permission host.files.manage: the server decides and says why it refuses).
+  // Virtual disks, checkpoints and VM configuration files are never offered: they belong to Hyper-V.
+  const entryActions = (e: ExplorerEntry): Action[] => {
+    const locked = isProtectedName(e.name);
+    return [
+      { key: 'rename', label: t('files.rename'), icon: Pencil, disabled: locked, hint: locked ? t('files.protected') : undefined, onSelect: () => setRenaming(e) },
+      { key: 'delete', label: t('files.delete'), icon: Trash2, danger: true, disabled: locked, hint: locked ? t('files.protected') : undefined, onSelect: () => setDeleting(e) },
+    ];
   };
 
   const crumbs = path ? path.replace(/\\$/, '').split('\\').map((seg, i, all) => ({ name: i === 0 ? seg + '\\' : seg, path: i === 0 ? seg + '\\' : all.slice(0, i + 1).join('\\') })) : [];
@@ -144,29 +157,42 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
                 <TableHead>{t('files.name')}</TableHead>
                 <TableHead className="w-28 text-right">{t('host.size')}</TableHead>
                 <TableHead className="hidden w-44 md:table-cell">{t('files.modified')}</TableHead>
-                <TableHead className="w-12"><span className="sr-only">{t('files.download')}</span></TableHead>
+                <TableHead className="w-24"><span className="sr-only">{t('common.actions')}</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {data.folders.map((f) => (
-                <TableRow key={f.path} className="group cursor-pointer" onClick={() => setPath(f.path)}
-                  tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') setPath(f.path); }} aria-label={t('picker.open', { name: f.name })}>
+                <WithContextMenu key={f.path} label={f.name} items={canUpload ? entryActions({ ...f, folder: true }) : []}>
+                <TableRow className="group cursor-pointer" aria-label={t('picker.open', { name: f.name })} tabIndex={0}
+                  onClick={(e) => { if (!(e.target as HTMLElement).closest('button, a, [role=menuitem]')) setPath(f.path); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) setPath(f.path); }}>
                   <TableCell><span className="flex items-center gap-2"><Folder className="size-4 text-amber-500 group-hover:hidden" /><FolderOpen className="hidden size-4 text-amber-500 group-hover:block" />{f.name}</span></TableCell>
                   <TableCell /><TableCell className="hidden md:table-cell" />
-                  <TableCell className="text-right"><ChevronRight className="ml-auto size-4 text-muted-foreground" /></TableCell>
+                  <TableCell className="text-right">
+                    <span className="flex items-center justify-end gap-1">
+                      {canUpload && <KebabMenu label={t('files.actionsOf', { name: f.name })} items={entryActions({ ...f, folder: true })} />}
+                      <ChevronRight className="size-4 text-muted-foreground" />
+                    </span>
+                  </TableCell>
                 </TableRow>
+                </WithContextMenu>
               ))}
               {data.files.map((f) => (
-                <TableRow key={f.path}>
+                <WithContextMenu key={f.path} label={f.name} items={canUpload ? entryActions({ ...f, folder: false }) : []}>
+                <TableRow>
                   <TableCell><span className="flex min-w-0 items-center gap-2"><FileIcon className="size-4 shrink-0 text-muted-foreground" /><span className="truncate">{f.name}</span></span></TableCell>
                   <TableCell className="text-right text-xs whitespace-nowrap tabular">{formatBytes(f.sizeBytes)}</TableCell>
                   <TableCell className="hidden text-xs whitespace-nowrap tabular md:table-cell">{fmtDate(f.modifiedUtc)}</TableCell>
                   <TableCell className="text-right">
-                    <Button asChild size="icon-sm" variant="ghost" aria-label={t('files.downloadName', { name: f.name })} title={t('files.download')}>
-                      <a href={`/api/v1/hosts/${host.id}/files/download?path=${encodeURIComponent(f.path)}${scope}`} download={f.name}><Download /></a>
-                    </Button>
+                    <span className="flex items-center justify-end gap-1">
+                      {canUpload && <KebabMenu label={t('files.actionsOf', { name: f.name })} items={entryActions({ ...f, folder: false })} />}
+                      <Button asChild size="icon-sm" variant="ghost" aria-label={t('files.downloadName', { name: f.name })} title={t('files.download')}>
+                        <a href={`/api/v1/hosts/${host.id}/files/download?path=${encodeURIComponent(f.path)}${scope}`} download={f.name}><Download /></a>
+                      </Button>
+                    </span>
                   </TableCell>
                 </TableRow>
+                </WithContextMenu>
               ))}
               {data.folders.length + data.files.length === 0 && (
                 <TableRow><TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">{t('files.empty')}</TableCell></TableRow>
@@ -211,11 +237,62 @@ export function HostFileExplorer({ host, groupId, readOnly }: { host: Pick<Host,
           </DialogContent>
         </Dialog>
       )}
+      {renaming && (
+        <RenameEntryDialog hostId={host.id} entry={renaming} groupId={groupId} onClose={() => setRenaming(null)}
+          onDone={(name) => { toast.success(t('files.renamed', { name: renaming.name, to: name })); setTick((x) => x + 1); }} />
+      )}
+      {deleting && (
+        <DeleteEntryDialog hostId={host.id} entry={deleting} groupId={groupId} onClose={() => setDeleting(null)}
+          onDone={() => { toast.success(t('files.deleted', { name: deleting.name })); setTick((x) => x + 1); }} />
+      )}
       {creating && data?.path && (
         <NewFolderDialog hostId={host.id} parent={data.path} groupId={groupId} onClose={() => setCreating(false)}
           onCreated={(f) => { setCreating(false); toast.success(t('nfold.created', { name: f.name })); setPath(f.path); }} />
       )}
     </div>
+  );
+}
+
+interface ExplorerEntry { name: string; path: string; folder: boolean }
+
+// Same list as ProtectedHostFiles (Contracts): the server refuses these whatever the page shows.
+const PROTECTED = ['.vhd', '.vhdx', '.avhd', '.avhdx', '.vhds', '.vhdpmem', '.vmcx', '.vmrs', '.vmgs', '.vsv', '.vmtx', '.hrl', '.rct', '.mrt'];
+const isProtectedName = (name: string) => PROTECTED.some((x) => name.toLowerCase().endsWith(x));
+
+/** Rename a file or folder in place (POST /hosts/{id}/files/rename). The server explains every refusal. */
+function RenameEntryDialog({ hostId, entry, groupId, onClose, onDone }: { hostId: string; entry: ExplorerEntry; groupId?: string; onClose: () => void; onDone: (name: string) => void }) {
+  const { t } = useI18n();
+  const [name, setName] = useState(entry.name);
+  const n = name.trim();
+  const ok = validFolderName(n) && n !== entry.name && !isProtectedName(n);
+  return (
+    <ActionDialog title={t(entry.folder ? 'files.renameFolderTitle' : 'files.renameFileTitle', { name: entry.name })} confirmLabel={t('files.rename')} disabled={!ok} onClose={onClose}
+      onConfirm={async () => { await post(`/api/v1/hosts/${hostId}/files/rename`, { path: entry.path, newName: n, groupId }); onDone(n); }}>
+      <Field label={t('files.newName')} htmlFor="frename-name" hint={entry.path}
+        error={n && n !== entry.name && !ok ? t(isProtectedName(n) ? 'files.protected' : 'nfold.invalid') : undefined}>
+        <Input id="frename-name" value={name} maxLength={200} autoFocus onChange={(e) => setName(e.target.value)} aria-invalid={!!n && n !== entry.name && !ok} />
+      </Field>
+      {entry.folder && <p className="text-xs text-muted-foreground">{t('files.renameFolderHelp')}</p>}
+    </ActionDialog>
+  );
+}
+
+/** Delete a file or an empty folder (POST /hosts/{id}/files/delete): explicit confirmation, nothing recursive. */
+function DeleteEntryDialog({ hostId, entry, groupId, onClose, onDone }: { hostId: string; entry: ExplorerEntry; groupId?: string; onClose: () => void; onDone: () => void }) {
+  const { t } = useI18n();
+  const [confirmed, setConfirmed] = useState(false);
+  return (
+    <ActionDialog title={t(entry.folder ? 'files.deleteFolderTitle' : 'files.deleteFileTitle', { name: entry.name })} confirmLabel={t('files.delete')} danger disabled={!confirmed} onClose={onClose}
+      onConfirm={async () => { await post(`/api/v1/hosts/${hostId}/files/delete`, { path: entry.path, confirmName: entry.name, groupId }); onDone(); }}>
+      <Notice kind="danger" title={t('files.deleteWarning')}>
+        <span className="font-mono text-xs [overflow-wrap:anywhere]">{entry.path}</span>
+      </Notice>
+      <p className="text-sm text-muted-foreground">{t(entry.folder ? 'files.deleteFolderHelp' : 'files.deleteFileHelp')}</p>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-0.5" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+        <span>{t('files.deleteConfirm', { name: entry.name })}</span>
+      </label>
+    </ActionDialog>
   );
 }
 

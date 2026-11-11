@@ -81,6 +81,8 @@ export interface Host {
   lastInventoryAt: string | null;
   access: 'Ok' | 'NotInstalled' | 'ServiceStopped' | 'AccessDenied' | 'Error' | null;
   accessMessage: string | null;
+  /** Agent 0.9.4+: why Windows management could not be reached (wmi_unreachable, wmi_timeout, ...), null when not known. */
+  accessCode?: string | null;
   partial: boolean;
   warnings: string[];
   agentVersion: string | null;

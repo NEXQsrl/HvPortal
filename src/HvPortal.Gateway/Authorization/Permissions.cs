@@ -36,6 +36,8 @@ public static class Permissions
     public const string HostsMaintenance = "hosts.maintenance";
     public const string HostFilesRead = "host.files.read";
     public const string HostFilesWrite = "host.files.write";
+    /// <summary>Rename and delete in the file explorer (0.9.4): a permission of its own, not implied by upload.</summary>
+    public const string HostFilesManage = "host.files.manage";
     public const string UsersManage = "users.manage";
     public const string RolesManage = "roles.manage";
     public const string SettingsManage = "settings.manage";
@@ -79,6 +81,7 @@ public static class Permissions
         new(HostsMaintenance, "Put nodes of a failover cluster in maintenance (their VMs are moved to the other nodes) and bring them back", HostScopes, true),
         new(HostFilesRead, "Browse host folders and download files (system folders excluded); on a folder: only its storage paths", HostOrFolder, true),
         new(HostFilesWrite, "Upload files to host folders (system folders excluded); on a folder: only its storage paths", HostOrFolder, true),
+        new(HostFilesManage, "Rename files and folders and delete files and empty folders in host folders (never virtual disks, checkpoints or VM configuration files); on a folder: only its storage paths", HostOrFolder, true),
         new(UsersManage, "Manage users", GlobalOnly, true, Privileged: true),
         new(RolesManage, "Manage roles and role assignments", GlobalOnly, true, Privileged: true),
         new(SettingsManage, "Change security settings", GlobalOnly, true, Privileged: true),
@@ -117,7 +120,8 @@ public static class BuiltInRoles
             [Authorization.Permissions.InventoryRead, Authorization.Permissions.InventoryAnnotate, Authorization.Permissions.VmPower, Authorization.Permissions.VmPowerForce,
              Authorization.Permissions.VmConsole, Authorization.Permissions.VmCreate, Authorization.Permissions.VmConfigCompute, Authorization.Permissions.VmConfigStorage,
              Authorization.Permissions.VmConfigNetwork, Authorization.Permissions.VmCheckpointCreate, Authorization.Permissions.VmCheckpointApply,
-             Authorization.Permissions.VmDelete, Authorization.Permissions.NetworkManage, Authorization.Permissions.HostFilesRead, Authorization.Permissions.HostFilesWrite]),
+             Authorization.Permissions.VmDelete, Authorization.Permissions.NetworkManage, Authorization.Permissions.HostFilesRead, Authorization.Permissions.HostFilesWrite,
+             Authorization.Permissions.HostFilesManage]),
         new(BackupOperator, "Backup operator", "Back up and restore VMs, manage repositories and backup jobs",
             [Authorization.Permissions.InventoryRead, Authorization.Permissions.BackupRun, Authorization.Permissions.BackupRestore,
              Authorization.Permissions.BackupManage, Authorization.Permissions.JobsReadAll,

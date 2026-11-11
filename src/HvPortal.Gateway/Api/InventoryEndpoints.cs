@@ -62,6 +62,8 @@ public static class InventoryEndpoints
             h.LastInventoryAt,
             access = h.Access?.ToString(),
             h.AccessMessage,
+            // Agent 0.9.4+: why Windows management could not be reached (WmiProblemCodes), when the agent could tell.
+            accessCode = WmiProblemCodes.CodeOf(h.AccessMessage),
             partial = h.InventoryPartial,
             warnings = h.InventoryWarningsJson is null ? [] : JsonSerializer.Deserialize<string[]>(h.InventoryWarningsJson),
             h.AgentVersion,

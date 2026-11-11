@@ -121,6 +121,19 @@ Domain Admin is never required. Workgroup hosts are supported (no Kerberos/WinRM
   again when the job runs; refusals are audited. Limits are set with `groups.manage` + `hosts.manage`. Quotas bind
   administrators too. File paths of a group user are checked by prefix against the group's storage paths after the
   usual normalization (no `..`, no links: the agent refuses reparse points).
+- **Rename and delete in the file explorer** (ADR-045, 0.9.4): a permission of its own, `host.files.manage` (not implied
+  by `host.files.write`); on a group only strictly inside its storage paths. The gateway refuses, before the agent is
+  asked, virtual disks / checkpoints / VM configuration files (by name), a storage path of the group itself, and any
+  folder that is or contains the template library, an ISO library, the backup staging folder or the folder of a
+  registered VM (from its own records, never from the client). The agent checks the real file system again: allowed
+  storage folders, no link on the way or below a renamed folder, no hidden or system entry, no Hyper-V file inside a
+  renamed folder. Delete is never recursive and needs the name of the entry repeated in the request. Every success,
+  failure and refusal is audited.
+- **Storage jobs and cluster problems** (ADR-043): read-only. The problems of a cluster reach the dashboard only of who
+  holds `inventory.read` on the cluster; others get neither its status nor its problems.
+- **Update waiting page** (ADR-044): reads the version from the anonymous `/auth/state` (already public on the sign-in
+  page) and the updater's result with the normal session; it stores no credential in the browser, only the two version
+  numbers and timestamps of the run. The download, SHA-256, signature and publisher checks of ADR-042 are unchanged.
 - **Deleting a user** (`users.manage` + re-auth, typed name): sessions, MFA secrets, recovery codes, pending tokens and
   role assignments are removed; the audit log keeps the past actions; queued jobs of the user fail with
   `authorization_revoked`. Not allowed on yourself, on a more privileged user, on the last platform administrator.

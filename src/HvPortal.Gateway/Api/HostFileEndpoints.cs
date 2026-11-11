@@ -29,9 +29,163 @@ public static class HostFileEndpoints
         g.MapGet("/download", DownloadAsync);
         g.MapPost("/upload", UploadAsync);
         g.MapPost("/folders", NewFolderAsync);
+        g.MapPost("/rename", RenameAsync);
+        g.MapPost("/delete", DeleteAsync);
     }
 
     public sealed record NewFolderBody(string? Parent, string? Name, Guid? GroupId);
+    public sealed record RenameBody(string? Path, string? NewName, Guid? GroupId);
+    /// <summary><see cref="ConfirmName"/>: the name of the file or folder, typed or sent again by the client: the explicit confirmation.</summary>
+    public sealed record DeleteBody(string? Path, string? ConfirmName, Guid? GroupId);
+
+    private const string AgentTooOld = "Renaming and deleting files needs agent 0.9.4 or later on this host. Update the agent.";
+
+    /// <summary>
+    /// Protocol 13 (0.9.4): rename a file or folder in place. Permission <c>host.files.manage</c> on the host, or on a VM
+    /// folder within its storage paths. Refused for Hyper-V files (virtual disks, checkpoints, VM configuration), for
+    /// folders that contain them (the agent looks) and for folders the portal itself uses on this host.
+    /// </summary>
+    private static async Task<IResult> RenameAsync(Guid id, RenameBody body, HttpContext http, PortalDbContext db, AccessEvaluator access,
+        IAgentDispatcher agents, GroupPolicyService policies)
+    {
+        const string action = "host.files.rename";
+        var (error, roots) = await CheckAsync(id, body.GroupId, Permissions.HostFilesManage, action, http, db, access, agents, policies);
+        if (error is not null)
+        {
+            return error;
+        }
+        if (agents.ProtocolVersionOf(id) < 13)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", AgentTooOld);
+        }
+        var request = new RenamePathRequest(string.IsNullOrWhiteSpace(body.Path) ? "" : HostPaths.Normalize(body.Path), body.NewName?.Trim() ?? "");
+        if (await RefuseEntryAsync(http, db, action, id, roots, request.Path, OperationValidation.Validate(request), new { request.Path, request.NewName }) is { } refused)
+        {
+            return refused;
+        }
+        var (outcome, failed) = await SendAsync(agents, id, HvOperation.RenamePath, request, http.RequestAborted);
+        if (failed is not null)
+        {
+            await http.WriteAuditAsync(action, AuditOutcome.Failure, "host", id.ToString("D"), new { request.Path, request.NewName, reason = Code(failed) });
+            return failed;
+        }
+        var result = HvOperations.FromElement<PathChangeResult>(outcome!.Result);
+        await http.WriteAuditAsync(action, resourceType: "host", resourceId: id.ToString("D"),
+            details: new { request.Path, request.NewName, newPath = result?.NewPath, folder = result?.IsFolder, body.GroupId });
+        return Results.Ok(outcome.Result);
+    }
+
+    /// <summary>
+    /// Protocol 13 (0.9.4): delete a file, or a folder that is empty (never recursive). Same permission and refusals as
+    /// rename; the request must repeat the name of the entry (<see cref="DeleteBody.ConfirmName"/>).
+    /// </summary>
+    private static async Task<IResult> DeleteAsync(Guid id, DeleteBody body, HttpContext http, PortalDbContext db, AccessEvaluator access,
+        IAgentDispatcher agents, GroupPolicyService policies)
+    {
+        const string action = "host.files.delete";
+        var (error, roots) = await CheckAsync(id, body.GroupId, Permissions.HostFilesManage, action, http, db, access, agents, policies);
+        if (error is not null)
+        {
+            return error;
+        }
+        if (agents.ProtocolVersionOf(id) < 13)
+        {
+            return ApiSupport.Error(StatusCodes.Status501NotImplemented, "agent_outdated", AgentTooOld);
+        }
+        var request = new DeletePathRequest(string.IsNullOrWhiteSpace(body.Path) ? "" : HostPaths.Normalize(body.Path));
+        if (await RefuseEntryAsync(http, db, action, id, roots, request.Path, OperationValidation.Validate(request), new { request.Path }) is { } refused)
+        {
+            return refused;
+        }
+        var name = request.Path[(request.Path.LastIndexOf('\\') + 1)..];
+        if (!string.Equals(body.ConfirmName?.Trim(), name, StringComparison.OrdinalIgnoreCase))
+        {
+            return ApiSupport.BadRequest("confirmation_required", "Confirm the deletion by sending the name of the file or folder (confirmName).");
+        }
+        var (outcome, failed) = await SendAsync(agents, id, HvOperation.DeletePath, request, http.RequestAborted);
+        if (failed is not null)
+        {
+            await http.WriteAuditAsync(action, AuditOutcome.Failure, "host", id.ToString("D"), new { request.Path, reason = Code(failed) });
+            return failed;
+        }
+        var result = HvOperations.FromElement<PathChangeResult>(outcome!.Result);
+        await http.WriteAuditAsync(action, resourceType: "host", resourceId: id.ToString("D"), details: new { request.Path, folder = result?.IsFolder, body.GroupId });
+        return Results.Ok(outcome.Result);
+    }
+
+    private static string? Code(IResult result) =>
+        result is Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult p && p.ProblemDetails.Extensions.TryGetValue("code", out var c) ? c?.ToString() : null;
+
+    /// <summary>
+    /// Checks shared by rename and delete, before anything is sent to the agent: valid and not a Hyper-V file, strictly
+    /// inside the storage paths of the folder (folder scope: a storage path itself is not touched), and not a folder the
+    /// portal uses on this host (template library, ISO libraries, backup staging folder, folders of registered VMs).
+    /// Every refusal on a rule of the portal is audited as denied.
+    /// </summary>
+    private static async Task<IResult?> RefuseEntryAsync(HttpContext http, PortalDbContext db, string action, Guid hostId, List<string>? roots, string path,
+        string? invalid, object details)
+    {
+        if (invalid is not null)
+        {
+            if (invalid is "protected_file" or "location_not_allowed")
+            {
+                await http.WriteAuditAsync(action, AuditOutcome.Denied, "host", hostId.ToString("D"), new { details, reason = invalid });
+            }
+            return invalid == "protected_file"
+                ? ApiSupport.Conflict(invalid, "Virtual disks, checkpoints and VM configuration files belong to Hyper-V: they are removed with the VM, checkpoint, template or restore point they belong to.")
+                : ApiSupport.BadRequest(invalid);
+        }
+        if (await OutsideRootsAsync(http, action, hostId, roots, path) is { } outside)
+        {
+            return outside;
+        }
+        if (roots is not null && roots.Any(r => HostPaths.Normalize(r).TrimEnd('\\').Equals(path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)))
+        {
+            await http.WriteAuditAsync(action, AuditOutcome.Denied, "host", hostId.ToString("D"), new { details, reason = "a storage path of the folder" });
+            return ApiSupport.Forbidden("storage_not_allowed", "A storage path of the folder cannot be renamed or deleted.");
+        }
+        var host = await db.Hosts.AsNoTracking().FirstAsync(h => h.Id == hostId, http.RequestAborted);
+        if (await UsedByPortalAsync(db, host, path, http.RequestAborted) is { } usedBy)
+        {
+            await http.WriteAuditAsync(action, AuditOutcome.Denied, "host", hostId.ToString("D"), new { details, reason = "path_in_use", usedBy });
+            return ApiSupport.Conflict("path_in_use", $"This is, or contains, {usedBy}: it cannot be renamed or deleted from the file explorer.");
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// What the portal knows to be at or below <paramref name="path"/> on the host, from its own records (never from the
+    /// client): the template library, an ISO library, the backup staging folder, the folder of a registered VM. Null when
+    /// nothing is. The agent checks the real file system as well (Hyper-V files inside a folder).
+    /// </summary>
+    internal static async Task<string?> UsedByPortalAsync(PortalDbContext db, ManagedHost host, string path, CancellationToken ct)
+    {
+        var target = HostPaths.Normalize(path).TrimEnd('\\');
+        bool AtOrBelow(string? candidate)
+        {
+            if (string.IsNullOrWhiteSpace(candidate) || candidate.Length < 3)
+            {
+                return false;
+            }
+            var c = HostPaths.Normalize(candidate).TrimEnd('\\');
+            return c.Equals(target, StringComparison.OrdinalIgnoreCase) || c.StartsWith(target + @"\", StringComparison.OrdinalIgnoreCase);
+        }
+        if (AtOrBelow(host.TemplateLibraryPath))
+        {
+            return "the template library of the host";
+        }
+        if (AtOrBelow(host.BackupStagingPath))
+        {
+            return "the backup staging folder of the host";
+        }
+        if (Jobs.OperationPolicy.IsoRoots(host).Any(AtOrBelow))
+        {
+            return "an ISO library of the host";
+        }
+        var vms = await db.VirtualMachines.AsNoTracking().Where(v => v.HostId == host.Id && !v.IsMissing && v.ConfigurationPath != null)
+            .Select(v => new { v.Name, v.ConfigurationPath }).ToListAsync(ct);
+        return vms.FirstOrDefault(v => AtOrBelow(v.ConfigurationPath)) is { } vm ? $"the folder of the virtual machine {vm.Name}" : null;
+    }
 
     /// <summary>Protocol 9: a new folder inside a folder the user may write to (and inside the host's allowed storage folders).</summary>
     private static async Task<IResult> NewFolderAsync(Guid id, NewFolderBody body, HttpContext http, PortalDbContext db, AccessEvaluator access,
@@ -164,6 +318,8 @@ public static class HostFileEndpoints
         {
             "file_exists" => StatusCodes.Status409Conflict,
             "file_in_use" => StatusCodes.Status409Conflict,
+            "protected_file" or "protected_content" or "folder_not_empty" or "folder_too_large" => StatusCodes.Status409Conflict,
+            "same_name" or "path_too_long" => StatusCodes.Status400BadRequest,
             "not_found" => StatusCodes.Status404NotFound,
             "invalid_path" or "invalid_file_name" or "location_not_allowed" or "invalid_size" or "invalid_range" => StatusCodes.Status400BadRequest,
             "insufficient_space" => StatusCodes.Status507InsufficientStorage,

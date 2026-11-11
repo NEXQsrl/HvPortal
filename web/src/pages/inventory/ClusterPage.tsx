@@ -1,4 +1,4 @@
-import { ArrowRightLeft, Boxes, ChevronDown, Cpu, Database, HardDrive, MemoryStick, Plus, RefreshCw, Scale, Server, ShieldCheck, Wrench } from 'lucide-react';
+import { ArrowRightLeft, Boxes, ChevronDown, Cpu, Database, HardDrive, MemoryStick, Plus, RefreshCw, Scale, Server, Wrench } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { get, newIdempotencyKey, post } from '@/api/client';
@@ -6,6 +6,7 @@ import type { ClusterDetail, ClusterNodeView, ClusterSharedVolumeStatus, Cluster
 import type { Accepted } from '@/api/ops-types';
 import { ActionsButton } from '@/components/actions';
 import { CopyButton, ErrorAlert, KeyValue, Loading, Meter, Notice, PageHeader, Section, StatCard, StatusBadge } from '@/components/common';
+import { ClusterStorageJobs, storageRefreshSeconds } from '@/components/infra/ClusterStorageJobs';
 import { HealthBadge } from '@/components/infra/HostHealth';
 import { useInventory } from '@/components/inventory/InventoryProvider';
 import { IssueList } from '@/components/ops/ClusterDialogs';
@@ -18,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { VmTable } from '@/components/vm/VmTable';
 import { useI18n, type TKey } from '@/i18n';
-import { formatBytes, formatDuration, percent } from '@/lib/format';
+import { formatBytes, percent } from '@/lib/format';
 import { useLive } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 
@@ -73,8 +74,18 @@ export function ClusterPage() {
   const reloadStored = useCallback(() => { void load(false); }, [load]);
   useLive(reloadStored, ['inventoryChanged'], 2000);
 
-  if (!data) return error ? <div className="p-4"><ErrorAlert error={error} /></div> : <Loading />;
   const tab: Tab = (TABS as readonly string[]).includes(params.get('tab') ?? '') ? (params.get('tab') as Tab) : 'summary';
+  // Storage tab: the cluster is read again by itself (storage jobs and their progress), faster while jobs are going on.
+  const refreshSeconds = storageRefreshSeconds(data?.storageJobs?.jobs ?? []);
+  const busy = useRef(false);
+  busy.current = reading;
+  useEffect(() => {
+    if (tab !== 'storage') return;
+    const h = window.setInterval(() => { if (!document.hidden && !busy.current) void load(true); }, refreshSeconds * 1000);
+    return () => window.clearInterval(h);
+  }, [tab, refreshSeconds, load]);
+
+  if (!data) return error ? <div className="p-4"><ErrorAlert error={error} /></div> : <Loading />;
   const status = data.status;
   const report = status.report;
   const nodeHosts = data.nodes.map((n) => n.hostId).filter((x): x is string => !!x);
@@ -315,6 +326,18 @@ function NodesTab({ data, onChanged }: { data: ClusterDetail; onChanged: () => v
   );
 }
 
+/** True when a version such as "0.9.3" (or "0.9.3+build") is lower than the given major.minor.patch. */
+function olderThan(version: string, min: [number, number, number]): boolean {
+  const parts = version.split(/[.+-]/).slice(0, 3).map((x) => Number.parseInt(x, 10));
+  if (parts.length < 3 || parts.some((x) => Number.isNaN(x))) return false;
+  for (let i = 0; i < 3; i++) {
+    const a = parts[i] ?? 0;
+    const b = min[i] ?? 0;
+    if (a !== b) return a < b;
+  }
+  return false;
+}
+
 function NotRead() {
   const { t } = useI18n();
   return <Notice kind="info">{t('cl.neverRead')}</Notice>;
@@ -357,6 +380,9 @@ function StorageTab({ report, data, onQueued }: { report: ClusterStatusReport | 
         </Table>
       </Section>
 
+      <ClusterStorageJobs jobs={data.storageJobs?.jobs ?? []} readable={data.storageJobs?.readable ?? false} hasReport
+        legacyAgent={data.nodes.some((n) => n.agentConnected && !!n.agentVersion && olderThan(n.agentVersion, [0, 9, 4]))} />
+
       {(report.replication ?? []).length > 0 && (
         <Section title={t('cl.sr.title')}>
           <Table>
@@ -368,7 +394,7 @@ function StorageTab({ report, data, onQueued }: { report: ClusterStatusReport | 
                   <TableCell className="font-medium">{r.name}<div className="text-xs text-muted-foreground">{r.replicationMode}</div></TableCell>
                   <TableCell className="text-sm">{r.isPrimary ? t('cl.sr.source') : t('cl.sr.destination')}</TableCell>
                   <TableCell className="text-sm">{r.partner ?? '—'}</TableCell>
-                  <TableCell><StatusBadge tone={r.status === 'ContinuouslyReplicating' ? 'ok' : 'warn'}>{r.status || '—'}</StatusBadge></TableCell>
+                  <TableCell><StatusBadge tone={r.status === 'ContinuouslyReplicating' ? 'ok' : /error|fail|suspend/i.test(r.status ?? '') ? 'danger' : 'warn'}>{r.status || '—'}</StatusBadge></TableCell>
                   <TableCell className="text-right tabular">{formatBytes(r.bytesRemaining)}</TableCell>
                 </TableRow>
               ))}
@@ -438,29 +464,6 @@ function StorageTab({ report, data, onQueued }: { report: ClusterStatusReport | 
                 ))}
               </TableBody>
             </Table>
-            <div className="p-3">
-              <div className="mb-1 text-sm font-semibold">{t('cl.s2d.jobs')}</div>
-              <p className="mb-2 text-xs text-muted-foreground">{t('cl.s2d.jobsHelp')}</p>
-              {s.jobs.length === 0 ? <div className="flex items-center gap-2 text-sm text-success"><ShieldCheck className="size-4" />{t('cl.s2d.noJobs')}</div> : (
-                <ul className="space-y-3">
-                  {s.jobs.map((j) => {
-                    const eta = j.elapsedSeconds && j.percentComplete && j.percentComplete > 0 && j.percentComplete < 100
-                      ? Math.round(j.elapsedSeconds * (100 - j.percentComplete) / j.percentComplete) : null;
-                    return (
-                      <li key={j.name} className="text-sm">
-                        <div className="flex justify-between"><span>{j.name} <span className="text-xs text-muted-foreground">{j.state}</span></span><span className="tabular">{j.percentComplete ?? '?'}%</span></div>
-                        <Meter value={j.percentComplete} className="mt-1" label={t('cl.s2d.progress')} />
-                        <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground tabular">
-                          {j.bytesTotal ? <span>{t('cl.s2d.copied', { done: formatBytes(j.bytesProcessed), total: formatBytes(j.bytesTotal) })}</span> : null}
-                          {j.elapsedSeconds != null && <span>{t('cl.s2d.elapsed', { time: formatDuration(j.elapsedSeconds * 1000) })}</span>}
-                          {eta != null && <span>{t('cl.s2d.eta', { time: formatDuration(eta * 1000) })}</span>}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
             <div>
               <div className="flex items-center justify-between px-3 py-2 text-sm font-semibold">{t('cl.s2d.pdisks')}
                 <span className="text-xs font-normal text-muted-foreground">{t('cl.s2d.pdiskSummary', { total: s.physicalDisks.length, bad: badDisks.length })}</span></div>
