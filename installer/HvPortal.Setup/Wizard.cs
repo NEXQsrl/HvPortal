@@ -569,6 +569,7 @@ namespace HvPortal.Setup
         {
             RadioButton automatic = null!, named = null!;
             TextBox name = null!;
+            CheckBox fileRestore = null!;
             var page = Page("acct.title", "acct.sub", c =>
             {
                 automatic = c.Radio(Strings.T(_keepAccount ? "acct.keep" : "acct.virtual"), true);
@@ -578,10 +579,15 @@ namespace HvPortal.Setup
                 name = c.Input("svc-hvportal", 220, indent: 22);
                 c.Text(Strings.T("acct.namedHelp"), muted: true, indent: 22);
                 name.Enter += (_, __) => named.Checked = true;
+                c.Gap(18);
+                // File restore from backups (ADR-050): a Windows right of the service account, never ticked by default.
+                fileRestore = c.Check(Strings.T("storage.fileRestore"), _agent.FileRestore == "Enabled");
+                c.Text(Strings.T("storage.fileRestoreHelp"), muted: true, indent: 22);
             });
             page.Leave = () =>
             {
                 _agent.ServiceAccount = named.Checked ? name.Text.Trim() : null;
+                _agent.FileRestore = _agent.Management ? null : fileRestore.Checked ? "Enabled" : null;
                 return _agent.Validate().Contains("err.account") ? Strings.T("err.account") : null;
             };
             return page;
@@ -667,6 +673,7 @@ namespace HvPortal.Setup
                 if (!_agent.Management)
                 {
                     yield return Strings.T("summary.cluster") + ":  " + Strings.T(_agent.ClusterAccess == "Full" ? "summary.clusterFull" : "summary.clusterNone");
+                    yield return Strings.T("summary.fileRestore") + ":  " + Strings.T(_agent.FileRestore == "Enabled" ? "summary.fileRestoreOn" : "summary.clusterNone");
                 }
             }
             yield return SetupEngine.InstallPath;

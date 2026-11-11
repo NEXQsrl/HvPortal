@@ -380,6 +380,12 @@ public sealed class Protocol9Tests
         Assert.DoesNotContain("Remove-Item -LiteralPath $d", restore, StringComparison.Ordinal);
         var mount = Branch(script, "MountBackupDisk");
         Assert.Contains("Mount-VHD -Path $local -ReadOnly", mount, StringComparison.Ordinal);
+        // 0.9.5: the right to attach a disk is checked before the repository is opened and anything is copied.
+        var rightCheck = mount.IndexOf("if ((Test-AttachDiskRight) -eq $false) { throw $script:FileRestoreRightMessage }", StringComparison.Ordinal);
+        Assert.True(rightCheck >= 0 && rightCheck < mount.IndexOf("Open-BackupTarget", StringComparison.Ordinal) && rightCheck < mount.IndexOf("Copy-Item", StringComparison.Ordinal));
+        Assert.Contains("'*0x80070522*'", mount, StringComparison.Ordinal);
+        Assert.Contains("key = 'file-restore'; status = 'Warning'", Branch(script, "GetBackupReadiness"), StringComparison.Ordinal);
+        Assert.Contains("-FileRestore Enabled", script, StringComparison.Ordinal);
         var dismount = Branch(script, "DismountBackupDisk");
         // Only staged copies made by the agent are deleted.
         Assert.Contains("-like 'hvportal-mount-*'", dismount, StringComparison.Ordinal);

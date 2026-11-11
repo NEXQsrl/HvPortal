@@ -275,6 +275,18 @@ function Write-RepositoryText([string]$path, [string]$text, [Text.Encoding]$enco
     [IO.File]::WriteAllText($full, $text, $encoding)
 }
 
+# 0.9.5: attaching a virtual disk to the host OS (Mount-VHD) needs the Windows right "Perform volume maintenance tasks"
+# (SeManageVolumePrivilege). Hyper-V Administrators do not have it: Install-Agent -FileRestore Enabled grants it.
+$script:FileRestoreRightMessage = "file_restore_right_missing: the agent service account may not attach disks to this host. Windows asks for the right 'Perform volume maintenance tasks' (SeManageVolumePrivilege), which the Hyper-V Administrators group does not give. On the host, as administrator: .\Install-Agent.ps1 -Source ..\agent -FileRestore Enabled (graphical setup: 'File restore from backups'), then try again."
+
+function Test-AttachDiskRight {
+    # $true / $false when the token of this process could be read, $null when it could not (the caller then just tries).
+    $lines = $null
+    try { $lines = @(& (Join-Path $env:SystemRoot 'System32\whoami.exe') /priv 2>$null) } catch { return $null }
+    if ($LASTEXITCODE -ne 0 -or $lines.Count -eq 0) { return $null }
+    return [bool](@($lines | Where-Object { $_ -like '*SeManageVolumePrivilege*' }).Count -gt 0)
+}
+
 function Assert-PointFolder([string]$folder, [guid]$pointId) {
     if ($folder -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}\\[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
         -not $folder.EndsWith('\' + $pointId.ToString('D'))) { throw 'Invalid restore point folder.' }
@@ -1586,6 +1598,11 @@ try {
                     [void]$checks.Add(@{ key = "cmdlet-$cmd"; status = 'Critical'; message = "$cmd is not available on this host."; fix = 'Install-WindowsFeature Hyper-V-PowerShell' })
                 }
             }
+            # File restore attaches a disk to the host OS: a Windows right the agent account has only when it was granted.
+            if ((Test-AttachDiskRight) -eq $false) {
+                [void]$checks.Add(@{ key = 'file-restore'; status = 'Warning'; message = "Browsing the files of a restore point will fail on this host: the agent service account lacks the right 'Perform volume maintenance tasks' (SeManageVolumePrivilege). Backups and restores of whole VMs or disks do not need it."
+                    fix = '.\Install-Agent.ps1 -Source ..\agent -FileRestore Enabled' })
+            }
             foreach ($id in @($a.vmIds)) {
                 if (-not $id) { continue }
                 $v = Get-VM -Id ([guid][string]$id) -ErrorAction SilentlyContinue
@@ -1982,6 +1999,8 @@ try {
             $pointId = [guid][string]$a.pointId
             $folder = Assert-PointFolder ([string]$a.folder) $pointId
             $repo = $null; $local = $null; $staged = $false; $mounted = $false
+            # Checked before anything is copied: a staged copy of a large disk can take a long time.
+            if ((Test-AttachDiskRight) -eq $false) { throw $script:FileRestoreRightMessage }
             try {
                 $repo = Open-BackupTarget $a.source
                 $pointPath = Join-Path $repo.root $folder
@@ -1996,7 +2015,12 @@ try {
                     Copy-Item -LiteralPath (Join-Path $pointPath $disk) -Destination $local
                     $staged = $true
                 }
-                $vhd = Mount-VHD -Path $local -ReadOnly -Passthru
+                try { $vhd = Mount-VHD -Path $local -ReadOnly -Passthru }
+                catch {
+                    # 0x80070522 = ERROR_PRIVILEGE_NOT_HELD: say what to do, and keep the original text.
+                    if ($_.Exception.Message -like '*0x80070522*') { throw "$($script:FileRestoreRightMessage) [$($_.Exception.Message)]" }
+                    throw
+                }
                 $mounted = $true
                 $number = $vhd.DiskNumber
                 if ($null -eq $number) { $number = (Get-VHD -Path $local).DiskNumber }

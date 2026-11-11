@@ -25,6 +25,11 @@
     service account access to the cluster (Grant-ClusterAccess; the cluster stores it once for all nodes): ReadOnly is
     enough for the status in the portal, Full is needed for node maintenance and highly available VMs. None removes it
     (Remove-ClusterAccess). Without the parameter nothing changes. Nothing else of the cluster is changed.
+  - -FileRestore Enabled|Disabled: browsing the files of a restore point attaches a backup disk (read-only) to this
+    host, which Windows allows only with the right "Perform volume maintenance tasks" (SeManageVolumePrivilege);
+    "Hyper-V Administrators" does not give it. Enabled grants that right to the service account in the local security
+    policy, Disabled removes it. It is a powerful right (raw access to volumes): grant it only on hosts where file
+    restore is used. Without the parameter nothing changes; backups and restores of whole VMs do not need it.
   - Updates from the portal: a scheduled task "\HvPortal\HvPortal Agent Update" (SYSTEM) is registered; the agent
     service may only start it. It installs a package downloaded by the agent only when the package's signed catalog is
     signed by the same certificate as the installed agent (unsigned builds are never installed this way).
@@ -45,7 +50,8 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$')][string]$ServiceAccount,
     [string[]]$StorageFolders,
     [switch]$DisableRemoteUpdate,
-    [ValidateSet('Full', 'ReadOnly', 'None')][string]$ClusterAccess
+    [ValidateSet('Full', 'ReadOnly', 'None')][string]$ClusterAccess,
+    [ValidateSet('Enabled', 'Disabled')][string]$FileRestore
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
@@ -159,6 +165,25 @@ if (-not $Management) {
 } else {
     Write-Host 'Management agent: remote hosts need WMI/DCOM (TCP 135 + dynamic RPC), WinRM (5985, or 5986 with -UseHttps in the portal) and SMB (445) from this server.'
     Write-Host 'Workgroup hosts over WinRM HTTP: add them to TrustedHosts on this server, e.g. Set-Item WSMan:\localhost\Client\TrustedHosts -Value "hv01,hv02" -Concatenate'
+}
+
+# File restore from backups (ADR-050): the right to attach a disk to this host, only when asked. The service is stopped
+# here and gets the right in its token when it starts. Not fatal: everything else works without it.
+if ($FileRestore -and $Management) {
+    Write-Warning '-FileRestore ignored: a management agent does not attach backup disks.'
+} elseif ($FileRestore) {
+    try {
+        $restoreSid = (New-Object System.Security.Principal.NTAccount $runAs).Translate([System.Security.Principal.SecurityIdentifier]).Value
+        if ($FileRestore -eq 'Enabled') {
+            Set-AccountUserRights -Sid $restoreSid -Add $HvPortalFileRestoreRight
+            Write-Host "File restore: 'Perform volume maintenance tasks' (SeManageVolumePrivilege) granted to $runAs."
+        } else {
+            Set-AccountUserRights -Sid $restoreSid -Remove $HvPortalFileRestoreRight
+            Write-Host "File restore: 'Perform volume maintenance tasks' removed from $runAs."
+        }
+    } catch {
+        Write-Warning "File restore right not changed: $($_.Exception.Message) Grant it by hand in secpol.msc > Local Policies > User Rights Assignment > Perform volume maintenance tasks > $runAs, then restart the service $service."
+    }
 }
 
 # Failover cluster node (ADR-041): access of the service account to the cluster, only when asked. Not fatal: the agent

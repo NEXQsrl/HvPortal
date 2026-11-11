@@ -149,6 +149,9 @@ $script:HvPortalServiceAccountMarker = 'HvPortal agent service account (no inter
 # Logon rights of a dedicated service account: only "log on as a service"; every other kind of logon denied.
 $script:HvPortalServiceAccountRights = @('SeServiceLogonRight', 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight', 'SeDenyNetworkLogonRight', 'SeDenyBatchLogonRight')
 
+# Right needed to attach a backup disk to the host for file restore (Install-Agent -FileRestore); never granted by default.
+$script:HvPortalFileRestoreRight = @('SeManageVolumePrivilege')
+
 function Edit-UserRightsInf([string[]]$Lines, [string]$Sid, [string[]]$Add = @(), [string[]]$Remove = @()) {
     # Pure text transformation of a "secedit /export /areas USER_RIGHTS" file: adds/removes *SID in the given rights.
     # A right left without members is written with an empty value so that secedit clears it.

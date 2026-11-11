@@ -25,6 +25,12 @@ foreach ($c in $Component) {
         $startName = Get-ServiceStartName $service
         Stop-HvPortalService -ServiceName $service
         if ($c -eq 'Agent') {
+            # Right granted by Install-Agent -FileRestore Enabled (the SID of the virtual account resolves while the service exists).
+            try {
+                $account = if ($startName -and $startName -ne 'LocalSystem') { $startName -replace '^\.\\', "$env:COMPUTERNAME\" } else { "NT SERVICE\$service" }
+                $restoreSid = (New-Object System.Security.Principal.NTAccount $account).Translate([System.Security.Principal.SecurityIdentifier]).Value
+                Set-AccountUserRights -Sid $restoreSid -Remove $HvPortalFileRestoreRight
+            } catch { Write-Warning "Could not remove the file restore right of the agent account: $($_.Exception.Message)" }
             & net.exe localgroup ((New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-578').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]) "NT SERVICE\$service" /delete 2>$null | Out-Null
         }
         Invoke-Sc @('delete', $service)

@@ -167,6 +167,12 @@ public sealed class SetupLogicTests
         Assert.Contains("err.cluster", new AgentSetupOptions { Enroll = false, ClusterAccess = "Everything" }.Validate());
         Assert.Contains("err.cluster", new AgentSetupOptions { Enroll = false, Management = true, ClusterAccess = "Full" }.Validate());
 
+        // 0.9.5 file restore: the right to attach backup disks is sent only when chosen, never for a management agent.
+        Assert.Equal("Enabled", new AgentSetupOptions { Enroll = false, FileRestore = "Enabled" }.ToParameters("src")["FileRestore"]);
+        Assert.False(new AgentSetupOptions { Enroll = false }.ToParameters("src").ContainsKey("FileRestore"));
+        Assert.Contains("err.fileRestore", new AgentSetupOptions { Enroll = false, FileRestore = "Yes" }.Validate());
+        Assert.Contains("err.fileRestore", new AgentSetupOptions { Enroll = false, Management = true, FileRestore = "Enabled" }.Validate());
+
         foreach (var bad in new[] { null, "", "hello", "HVPORTAL-SETUP gateway=http://gw ca=" + ca + " token=" + token, "HVPORTAL-SETUP gateway=https://gw:8444 ca=12 token=" + token,
                      "HVPORTAL-SETUP gateway=https://gw:8444 ca=" + ca + " token=a;b", new string('x', 9000) })
         {
@@ -273,7 +279,7 @@ public sealed class SetupLogicTests
         if (component == "Agent")
         {
             // -ClusterAccess is sent for host agents only (a management agent is not a cluster node).
-            foreach (var (name, value) in new AgentSetupOptions { Enroll = false, ClusterAccess = "Full" }.ToParameters("src"))
+            foreach (var (name, value) in new AgentSetupOptions { Enroll = false, ClusterAccess = "Full", FileRestore = "Enabled" }.ToParameters("src"))
             {
                 sent[name] = value;
             }

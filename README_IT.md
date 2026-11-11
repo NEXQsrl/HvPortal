@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Versione 0.9.4 anteprima" src="https://img.shields.io/badge/versione-0.9.4%20anteprima-2563eb">
+  <img alt="Versione 0.9.5 anteprima" src="https://img.shields.io/badge/versione-0.9.5%20anteprima-2563eb">
   <img alt="Hyper-V su Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="Nessuna telemetria" src="https://img.shields.io/badge/telemetria-nessuna-16a34a">
@@ -286,7 +286,7 @@ Approfondimenti: [architettura](docs/architecture.md), [decisioni di progetto](d
 
 ## Stato del progetto
 
-HvPortal 0.9.4 è un'**anteprima**. Ha un'ampia suite di test automatici; le operazioni che richiedono un host Hyper-V
+HvPortal 0.9.5 è un'**anteprima**. Ha un'ampia suite di test automatici; le operazioni che richiedono un host Hyper-V
 reale sono provate contro un sostituto di prova dell'agent, e le verifiche ancora da fare su host reali sono elencate
 nel [piano di test sugli host reali](docs/verification/real-host-test-plan.md). Comincia in laboratorio o su host non
 critici, e non esporre il portale né la porta degli agent su Internet. HvPortal non ha ancora avuto una revisione di

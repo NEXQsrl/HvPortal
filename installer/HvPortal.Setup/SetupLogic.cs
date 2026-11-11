@@ -261,9 +261,21 @@ namespace HvPortal.Setup
 
         public static readonly string[] ClusterAccessValues = { "Full", "ReadOnly", "None" };
 
+        /// <summary>
+        /// File restore from backups (Install-Agent -FileRestore): "Enabled" grants the service account the right to attach
+        /// disks to the host (SeManageVolumePrivilege), "Disabled" removes it. Null = not passed (nothing changes).
+        /// </summary>
+        public string? FileRestore { get; set; }
+
+        public static readonly string[] FileRestoreValues = { "Enabled", "Disabled" };
+
         public List<string> Validate()
         {
             var errors = new List<string>();
+            if (FileRestore != null && (Management || Array.IndexOf(FileRestoreValues, FileRestore) < 0))
+            {
+                errors.Add("err.fileRestore");
+            }
             if (ClusterAccess != null && (Management || Array.IndexOf(ClusterAccessValues, ClusterAccess) < 0))
             {
                 errors.Add("err.cluster");
@@ -326,6 +338,10 @@ namespace HvPortal.Setup
             if (ClusterAccess != null && !Management)
             {
                 p["ClusterAccess"] = ClusterAccess;
+            }
+            if (FileRestore != null && !Management)
+            {
+                p["FileRestore"] = FileRestore;
             }
             return p;
         }

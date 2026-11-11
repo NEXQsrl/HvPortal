@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.9.4 preview" src="https://img.shields.io/badge/version-0.9.4%20preview-2563eb">
+  <img alt="Version 0.9.5 preview" src="https://img.shields.io/badge/version-0.9.5%20preview-2563eb">
   <img alt="Hyper-V on Windows Server" src="https://img.shields.io/badge/Hyper--V-Windows%20Server-0f766e">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-on%20premises-475569">
   <img alt="No telemetry" src="https://img.shields.io/badge/telemetry-none-16a34a">
@@ -271,7 +271,7 @@ More: [architecture](docs/architecture.md), [design decisions](docs/decisions.md
 
 ## Project status
 
-HvPortal 0.9.4 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
+HvPortal 0.9.5 is a **preview**. It has a large automated test suite; the operations that need a real Hyper-V host are
 tested against a test double of the agent, and the checks still to run on real hosts are listed in the
 [real-host test plan](docs/verification/real-host-test-plan.md). Start in a lab or on non-critical hosts, and do not
 expose the portal or the agent port to the Internet. HvPortal has not had an independent security review yet.

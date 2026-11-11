@@ -1,5 +1,20 @@
 # Testing
 
+## v0.9.5 — file restore: the right to attach a backup disk (2026-11-11, development machine)
+
+Reported from a real host with 0.9.4: *Browse files* failed at `Mount-VHD` with `0x80070522` after the staged copy
+(ADR-050). The fix is **not verified on a real host** (V94): this machine has neither Hyper-V rights nor a backup.
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Agent.Tests` | 163 | pass — same count; `Protocol9Tests` now also checks that the script tests the right before the repository is opened and before any copy, maps `0x80070522`, and lists the missing right in the repository check |
+| `tests/HvPortal.Gateway.Tests` | 259 | pass (10 min) — same count; `SetupLogicTests`: `-FileRestore` is sent only when chosen, never for a management agent, refused with another value, and is declared by the real `Install-Agent.ps1` as a string |
+| Setup pages (`HvPortal.Agent.Setup.exe --render`, IT and EN) | 7 × 2 | looked at: the new box fits on the *Service account* page, off by default; the summary shows the choice |
+
+Not run: the web suites (no change there), `Install-Agent.ps1 -FileRestore` itself (needs an
+elevated session and changes the local security policy). On this machine `whoami /priv` as read by the script lists no
+`SeManageVolumePrivilege` for a standard user, which is the case the script refuses.
+
 ## v0.9.4 — storage jobs, cluster problems on the dashboard, update page, rename/delete, PowerShell queue, WMI diagnostics (2026-11-11, development machine)
 
 | Suite | Count | Result |

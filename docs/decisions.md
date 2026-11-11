@@ -102,6 +102,28 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-050 File restore needs a Windows right, granted only on request (0.9.5)
+- **Context**: on a real host (first report, 2026-11-11) *Browse files* of a restore point failed with
+  `0x80070522 A required privilege is not held by the client` at `Mount-VHD`, after the disk had been copied from the
+  share to the staging folder. Attaching a virtual disk to the host OS asks for `SeManageVolumePrivilege` ("Perform
+  volume maintenance tasks"), which *Hyper-V Administrators* does not give; the agent account has nothing else. The
+  question was open in the capability matrix (V61).
+- **Decision**: the right is not part of the default installation. `Install-Agent.ps1 -FileRestore Enabled|Disabled`
+  (setup: a box on the *Service account* page, off by default) grants or removes it for the service account through the
+  local security policy (`secedit`, as for the rights of a dedicated account); without the parameter nothing changes, so
+  updates from the portal keep the choice. The uninstaller removes it. The operations script reads the token of its own
+  process (`whoami /priv`) **before** opening the repository: without the right the operation fails at once with
+  `file_restore_right_missing` and the command to run, and nothing is copied. The same text replaces a `0x80070522`
+  from `Mount-VHD` (original error kept), and the repository check lists it as a warning.
+- **Consequences**: file restore works only on hosts where an administrator asked for it. The right gives raw access to
+  volumes, so an agent that holds it is closer to an administrator of the host than one that does not: it is named in
+  the setup and in the security model. No protocol change. **Not verified here**: that the right is sufficient with
+  *Hyper-V Administrators* (V94); the cause is taken from the error code and the documented requirement of
+  `AttachVirtualDisk`.
+- **Alternatives**: granting the right to every agent (refused: more privilege for a feature many hosts never use);
+  adding the agent to *Administrators* (refused: the opposite of least privilege); reading the VHDX without attaching
+  it (needs an NTFS parser inside the agent: a new dependency parsing guest-controlled data).
+
 ## ADR-049 Drop-downs drawn by the portal (0.9.4)
 - **Context**: the drop-downs were native `<select>` elements: the closed control followed the design, the open list was
   drawn by the operating system (grey, square, different in every browser, hard to read in the dark theme).

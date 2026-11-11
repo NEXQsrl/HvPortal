@@ -12,8 +12,8 @@
     <Company>NEXQ S.r.l.</Company>
     <Authors>NEXQ S.r.l.</Authors>
     <Copyright>Copyright (c) NEXQ S.r.l. — www.nexq.it</Copyright>
-    <Version>0.9.4</Version>
-    <InformationalVersion>0.9.4</InformationalVersion>
+    <Version>0.9.5</Version>
+    <InformationalVersion>0.9.5</InformationalVersion>
     <!-- Telemetry: nothing in this repository sends telemetry. -->
   </PropertyGroup>
 </Project>
