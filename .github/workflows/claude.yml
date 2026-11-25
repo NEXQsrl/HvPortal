@@ -1,0 +1,85 @@
+# .github/workflows/claude.yml
+# Workflow completo e autonomo: va copiato in ogni repo e si può adattare repo per repo.
+# Secret richiesto: CLAUDE_CODE_OAUTH_TOKEN (generato con `claude setup-token`, usa il tuo abbonamento)
+
+name: Claude
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  repository_dispatch:
+    types: [jira-task]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.client_payload.key || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  # Comandi di build/test che Claude può lanciare in questo repo: adattali al progetto
+  ALLOWED_TOOLS: "Bash(npm:*),Bash(yarn:*),Bash(pnpm:*),Bash(pytest:*),Bash(mvn:*),Bash(gradle:*),Bash(dotnet:*),Bash(make:*)"
+
+jobs:
+  # ---------- Issue e PR GitHub ----------
+  github:
+    # Filtra qui, così non si consumano minuti di Actions per ogni commento qualsiasi
+    if: |
+      (github.event_name == 'issues' && github.event.label.name == 'claude') ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          label_trigger: "claude"
+          claude_args: |
+            --allowedTools "Bash(git:*),Bash(gh pr create:*),Bash(gh pr view:*),${{ env.ALLOWED_TOOLS }}"
+            --append-system-prompt "Lavora sempre su un nuovo branch, mai su main. Esegui i test prima di finire. Quando hai finito apri una pull request in bozza con gh pr create --draft, collegata alla issue (Closes #N)."
+
+  # ---------- Ticket Jira (via repository_dispatch) ----------
+  jira:
+    if: github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Devi implementare questo ticket Jira.
+
+            Chiave: ${{ github.event.client_payload.key }}
+            Titolo: ${{ github.event.client_payload.summary }}
+            Descrizione:
+            ${{ github.event.client_payload.description }}
+
+            Procedura:
+            1. Crea il branch `${{ github.event.client_payload.key }}-claude` partendo dal branch principale.
+            2. Implementa le modifiche seguendo le convenzioni del repo (vedi CLAUDE.md).
+            3. Esegui i test e correggi gli errori.
+            4. Fai commit con messaggi che iniziano con `${{ github.event.client_payload.key }}`.
+            5. Fai push e apri una PR in bozza con
+               gh pr create --draft --title "${{ github.event.client_payload.key }}: <titolo breve>"
+               descrivendo cosa hai cambiato e come l'hai verificato.
+            Se il ticket è ambiguo, non inventare: apri comunque la PR in bozza e scrivi le domande nella descrizione.
+          claude_args: |
+            --allowedTools "Edit,Write,Read,Glob,Grep,Bash(git:*),Bash(gh pr create:*),${{ env.ALLOWED_TOOLS }}"
