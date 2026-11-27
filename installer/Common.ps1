@@ -1,5 +1,9 @@
 #Requires -Version 5.1
-# Shared helpers for HvPortal installers. Uses only built-in Windows tooling (sc.exe, NetSecurity, ACL APIs).
+# Shared helpers for HvPortal installers. Uses only built-in Windows tooling (WMI, registry, NetSecurity, ACL APIs,
+# LocalAccounts cmdlets) and, where nothing else exists, the Windows tools sc.exe, net.exe and secedit.exe.
+# 0.9.6: on some servers a security product refuses programs started by a script ("Access is denied" when PowerShell
+# starts sc.exe, although the session is elevated and the same command works when typed). So everything an upgrade
+# needs is done in process; a Windows tool is started only when a setting really has to change and nothing else can.
 
 function Assert-Administrator {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -8,9 +12,51 @@ function Assert-Administrator {
     }
 }
 
+function Get-SystemTool([string]$Name) {
+    # Windows tools by full path: an elevated installer never runs a program found through PATH.
+    return Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::System)) $Name
+}
+
+function Invoke-SystemTool([string]$Name, [string[]]$Arguments) {
+    # Runs a Windows tool and tells apart "it ran and returned an exit code" from "Windows did not start it".
+    # The second case is what PowerShell reports as "Program 'sc.exe' failed to run: Access is denied"
+    # (ApplicationFailedException): the tool never ran, so it is not an answer of the tool and not a missing right.
+    $result = [pscustomobject]@{ Tool = $Name; Started = $false; ExitCode = $null; Lines = [string[]]@(); Output = ''; Reason = '' }
+    $tool = Get-SystemTool $Name
+    $previous = $ErrorActionPreference
+    # Not Stop: a line written to stderr would otherwise end the script before the exit code is read.
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $tool @Arguments 2>&1
+        $result.ExitCode = $LASTEXITCODE
+        $result.Started = $true
+        $result.Lines = [string[]]@(@($out) | ForEach-Object { "$_" })
+        $result.Output = (($result.Lines | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ' ')
+    } catch [System.Management.Automation.ApplicationFailedException], [System.Management.Automation.CommandNotFoundException] {
+        # The Windows message alone ("Access is denied"): the PowerShell text also carries the script position.
+        $inner = $_.Exception.InnerException
+        $result.Reason = if ($inner -and $inner.Message) { $inner.Message.Trim() } else { ("$($_.Exception.Message)" -split "`r?`n")[0].Trim() }
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    return $result
+}
+
+function Get-ToolNotStartedMessage($Result) {
+    return "Windows did not start $($Result.Tool) ($($Result.Reason)). The tool is part of Windows and this session is elevated: " +
+        "this normally means that an antivirus / EDR or application control rule refuses programs started by a script. " +
+        "It is not caused by the parameters of the setup."
+}
+
+function Format-ToolCommand([string]$Name, [string[]]$Arguments) {
+    # The command as it can be typed in an elevated prompt.
+    return (@($Name) + @($Arguments | ForEach-Object { if ($_ -match '\s' -and $_ -notmatch '^".*"$') { "`"$_`"" } else { $_ } })) -join ' '
+}
+
 function Invoke-Sc([string[]]$Arguments) {
-    $output = & sc.exe @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "sc.exe $($Arguments -join ' ') failed ($LASTEXITCODE): $output" }
+    $r = Invoke-SystemTool 'sc.exe' $Arguments
+    if (-not $r.Started) { throw "$(Get-ToolNotStartedMessage $r) Command: $(Format-ToolCommand 'sc.exe' $Arguments)" }
+    if ($r.ExitCode -ne 0) { throw "sc.exe $($Arguments -join ' ') failed ($($r.ExitCode)): $($r.Output)" }
 }
 
 function Set-PrivateAcl([string]$Path, [string[]]$ExtraAccounts, [switch]$ReadOnlyForExtra) {
@@ -121,20 +167,256 @@ function Set-ServiceEnvironment([string]$ServiceName, [hashtable]$Variables) {
     New-ItemProperty -Path $key -Name Environment -PropertyType MultiString -Value ([string[]]$values) -Force | Out-Null
 }
 
-function Register-HvPortalService([string]$ServiceName, [string]$DisplayName, [string]$Description, [string]$Exe, [switch]$KeepLogon) {
-    $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    if (-not $existing) {
-        New-Service -Name $ServiceName -DisplayName $DisplayName -BinaryPathName "`"$Exe`"" -StartupType Automatic -Description $Description | Out-Null
-    } else {
-        Invoke-Sc @('config', $ServiceName, 'binPath=', "`"$Exe`"")
+# Restart after 10 s, 30 s and 60 s when the service process ends unexpectedly; the count starts again after a day.
+$script:HvPortalFailureResetSeconds = 86400
+$script:HvPortalFailureActions = @('restart/10000', 'restart/30000', 'restart/60000')
+
+function ConvertFrom-ServiceFailureActions([byte[]]$Bytes) {
+    # The registry value FailureActions is a SERVICE_FAILURE_ACTIONS structure: reset period in seconds, two unused
+    # pointers, the number of actions, the offset of the first one, then a (type, delay in ms) pair per action.
+    # Returned in the notation of "sc.exe failure" (restart/10000); $null when the value is missing or not readable.
+    if (-not $Bytes -or $Bytes.Length -lt 20) { return $null }
+    $count = [BitConverter]::ToInt32($Bytes, 12)
+    $offset = [BitConverter]::ToInt32($Bytes, 16)
+    if ($count -lt 0 -or $count -gt 16 -or $offset -lt 20 -or $Bytes.Length -lt ($offset + 8 * $count)) { return $null }
+    $names = @{ 0 = 'none'; 1 = 'restart'; 2 = 'reboot'; 3 = 'run' }
+    $actions = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $count; $i++) {
+        $type = [BitConverter]::ToInt32($Bytes, $offset + 8 * $i)
+        $delay = [BitConverter]::ToUInt32($Bytes, $offset + 8 * $i + 4)
+        $actions.Add("$(if ($names.ContainsKey($type)) { $names[$type] } else { "type$type" })/$delay")
     }
+    return [pscustomobject]@{ ResetSeconds = [BitConverter]::ToUInt32($Bytes, 0); Actions = [string[]]$actions.ToArray() }
+}
+
+function Get-HvPortalServiceState([string]$ServiceName) {
+    # What the Service Control Manager has stored for the service, read from its registry key: no program is started.
+    # $null when the service does not exist.
+    $key = Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -ErrorAction SilentlyContinue
+    if (-not $key) { return $null }
+    $names = @($key.PSObject.Properties | ForEach-Object { $_.Name })
+    $failure = if ($names -contains 'FailureActions') { ConvertFrom-ServiceFailureActions ([byte[]]$key.FailureActions) } else { $null }
+    return [pscustomobject]@{
+        Path                = if ($names -contains 'ImagePath') { [string]$key.ImagePath } else { '' }
+        Account             = if ($names -contains 'ObjectName') { [string]$key.ObjectName } else { '' }
+        Start               = if ($names -contains 'Start') { [int]$key.Start } else { -1 }
+        DelayedStart        = ($names -contains 'DelayedAutostart') -and ([int]$key.DelayedAutostart -eq 1)
+        SidType             = if ($names -contains 'ServiceSidType') { [int]$key.ServiceSidType } else { 0 }
+        FailureResetSeconds = if ($failure) { [long]$failure.ResetSeconds } else { -1 }
+        FailureActions      = if ($failure) { [string[]]$failure.Actions } else { [string[]]@() }
+        FailureFlag         = ($names -contains 'FailureActionsOnNonCrashFailures') -and ([int]$key.FailureActionsOnNonCrashFailures -eq 1)
+    }
+}
+
+function Get-ServiceRegistrationGaps($State, [string]$Exe, [string]$Account) {
+    # Names of the settings that are not as the installer wants them. Empty for a service registered by an earlier
+    # installer, which is every upgrade (also from the portal): then nothing is changed and no Windows tool is started.
+    # $Account empty = the account is not looked at (dedicated local account, see Register-HvPortalService -KeepLogon).
+    $gaps = New-Object System.Collections.Generic.List[string]
+    if (-not $State) { return , [string[]]@('Path', 'Account', 'AutomaticStart', 'DelayedStart', 'SidType', 'FailureActions', 'FailureFlag') }
+    if (("$($State.Path)" -replace '"', '').Trim() -ne $Exe) { $gaps.Add('Path') }
+    if ($Account -and "$($State.Account)" -ne $Account) { $gaps.Add('Account') }
+    if ($State.Start -ne 2) { $gaps.Add('AutomaticStart') }
+    if (-not $State.DelayedStart) { $gaps.Add('DelayedStart') }
+    if ($State.SidType -ne 1) { $gaps.Add('SidType') }
+    if ($State.FailureResetSeconds -ne $HvPortalFailureResetSeconds -or (@($State.FailureActions) -join ',') -ne ($HvPortalFailureActions -join ',')) { $gaps.Add('FailureActions') }
+    if (-not $State.FailureFlag) { $gaps.Add('FailureFlag') }
+    return , [string[]]$gaps.ToArray()
+}
+
+function Set-ServiceRequiredSettings([string]$ServiceName, [string]$Exe, [string]$Account, [string[]]$Gaps) {
+    # Program, account and automatic start: without them the service is not the one the installer promises, so a
+    # failure here is an error. In process through WMI (Win32_Service.Change, as for a dedicated account); sc.exe only
+    # when WMI refuses. The outcome is read back by the caller.
+    $change = @{}
+    $sc = @('config', $ServiceName)
+    if ($Gaps -contains 'Path') { $change.PathName = "`"$Exe`""; $sc += @('binPath=', "`"$Exe`"") }
+    # A virtual account has no password: none is sent (as "sc.exe config obj=" does).
+    if ($Gaps -contains 'Account') { $change.StartName = $Account; $sc += @('obj=', $Account) }
+    if ($Gaps -contains 'AutomaticStart') { $change.StartMode = 'Automatic'; $sc += @('start=', 'auto') }
+    $wmi = $null
+    try {
+        $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+        if (-not $svc) { throw "service $ServiceName not found" }
+        $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments $change -ErrorAction Stop
+        if ($r.ReturnValue -ne 0 -and $change.ContainsKey('StartName')) {
+            # Some systems want the empty password of the account spelled out.
+            $change.StartPassword = ''
+            $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments $change -ErrorAction Stop
+        }
+        if ($r.ReturnValue -eq 0) { return }
+        $wmi = "Win32_Service.Change returned $($r.ReturnValue)"
+    } catch {
+        $wmi = $_.Exception.Message
+    }
+    try {
+        Invoke-Sc $sc
+    } catch {
+        throw "The service $ServiceName could not be configured ($($Gaps -join ', ')). WMI: $wmi. sc.exe: $($_.Exception.Message)"
+    }
+}
+
+function Set-ServiceRecommendedSettings([string]$ServiceName, [string[]]$Gaps) {
+    # Delayed start, service SID type and restart after a failure can only be set with sc.exe. The service works
+    # without them (it runs as its own account, which already is its service SID), so when sc.exe cannot be used they
+    # are reported with the commands to type, and the installation goes on. Returns the commands not applied.
+    $steps = New-Object System.Collections.Generic.List[object]
+    if ($Gaps -contains 'DelayedStart') { $steps.Add(@('config', $ServiceName, 'start=', 'delayed-auto')) }
+    if ($Gaps -contains 'SidType') { $steps.Add(@('sidtype', $ServiceName, 'unrestricted')) }
+    if ($Gaps -contains 'FailureActions') { $steps.Add(@('failure', $ServiceName, 'reset=', "$HvPortalFailureResetSeconds", 'actions=', ($HvPortalFailureActions -join '/'))) }
+    if ($Gaps -contains 'FailureFlag') { $steps.Add(@('failureflag', $ServiceName, '1')) }
+    $pending = New-Object System.Collections.Generic.List[string]
+    $notStarted = $null
+    foreach ($step in $steps) {
+        $command = Format-ToolCommand 'sc.exe' $step
+        # Refused once: not tried again for the other settings (every attempt is one more alert of the security product).
+        if ($notStarted) { $pending.Add($command); continue }
+        $r = Invoke-SystemTool 'sc.exe' $step
+        if (-not $r.Started) { $notStarted = $r; $pending.Add($command); continue }
+        if ($r.ExitCode -ne 0) {
+            Write-Warning "$command failed ($($r.ExitCode)): $($r.Output)"
+            $pending.Add($command)
+        }
+    }
+    if ($pending.Count -gt 0) {
+        $why = if ($notStarted) { "$(Get-ToolNotStartedMessage $notStarted) " } else { '' }
+        Write-Warning ("${why}Service ${ServiceName}: $($pending.Count) recommended setting(s) not applied (start delayed after boot, service SID, " +
+            "restart after a failure). The service works without them. To apply them, type in an elevated prompt:`n  " + ($pending -join "`n  "))
+    }
+    return , [string[]]$pending.ToArray()
+}
+
+function New-HvPortalServiceEntry([string]$ServiceName, [string]$DisplayName, [string]$Description, [string]$Exe) {
+    # Created with its virtual account from the start (no password), so that the service does not exist as LocalSystem
+    # even for a moment and no further step is needed for the account. If Windows refuses that, it is created as
+    # before 0.9.6 and the account is set right after (Set-ServiceRequiredSettings).
+    $service = @{ Name = $ServiceName; DisplayName = $DisplayName; BinaryPathName = "`"$Exe`""; StartupType = 'Automatic'; Description = $Description }
+    try {
+        $credential = New-Object System.Management.Automation.PSCredential("NT SERVICE\$ServiceName", (New-Object System.Security.SecureString))
+        New-Service @service -Credential $credential -ErrorAction Stop | Out-Null
+    } catch {
+        if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { return }
+        New-Service @service -ErrorAction Stop | Out-Null
+    }
+}
+
+function Register-HvPortalService([string]$ServiceName, [string]$DisplayName, [string]$Description, [string]$Exe, [switch]$KeepLogon) {
     # Least privilege: per-service virtual account (not LocalSystem), unrestricted service SID.
-    # -KeepLogon: upgrade of a service that runs as a dedicated local account (Install-Agent -ServiceAccount).
-    if ($KeepLogon) { Invoke-Sc @('config', $ServiceName, 'start=', 'delayed-auto') }
-    else { Invoke-Sc @('config', $ServiceName, 'obj=', "NT SERVICE\$ServiceName", 'start=', 'delayed-auto') }
-    Invoke-Sc @('sidtype', $ServiceName, 'unrestricted')
-    Invoke-Sc @('failure', $ServiceName, 'reset=', '86400', 'actions=', 'restart/10000/restart/30000/restart/60000')
-    Invoke-Sc @('failureflag', $ServiceName, '1')
+    # -KeepLogon: the account is left as it is (a service that runs as a dedicated local account, or about to get one:
+    # Install-Agent -ServiceAccount sets it right after).
+    if (-not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+        New-HvPortalServiceEntry -ServiceName $ServiceName -DisplayName $DisplayName -Description $Description -Exe $Exe
+    }
+    $account = if ($KeepLogon) { '' } else { "NT SERVICE\$ServiceName" }
+    $required = @('Path', 'Account', 'AutomaticStart')
+    $gaps = Get-ServiceRegistrationGaps (Get-HvPortalServiceState $ServiceName) $Exe $account
+    if ($gaps.Count -eq 0) {
+        Write-Host "Service $ServiceName is already registered as required: nothing to change."
+        return
+    }
+    $needed = [string[]]@($gaps | Where-Object { $required -contains $_ })
+    if ($needed.Count -gt 0) {
+        Set-ServiceRequiredSettings -ServiceName $ServiceName -Exe $Exe -Account $account -Gaps $needed
+        # Never taken on trust: what the service has now is read again.
+        $left = [string[]]@((Get-ServiceRegistrationGaps (Get-HvPortalServiceState $ServiceName) $Exe $account) | Where-Object { $required -contains $_ })
+        if ($left.Count -gt 0) { throw "The service $ServiceName is still not registered as required after the change: $($left -join ', ')." }
+    }
+    $recommended = [string[]]@($gaps | Where-Object { $required -notcontains $_ })
+    if ($recommended.Count -gt 0) { Set-ServiceRecommendedSettings -ServiceName $ServiceName -Gaps $recommended | Out-Null }
+}
+
+function Remove-HvPortalService([string]$ServiceName) {
+    # In process first (Win32_Service.Delete); sc.exe only if WMI refuses.
+    try {
+        $svc = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop
+        if ($svc) {
+            $r = Invoke-CimMethod -InputObject $svc -MethodName Delete -ErrorAction Stop
+            # 16 = already marked for deletion.
+            if ($r.ReturnValue -eq 0 -or $r.ReturnValue -eq 16) { return }
+        }
+    } catch {
+        Write-Verbose "Win32_Service.Delete: $($_.Exception.Message)"
+    }
+    Invoke-Sc @('delete', $ServiceName)
+}
+
+function Get-LocalGroupName([string]$GroupSid) {
+    # The local (translated) name of a built-in group, e.g. "Hyper-V Administrators" / "Administrateurs Hyper-V".
+    return (New-Object System.Security.Principal.SecurityIdentifier $GroupSid).Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
+}
+
+function Add-AccountToLocalGroup([string]$GroupSid, [string]$Account) {
+    # In process first (LocalAccounts cmdlets); net.exe only when the cmdlet fails for another reason than "already a
+    # member" (on some systems it cannot work on groups that hold orphaned SIDs). Throws when the account is not added.
+    $cmdlet = $null
+    try {
+        Add-LocalGroupMember -SID $GroupSid -Member $Account -ErrorAction Stop
+        return
+    } catch {
+        if ("$($_.FullyQualifiedErrorId)" -like 'MemberExists*' -or $_.Exception.GetType().Name -eq 'MemberExistsException') { return }
+        $cmdlet = $_.Exception.Message
+    }
+    $group = Get-LocalGroupName $GroupSid
+    $add = Invoke-SystemTool 'net.exe' @('localgroup', $group, $Account, '/add')
+    if ($add.Started -and $add.ExitCode -eq 0) { return }
+    if ($add.Started) {
+        # "Already a member" is fine; net.exe lists local users without the computer prefix.
+        $listed = @((Invoke-SystemTool 'net.exe' @('localgroup', $group)).Lines | ForEach-Object { $_.Trim() })
+        if ($listed -contains $Account -or $listed -contains $Account.Split('\')[-1]) { return }
+        throw "Could not add $Account to '$group'. Add-LocalGroupMember: $cmdlet. net.exe: $($add.Output)"
+    }
+    throw "Could not add $Account to '$group'. Add-LocalGroupMember: $cmdlet. $(Get-ToolNotStartedMessage $add)"
+}
+
+function Remove-AccountFromLocalGroup([string]$GroupSid, [string]$Account) {
+    # Clean-up, never fatal: a membership that cannot be removed is reported with the command to type.
+    try {
+        Remove-LocalGroupMember -SID $GroupSid -Member $Account -ErrorAction Stop
+        return
+    } catch {
+        if ("$($_.FullyQualifiedErrorId)" -like 'MemberNotFound*' -or $_.Exception.GetType().Name -eq 'MemberNotFoundException') { return }
+        # No such group on this machine: nothing to remove.
+        if ("$($_.FullyQualifiedErrorId)" -like 'GroupNotFound*' -or $_.Exception.GetType().Name -eq 'GroupNotFoundException') { return }
+    }
+    try {
+        $group = Get-LocalGroupName $GroupSid
+        $r = Invoke-SystemTool 'net.exe' @('localgroup', $group, $Account, '/delete')
+        if (-not $r.Started) {
+            Write-Warning "$Account could not be removed from '$group'. $(Get-ToolNotStartedMessage $r) By hand: $(Format-ToolCommand 'net.exe' @('localgroup', $group, $Account, '/delete'))"
+        }
+    } catch {
+        Write-Warning "$Account could not be removed from the local group ${GroupSid}: $($_.Exception.Message)"
+    }
+}
+
+function Undo-HvPortalUpgrade([string]$ServiceName, [string]$InstallPath, [string]$Backup, [bool]$Start = $true) {
+    # A step failed after the files of an upgrade were replaced: the previous version is put back and started again,
+    # so that a failed upgrade never leaves a working service stopped. Does nothing on a first installation (no
+    # backup). Never throws: the caller reports its own error.
+    if (-not $Backup) { return }
+    Write-Warning "The upgrade failed after the files were replaced: putting the previous version back from $Backup."
+    try {
+        # Looked at before anything is deleted: an empty or missing copy must not empty the installation folder.
+        if (-not (Test-Path -LiteralPath $Backup) -or -not (Get-ChildItem -LiteralPath $Backup -Force | Select-Object -First 1)) {
+            throw "the copy in $Backup is missing or empty."
+        }
+        Stop-HvPortalService -ServiceName $ServiceName
+        Clear-DirectoryContent -Path $InstallPath
+        Copy-Item -Path (Join-Path $Backup '*') -Destination $InstallPath -Recurse -Force -ErrorAction Stop
+    } catch {
+        Write-Warning "The previous version could NOT be put back: $($_.Exception.Message) Restore it by hand from $Backup (Restore-HvPortalBackup), then start $ServiceName."
+        return
+    }
+    if (-not $Start) {
+        Write-Host "The previous version was put back in $InstallPath ($ServiceName is not started)."
+        return
+    }
+    try {
+        Start-Service -Name $ServiceName -ErrorAction Stop
+        Write-Host "The previous version was put back and $ServiceName runs again."
+    } catch {
+        Write-Warning "The previous version was put back, but $ServiceName did not start: $($_.Exception.Message)"
+    }
 }
 
 function Get-ServiceStartName([string]$ServiceName) {
@@ -191,13 +473,14 @@ function Set-AccountUserRights([string]$Sid, [string[]]$Add = @(), [string[]]$Re
     New-Item -ItemType Directory -Path $dir | Out-Null
     try {
         $inf = Join-Path $dir 'rights.inf'
-        & secedit.exe /export /cfg $inf /areas USER_RIGHTS /quiet | Out-Null
+        $secedit = Get-SystemTool 'secedit.exe'
+        & $secedit /export /cfg $inf /areas USER_RIGHTS /quiet | Out-Null
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $inf)) { throw "secedit /export failed ($LASTEXITCODE)." }
         $lines = Edit-UserRightsInf -Lines (Get-Content -LiteralPath $inf) -Sid $Sid -Add $Add -Remove $Remove
         Set-Content -LiteralPath $inf -Value $lines -Encoding Unicode
-        & secedit.exe /configure /db (Join-Path $dir 'rights.sdb') /cfg $inf /areas USER_RIGHTS /quiet | Out-Null
+        & $secedit /configure /db (Join-Path $dir 'rights.sdb') /cfg $inf /areas USER_RIGHTS /quiet | Out-Null
         $check = Join-Path $dir 'check.inf'
-        & secedit.exe /export /cfg $check /areas USER_RIGHTS /quiet | Out-Null
+        & $secedit /export /cfg $check /areas USER_RIGHTS /quiet | Out-Null
         $text = Get-Content -LiteralPath $check
         foreach ($r in $Add) {
             if (-not ($text | Where-Object { $_ -match "^\s*$r\s*=.*\*$([regex]::Escape($Sid))(,|\s*$)" })) { throw "User right $r was not granted (secedit). Is a Group Policy overriding the local policy?" }

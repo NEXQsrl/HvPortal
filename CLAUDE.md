@@ -63,6 +63,13 @@ Practical notes:
 - The graphical setups (ADR-026) only drive `Install-Gateway.ps1` / `Install-Agent.ps1` through `Invoke-Setup.ps1`:
   a new installer parameter needs the script, `installer/HvPortal.Setup/SetupLogic.cs` (+ wizard page and both
   languages in `Strings.cs`) and `SetupLogicTests` (which checks the names and types against the real scripts).
+- Installer scripts (ADR-051): security products on real hosts refuse programs started by a script, so an upgrade must
+  start **no** Windows tool. `Register-HvPortalService` changes only what the registry shows as different; `sc.exe` /
+  `net.exe` are started only through `Invoke-SystemTool` (`installer/Common.ps1`), never by name, and never for
+  something a cmdlet or WMI can do. Every step between `Install-ServiceBinaries` and `Wait-ServiceRunning` stays inside
+  the `try` that ends with `Undo-HvPortalUpgrade`. `InstallerScriptTests` (agent tests) runs the real scripts with
+  stand-ins for what needs administrator rights; start Windows PowerShell from tests without the inherited
+  `PSModulePath`.
 - Self-signed signatures show `UnknownError` (untrusted root) until the `.cer` is imported into `LocalMachine\Root` +
   `TrustedPublisher`; they do not give SmartScreen/antivirus reputation. Never claim a build is "trusted" because it is
   signed, and never export or commit the private key (`artifacts/` is git-ignored). No timestamp server by default:

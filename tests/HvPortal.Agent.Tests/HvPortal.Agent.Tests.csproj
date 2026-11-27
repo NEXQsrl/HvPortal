@@ -25,6 +25,9 @@
     <None Include="..\..\installer\Update-HvPortalAgent.ps1" Link="Installer\Update-HvPortalAgent.ps1" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\installer\Install-Agent.ps1" Link="Installer\Install-Agent.ps1" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\installer\Common.ps1" Link="Installer\Common.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 0.9.6: the installers on a server where Windows tools cannot be started by a script (InstallerScriptTests). -->
+    <None Include="..\..\installer\Install-Gateway.ps1" Link="Installer\Install-Gateway.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\installer\Uninstall-HvPortal.ps1" Link="Installer\Uninstall-HvPortal.ps1" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

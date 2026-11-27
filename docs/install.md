@@ -312,6 +312,17 @@ The portal has a step-by-step page with the commands for your installation: **Gu
   them ("Upgrade not applied"). If even that copy back fails, the message says to restore by hand from that folder;
   check that the service runs before leaving the server. The upgrade from 0.6.x already uses the new scripts (they
   come with the 0.7.0 package).
+- **Windows tools refused by a security product (0.9.6, ADR-051)**: on some servers an antivirus / EDR or application
+  control rule refuses programs started by a script, so the installers before 0.9.6 stopped with `Program 'sc.exe'
+  failed to run: Access is denied` after the service had been stopped. The installers now read how the service is
+  registered and change only what differs: an upgrade of a service registered by an earlier installer — by hand, with
+  the setup or from the portal — starts no Windows tool. Program, account and start are set through WMI
+  (`Win32_Service.Change`; a new service is created with its virtual account), `sc.exe` only if WMI refuses. Delayed
+  start, service SID type and restart after a failure can only be written by `sc.exe`: when it cannot be started they
+  are listed in a warning with the commands to type and the installation goes on. Any failure between the
+  replacement of the files and the start of the new version puts the previous version back and starts it. A first
+  installation still has to start `HvPortal.Agent.exe` to enroll: a product that refuses that too has to allow the
+  installer (`docs/troubleshooting.md`).
 - Order: gateway first, then agents. The gateway never sends command kinds an agent's protocol does not know; those
   functions show "update the agent".
 - **0.7.0** (agent protocol 9): the database migration adds the tables of backups, portal networks and API tokens and

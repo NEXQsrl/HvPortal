@@ -589,7 +589,10 @@ What happens on the host:
    - the new `HvPortal.Agent.exe` signed by that same certificate;
    - a version that is not older than the installed one.
 4. It runs the package's own `Install-Agent.ps1`, which keeps the identity, the service account, the storage folders
-   and the data. If the new version does not start, the previous binaries are restored.
+   and the data. If a step fails after the files were replaced, or the new version does not start, the previous
+   binaries are restored and started again. From 0.9.6 the registration of the service is left as it is when it is
+   already right, so an update starts no Windows tool (`sc.exe`, `net.exe`): it also works on hosts where a security
+   product refuses programs started by a script.
 5. The outcome is written to `C:\ProgramData\HvPortal\Agent\update\last-result.json` and reported to the gateway when
    the agent reconnects.
 
@@ -643,6 +646,8 @@ shows the state of the agent.
 | Symptom | What to check |
 |---|---|
 | The setup stops with an error | The last lines in the setup window, and the log in `C:\ProgramData\HvPortal\SetupLogs` |
+| The setup says `Program 'sc.exe' failed to run: Access is denied` (0.9.5 and earlier) or `Windows did not start sc.exe` (0.9.6) | A security product (antivirus / EDR, application control) refuses Windows tools started by the installer script, even in an elevated session: it is not a missing right and not the parameters. Use the 0.9.6 setup, which changes only what is not already right and needs `sc.exe` only for three optional settings. If it still stops, the previous version was put back and runs: allow the installer in the security product and run it again. |
+| The setup warns *recommended setting(s) not applied* | The installation succeeded. Type the commands listed in the warning in an elevated prompt (start delayed after boot, service SID, restart after a failure). |
 | "Port 443 is already in use" | IIS or another HTTP.sys listener uses 443 (shown as process *System*). Choose another port or stop it. |
 | The agent does not connect | From the host: `Test-NetConnection <gateway> -Port 8444`. The name used must be among the gateway's public names, and the host's address must be allowed by the gateway's firewall rule. |
 | "CA fingerprint does not match" | Stop. Check that you are reaching the right gateway, and compare the fingerprint in the portal through a channel you trust. |

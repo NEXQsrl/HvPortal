@@ -88,160 +88,174 @@ if (Get-Service $service -ErrorAction SilentlyContinue) {
 # Upgrade of a service already running as a dedicated local account: keep it (its password is not known here).
 $keepLogon = (-not $ServiceAccount) -and $previousLogon -and $previousLogon -notlike 'NT SERVICE\*' -and $previousLogon -ne 'LocalSystem'
 $backup = Install-ServiceBinaries -Source $Source -InstallPath $InstallPath -ServiceName $service
-Register-HvPortalService -ServiceName $service -DisplayName 'HvPortal Agent' -Description 'HvPortal Hyper-V host agent (typed operations only)' -Exe $exe -KeepLogon:$keepLogon
+# From here on the files are the new ones and the service is stopped. Whatever fails before the new version runs
+# (0.9.6: e.g. a security product that refuses a Windows tool started by this script) puts the previous version back
+# and starts it again: a failed upgrade never leaves a working agent stopped.
+$wasEnrolled = Test-Path (Join-Path $DataPath 'agent.json')
+try {
+    Register-HvPortalService -ServiceName $service -DisplayName 'HvPortal Agent' -Description 'HvPortal Hyper-V host agent (typed operations only)' -Exe $exe -KeepLogon:$keepLogon
 
-$runAs = $virtual
-if ($ServiceAccount) {
-    $plain = New-RandomPassword
-    $secure = ConvertTo-SecureString $plain -AsPlainText -Force
-    $user = Get-LocalUser -Name $ServiceAccount -ErrorAction SilentlyContinue
-    if ($user) {
-        # Never take over an existing user (e.g. Administrator): only accounts created by this script are reset.
-        if ($user.Description -ne $HvPortalServiceAccountMarker) { throw "The local user '$ServiceAccount' already exists and was not created by HvPortal: choose another name." }
-        Set-LocalUser -Name $ServiceAccount -Password $secure -PasswordNeverExpires $true -AccountNeverExpires
-        Enable-LocalUser -Name $ServiceAccount
-    } else {
-        New-LocalUser -Name $ServiceAccount -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
-            -Description $HvPortalServiceAccountMarker | Out-Null
-    }
-    $sid = (Get-LocalUser -Name $ServiceAccount).SID.Value
-    Set-AccountUserRights -Sid $sid -Add $HvPortalServiceAccountRights
-    $svc = Get-CimInstance Win32_Service -Filter "Name='$service'"
-    # Win32_Service.Change keeps the password off the command line (sc.exe obj= ... password= would expose it).
-    $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ StartName = ".\$ServiceAccount"; StartPassword = $plain }
-    $plain = $null
-    $secure = $null
-    if ($r.ReturnValue -ne 0) { throw "Could not set the service account (Win32_Service.Change returned $($r.ReturnValue))." }
-    $runAs = "$env:COMPUTERNAME\$ServiceAccount"
-    Write-Host "Service account: $runAs (random password, only 'Log on as a service'; local, RDP, network and batch logon denied)."
-} elseif ($keepLogon) {
-    $runAs = if ($previousLogon.StartsWith('.\')) { "$env:COMPUTERNAME\" + $previousLogon.Substring(2) } else { $previousLogon }
-    Write-Host "Keeping the service account $runAs."
-}
-$accounts = @($virtual)
-if ($runAs -ne $virtual) { $accounts += $runAs }
-Set-PrivateAcl -Path $InstallPath -ExtraAccounts $accounts -ReadOnlyForExtra
-New-Item -ItemType Directory -Force -Path $DataPath | Out-Null
-Set-PrivateAcl -Path $DataPath -ExtraAccounts $accounts
-Register-EventSource 'HvPortal Agent'
-Set-ServiceEnvironment -ServiceName $service -Variables @{ HVP_AGENT_DATA_DIR = $DataPath }
-
-# Allowed storage folders (read by the agent at start; private file in the data directory).
-if ($null -ne $storageList) { Set-StorageFolders -DataPath $DataPath -Folders $storageList }
-$storageFile = Join-Path $DataPath 'storage.json'
-if (Test-Path $storageFile) {
-    $current = @((Get-Content $storageFile -Raw | ConvertFrom-Json).folders)
-    Write-Host "Storage folders the portal may use: $($current -join ', ')"
-} else {
-    Write-Host 'Storage folders: not restricted (every local fixed drive, system folders excluded). Restrict with -StorageFolders.'
-}
-
-# Updates from the portal (signed builds only): the updater task, that only the agent service account may start.
-if ($DisableRemoteUpdate) {
-    Unregister-AgentUpdater
-    Write-Host 'Updates from the portal disabled (updater task removed).'
-} else {
-    $sids = @($accounts | ForEach-Object { (New-Object System.Security.Principal.NTAccount $_).Translate([System.Security.Principal.SecurityIdentifier]).Value })
-    Register-AgentUpdater -SourceDirectory $PSScriptRoot -ServiceSids $sids
-}
-
-# Least privilege for Hyper-V: membership in the built-in "Hyper-V Administrators" group (SID S-1-5-32-578).
-# A management agent needs no local Hyper-V rights: it uses the credentials of each remote host.
-$hvAdmins = (New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-578').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
-$hvMembers = @(Get-LocalGroupMember -SID 'S-1-5-32-578' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
-if ($runAs -ne $virtual -and $hvMembers -contains $virtual) {
-    # Dedicated account: the Hyper-V rights belong to it only.
-    & net.exe localgroup "$hvAdmins" "$virtual" /delete | Out-Null
-}
-if (-not $Management) {
-    if ($hvMembers -notcontains $runAs) {
-        & net.exe localgroup "$hvAdmins" "$runAs" /add 2>$null | Out-Null
-        $addCode = $LASTEXITCODE
-        # Get-LocalGroupMember fails on groups with orphaned SIDs: "already a member" is fine.
-        # (net.exe lists local users without the computer prefix.)
-        $listed = @(& net.exe localgroup "$hvAdmins")
-        if ($addCode -ne 0 -and -not ($listed -contains $runAs -or $listed -contains $runAs.Split('\')[-1])) { throw "Could not add $runAs to '$hvAdmins'." }
-    }
-} else {
-    Write-Host 'Management agent: remote hosts need WMI/DCOM (TCP 135 + dynamic RPC), WinRM (5985, or 5986 with -UseHttps in the portal) and SMB (445) from this server.'
-    Write-Host 'Workgroup hosts over WinRM HTTP: add them to TrustedHosts on this server, e.g. Set-Item WSMan:\localhost\Client\TrustedHosts -Value "hv01,hv02" -Concatenate'
-}
-
-# File restore from backups (ADR-050): the right to attach a disk to this host, only when asked. The service is stopped
-# here and gets the right in its token when it starts. Not fatal: everything else works without it.
-if ($FileRestore -and $Management) {
-    Write-Warning '-FileRestore ignored: a management agent does not attach backup disks.'
-} elseif ($FileRestore) {
-    try {
-        $restoreSid = (New-Object System.Security.Principal.NTAccount $runAs).Translate([System.Security.Principal.SecurityIdentifier]).Value
-        if ($FileRestore -eq 'Enabled') {
-            Set-AccountUserRights -Sid $restoreSid -Add $HvPortalFileRestoreRight
-            Write-Host "File restore: 'Perform volume maintenance tasks' (SeManageVolumePrivilege) granted to $runAs."
+    $runAs = $virtual
+    if ($ServiceAccount) {
+        $plain = New-RandomPassword
+        $secure = ConvertTo-SecureString $plain -AsPlainText -Force
+        $user = Get-LocalUser -Name $ServiceAccount -ErrorAction SilentlyContinue
+        if ($user) {
+            # Never take over an existing user (e.g. Administrator): only accounts created by this script are reset.
+            if ($user.Description -ne $HvPortalServiceAccountMarker) { throw "The local user '$ServiceAccount' already exists and was not created by HvPortal: choose another name." }
+            Set-LocalUser -Name $ServiceAccount -Password $secure -PasswordNeverExpires $true -AccountNeverExpires
+            Enable-LocalUser -Name $ServiceAccount
         } else {
-            Set-AccountUserRights -Sid $restoreSid -Remove $HvPortalFileRestoreRight
-            Write-Host "File restore: 'Perform volume maintenance tasks' removed from $runAs."
+            New-LocalUser -Name $ServiceAccount -Password $secure -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires `
+                -Description $HvPortalServiceAccountMarker | Out-Null
         }
-    } catch {
-        Write-Warning "File restore right not changed: $($_.Exception.Message) Grant it by hand in secpol.msc > Local Policies > User Rights Assignment > Perform volume maintenance tasks > $runAs, then restart the service $service."
+        $sid = (Get-LocalUser -Name $ServiceAccount).SID.Value
+        Set-AccountUserRights -Sid $sid -Add $HvPortalServiceAccountRights
+        $svc = Get-CimInstance Win32_Service -Filter "Name='$service'"
+        # Win32_Service.Change keeps the password off the command line (sc.exe obj= ... password= would expose it).
+        $r = Invoke-CimMethod -InputObject $svc -MethodName Change -Arguments @{ StartName = ".\$ServiceAccount"; StartPassword = $plain }
+        $plain = $null
+        $secure = $null
+        if ($r.ReturnValue -ne 0) { throw "Could not set the service account (Win32_Service.Change returned $($r.ReturnValue))." }
+        $runAs = "$env:COMPUTERNAME\$ServiceAccount"
+        Write-Host "Service account: $runAs (random password, only 'Log on as a service'; local, RDP, network and batch logon denied)."
+    } elseif ($keepLogon) {
+        $runAs = if ($previousLogon.StartsWith('.\')) { "$env:COMPUTERNAME\" + $previousLogon.Substring(2) } else { $previousLogon }
+        Write-Host "Keeping the service account $runAs."
     }
-}
+    $accounts = @($virtual)
+    if ($runAs -ne $virtual) { $accounts += $runAs }
+    Set-PrivateAcl -Path $InstallPath -ExtraAccounts $accounts -ReadOnlyForExtra
+    New-Item -ItemType Directory -Force -Path $DataPath | Out-Null
+    Set-PrivateAcl -Path $DataPath -ExtraAccounts $accounts
+    Register-EventSource 'HvPortal Agent'
+    Set-ServiceEnvironment -ServiceName $service -Variables @{ HVP_AGENT_DATA_DIR = $DataPath }
 
-# Failover cluster node (ADR-041): access of the service account to the cluster, only when asked. Not fatal: the agent
-# works without it (the portal then shows the cluster as not readable, with the command to run).
-if ($ClusterAccess -and -not $Management) {
-    $clusSvc = Get-Service ClusSvc -ErrorAction SilentlyContinue
-    if (-not $clusSvc -or $clusSvc.Status -ne 'Running') {
-        Write-Warning "-ClusterAccess ignored: the Cluster service does not run on this machine (not a node of a failover cluster)."
+    # Allowed storage folders (read by the agent at start; private file in the data directory).
+    if ($null -ne $storageList) { Set-StorageFolders -DataPath $DataPath -Folders $storageList }
+    $storageFile = Join-Path $DataPath 'storage.json'
+    if (Test-Path $storageFile) {
+        $current = @((Get-Content $storageFile -Raw | ConvertFrom-Json).folders)
+        Write-Host "Storage folders the portal may use: $($current -join ', ')"
     } else {
+        Write-Host 'Storage folders: not restricted (every local fixed drive, system folders excluded). Restrict with -StorageFolders.'
+    }
+
+    # Updates from the portal (signed builds only): the updater task, that only the agent service account may start.
+    if ($DisableRemoteUpdate) {
+        Unregister-AgentUpdater
+        Write-Host 'Updates from the portal disabled (updater task removed).'
+    } else {
+        $sids = @($accounts | ForEach-Object { (New-Object System.Security.Principal.NTAccount $_).Translate([System.Security.Principal.SecurityIdentifier]).Value })
+        Register-AgentUpdater -SourceDirectory $PSScriptRoot -ServiceSids $sids
+    }
+
+    # Least privilege for Hyper-V: membership in the built-in "Hyper-V Administrators" group (SID S-1-5-32-578).
+    # A management agent needs no local Hyper-V rights: it uses the credentials of each remote host.
+    # 0.9.6: through the LocalAccounts cmdlets (in process); net.exe only if they fail. An upgrade finds the account
+    # already there and changes nothing.
+    $hvSid = 'S-1-5-32-578'
+    $hvMembers = @(Get-LocalGroupMember -SID $hvSid -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    if ($runAs -ne $virtual -and $hvMembers -contains $virtual) {
+        # Dedicated account: the Hyper-V rights belong to it only.
+        Remove-AccountFromLocalGroup -GroupSid $hvSid -Account $virtual
+    }
+    if (-not $Management) {
+        # Get-LocalGroupMember fails on groups with orphaned SIDs: the account is then added again ("already a member" is fine).
+        if ($hvMembers -notcontains $runAs) { Add-AccountToLocalGroup -GroupSid $hvSid -Account $runAs }
+    } else {
+        Write-Host 'Management agent: remote hosts need WMI/DCOM (TCP 135 + dynamic RPC), WinRM (5985, or 5986 with -UseHttps in the portal) and SMB (445) from this server.'
+        Write-Host 'Workgroup hosts over WinRM HTTP: add them to TrustedHosts on this server, e.g. Set-Item WSMan:\localhost\Client\TrustedHosts -Value "hv01,hv02" -Concatenate'
+    }
+
+    # File restore from backups (ADR-050): the right to attach a disk to this host, only when asked. The service is stopped
+    # here and gets the right in its token when it starts. Not fatal: everything else works without it.
+    if ($FileRestore -and $Management) {
+        Write-Warning '-FileRestore ignored: a management agent does not attach backup disks.'
+    } elseif ($FileRestore) {
         try {
-            Import-Module FailoverClusters -ErrorAction Stop
-            if ($ClusterAccess -eq 'None') {
-                Remove-ClusterAccess -User $runAs -ErrorAction Stop | Out-Null
-                Write-Host "Access of $runAs to the cluster removed."
-            } elseif ($ClusterAccess -eq 'Full') {
-                Grant-ClusterAccess -User $runAs -Full -ErrorAction Stop | Out-Null
-                Write-Host "Full access to the cluster granted to $runAs (status, node maintenance, highly available VMs)."
+            $restoreSid = (New-Object System.Security.Principal.NTAccount $runAs).Translate([System.Security.Principal.SecurityIdentifier]).Value
+            if ($FileRestore -eq 'Enabled') {
+                Set-AccountUserRights -Sid $restoreSid -Add $HvPortalFileRestoreRight
+                Write-Host "File restore: 'Perform volume maintenance tasks' (SeManageVolumePrivilege) granted to $runAs."
             } else {
-                Grant-ClusterAccess -User $runAs -ReadOnly -ErrorAction Stop | Out-Null
-                Write-Host "Read-only access to the cluster granted to $runAs (status only)."
+                Set-AccountUserRights -Sid $restoreSid -Remove $HvPortalFileRestoreRight
+                Write-Host "File restore: 'Perform volume maintenance tasks' removed from $runAs."
             }
         } catch {
-            Write-Warning "Cluster access not changed: $($_.Exception.Message). Run as administrator on a node: Grant-ClusterAccess -User '$runAs' -$(if ($ClusterAccess -eq 'None') { 'ReadOnly' } else { $ClusterAccess })"
+            Write-Warning "File restore right not changed: $($_.Exception.Message) Grant it by hand in secpol.msc > Local Policies > User Rights Assignment > Perform volume maintenance tasks > $runAs, then restart the service $service."
         }
     }
-}
 
-if ($Gateway -and $CaSha256 -and $EnrollmentToken) {
-    $env:HVP_AGENT_DATA_DIR = $DataPath
-    $env:HVP_ENROLLMENT_TOKEN = $EnrollmentToken
-    $enrollArgs = @('enroll', '--gateway', $Gateway, '--ca-sha256', $CaSha256)
-    if ($ForceReenroll) { $enrollArgs += '--force' }
-    # A freshly copied unsigned executable can be briefly locked by antivirus scanning ("Access is denied"):
-    # retry the launch a few times. Enrollment itself is never retried after it has run (the token is single use).
-    $code = $null
-    for ($attempt = 1; $attempt -le 5 -and $null -eq $code; $attempt++) {
-        try {
-            & $exe @enrollArgs
-            $code = $LASTEXITCODE
-        } catch [System.Management.Automation.ApplicationFailedException] {
-            Write-Warning "Could not start the agent (attempt $attempt/5): $($_.Exception.Message). Retrying in 5 s..."
-            Start-Sleep -Seconds 5
+    # Failover cluster node (ADR-041): access of the service account to the cluster, only when asked. Not fatal: the agent
+    # works without it (the portal then shows the cluster as not readable, with the command to run).
+    if ($ClusterAccess -and -not $Management) {
+        $clusSvc = Get-Service ClusSvc -ErrorAction SilentlyContinue
+        if (-not $clusSvc -or $clusSvc.Status -ne 'Running') {
+            Write-Warning "-ClusterAccess ignored: the Cluster service does not run on this machine (not a node of a failover cluster)."
+        } else {
+            try {
+                Import-Module FailoverClusters -ErrorAction Stop
+                if ($ClusterAccess -eq 'None') {
+                    Remove-ClusterAccess -User $runAs -ErrorAction Stop | Out-Null
+                    Write-Host "Access of $runAs to the cluster removed."
+                } elseif ($ClusterAccess -eq 'Full') {
+                    Grant-ClusterAccess -User $runAs -Full -ErrorAction Stop | Out-Null
+                    Write-Host "Full access to the cluster granted to $runAs (status, node maintenance, highly available VMs)."
+                } else {
+                    Grant-ClusterAccess -User $runAs -ReadOnly -ErrorAction Stop | Out-Null
+                    Write-Host "Read-only access to the cluster granted to $runAs (status only)."
+                }
+            } catch {
+                Write-Warning "Cluster access not changed: $($_.Exception.Message). Run as administrator on a node: Grant-ClusterAccess -User '$runAs' -$(if ($ClusterAccess -eq 'None') { 'ReadOnly' } else { $ClusterAccess })"
+            }
         }
     }
-    if ($null -eq $code) { throw 'The agent executable could not be started. Check antivirus / application control policies.' }
-    Remove-Item Env:\HVP_ENROLLMENT_TOKEN -ErrorAction SilentlyContinue
-    if ($code -ne 0) { throw 'Enrollment failed (see message above). The service was installed but not started.' }
-    Set-PrivateAcl -Path $DataPath -ExtraAccounts $accounts
-} elseif (-not (Test-Path (Join-Path $DataPath 'agent.json'))) {
-    Write-Warning 'Agent installed but not enrolled. Re-run with -Gateway, -CaSha256 and the one-time token.'
-    return
+
+    if ($Gateway -and $CaSha256 -and $EnrollmentToken) {
+        $env:HVP_AGENT_DATA_DIR = $DataPath
+        $env:HVP_ENROLLMENT_TOKEN = $EnrollmentToken
+        $enrollArgs = @('enroll', '--gateway', $Gateway, '--ca-sha256', $CaSha256)
+        if ($ForceReenroll) { $enrollArgs += '--force' }
+        # A freshly copied unsigned executable can be briefly locked by antivirus scanning ("Access is denied"):
+        # retry the launch a few times. Enrollment itself is never retried after it has run (the token is single use).
+        $code = $null
+        for ($attempt = 1; $attempt -le 5 -and $null -eq $code; $attempt++) {
+            try {
+                & $exe @enrollArgs
+                $code = $LASTEXITCODE
+            } catch [System.Management.Automation.ApplicationFailedException] {
+                Write-Warning "Could not start the agent (attempt $attempt/5): $($_.Exception.Message). Retrying in 5 s..."
+                Start-Sleep -Seconds 5
+            }
+        }
+        if ($null -eq $code) { throw 'The agent executable could not be started. Check antivirus / application control policies.' }
+        Remove-Item Env:\HVP_ENROLLMENT_TOKEN -ErrorAction SilentlyContinue
+        if ($code -ne 0) { throw 'Enrollment failed (see message above): the new agent was not started.' }
+        Set-PrivateAcl -Path $DataPath -ExtraAccounts $accounts
+    } elseif (-not (Test-Path (Join-Path $DataPath 'agent.json'))) {
+        Write-Warning 'Agent installed but not enrolled. Re-run with -Gateway, -CaSha256 and the one-time token.'
+        return
+    }
+} catch {
+    $failure = $_
+    # An agent that was not enrolled before has nothing to connect with: its files are put back, it is not started.
+    Undo-HvPortalUpgrade -ServiceName $service -InstallPath $InstallPath -Backup $backup -Start $wasEnrolled
+    throw $failure
 }
 
 try {
     Wait-ServiceRunning $service
 } catch {
-    if ($backup) { Restore-HvPortalBackup -ServiceName $service -InstallPath $InstallPath -Backup $backup }
-    throw
+    $failure = $_
+    Undo-HvPortalUpgrade -ServiceName $service -InstallPath $InstallPath -Backup $backup
+    throw $failure
 }
-& $exe status
+# The agent runs. Its status is only shown here: a program that Windows refuses to start is not an error of the setup.
+try {
+    & $exe status
+} catch [System.Management.Automation.ApplicationFailedException] {
+    $why = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message.Trim() } else { ("$($_.Exception.Message)" -split "`r?`n")[0] }
+    Write-Warning "The agent runs, but its status could not be shown: Windows did not start '$exe' from this script ($why). Check the host in the portal."
+}
 Write-Host "Diagnostics: & '$exe' inventory   (runs as you, not as the service)"

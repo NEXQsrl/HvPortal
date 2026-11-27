@@ -31,9 +31,9 @@ foreach ($c in $Component) {
                 $restoreSid = (New-Object System.Security.Principal.NTAccount $account).Translate([System.Security.Principal.SecurityIdentifier]).Value
                 Set-AccountUserRights -Sid $restoreSid -Remove $HvPortalFileRestoreRight
             } catch { Write-Warning "Could not remove the file restore right of the agent account: $($_.Exception.Message)" }
-            & net.exe localgroup ((New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-578').Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]) "NT SERVICE\$service" /delete 2>$null | Out-Null
+            Remove-AccountFromLocalGroup -GroupSid 'S-1-5-32-578' -Account "NT SERVICE\$service"
         }
-        Invoke-Sc @('delete', $service)
+        Remove-HvPortalService -ServiceName $service
         if ($c -eq 'Agent') { Unregister-AgentUpdater } else { Unregister-GatewayUpdater }
         # Dedicated local account created by Install-Agent -ServiceAccount: remove its rights, profile and the user.
         if ($c -eq 'Agent' -and $startName -and $startName -notlike 'NT SERVICE\*' -and $startName -ne 'LocalSystem') {

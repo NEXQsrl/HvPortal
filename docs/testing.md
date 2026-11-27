@@ -1,5 +1,29 @@
 # Testing
 
+## v0.9.6 — installers where Windows tools cannot be started by a script (2026-11-27, development machine)
+
+Reported from a real host with 0.9.5: the agent setup stopped at `Program 'sc.exe' failed to run: Access is denied`,
+with the service stopped and its files already replaced (ADR-051). Reproduced here only in its effect: a program
+Windows cannot start gives the same exception and error id (`ApplicationFailedException`, `NativeCommandFailed`) at the
+same line. The security product of that host is not known and none like it is installed here, and this machine has no
+elevated session: the fix is **not verified against the real Service Control Manager nor on that host** (V95, V96).
+
+| Suite | Count | Result |
+|---|---|---|
+| `tests/HvPortal.Agent.Tests` | 177 | pass — adds 14 (`InstallerScriptTests`, the scripts run in Windows PowerShell 5.1). On functions of `Common.ps1`: a tool that cannot be started is told apart from a tool that returned an error (the real `sc.exe` queried for a missing service; a file Windows refuses to start), by full path, with a message that gives the cause and the command; the failure actions are read from the registry value (ours, one of Windows, short, truncated, missing) and the state of a real service is read; only the settings that differ are listed (path without quotes or in another case, account in another case, dedicated account not looked at); a registered service is not touched (no tool, no WMI call, nothing created); with `sc.exe` refused the settings only it can write become one warning with the four commands and it is asked once, with `sc.exe` available the four commands of the earlier releases are run; the account of a service left as `LocalSystem` is set through WMI without `sc.exe`, through `sc.exe` when WMI refuses, is an error naming both when neither works, and is an error when WMI answers 0 but nothing changed; a new service is created with its virtual account and an empty password, or as before when that is refused; a failed upgrade puts the previous files back and starts the service without hiding the first error, does not start an agent that was not enrolled, reports a service that does not start and does not empty the folder when the copy is missing; membership of *Hyper-V Administrators* and the removal of the service use the cmdlets and WMI before any tool. On the **real** `Install-Agent.ps1` and `Install-Gateway.ps1`, started as the updater task of the portal starts them, with stand-ins only for what needs administrator rights and no Windows tool able to start (4 cases): the upgrade of a registered service installs the new files and starts it with no tool, no WMI call and no group change; when the service cannot be registered the installer ends with an error that says why, the new version is never started and the previous one is back in place and started. A text check: no `& sc.exe` / `net.exe` / `secedit.exe` by name, no `Add-Type` / `Start-Process` in the four scripts, and everything between the replacement of the files and the start is inside the `try` that undoes it |
+| `tests/HvPortal.Gateway.Tests` | 259 | pass (9 min) — same count; run for the version and because `SetupLogicTests` reads the real `Install-Gateway.ps1` and `Install-Agent.ps1` (parameters declared for the setup, refusals before the service is stopped) |
+| Installer scripts (PowerShell 5.1 and 7 parser, all `installer\*.ps1`) | 12 × 2 | pass |
+| By hand: the real `Install-Agent.ps1` with the same stand-ins, output read in full | 2 runs | as expected: with `sc.exe` refused and a registered service the upgrade ends with exit code 0 and one warning listing the four commands; with the service as `LocalSystem` and WMI refusing, exit code 1, *The previous version was put back and HvPortalAgent runs again*, the error names WMI and `sc.exe` |
+
+Read on this machine (no change made): the registry values `Start`, `DelayedAutostart`, `ServiceSidType`,
+`FailureActionsOnNonCrashFailures` and the layout of `FailureActions` of nine Windows services, compared with what
+`sc.exe qc` / `qfailure` report for them. **Not run**: the web suites, the smoke test and the setup pages (no change
+there: only the version number), a real installation, upgrade or uninstallation (needs an elevated session), the
+update of an agent or of the gateway from the portal (needs a signed release). **Not verified**: that the values
+written by `sc.exe failure` for our three restarts are read back as equal (if they were not, every upgrade would ask
+`sc.exe` once more and, where it is refused, warn — never fail), `New-Service -Credential` with a virtual account,
+`Win32_Service.Change` with a virtual account, `Win32_Service.Delete`, `Add-LocalGroupMember` with a service account.
+
 ## v0.9.5 — file restore: the right to attach a backup disk (2026-11-11, development machine)
 
 Reported from a real host with 0.9.4: *Browse files* failed at `Mount-VHD` with `0x80070522` after the staged copy

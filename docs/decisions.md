@@ -102,6 +102,53 @@ Format: context → decision → consequences. Status of all records: **accepted
   `<meta property="csp-nonce">`, and the UI passes it to those components (`get-nonce`, Radix `nonce` props).
   `script-src` stays `'self'` with no nonce. `index.html` is never served as a static file.
 
+## ADR-051 The installers do not depend on starting Windows tools (0.9.6)
+- **Context**: on a real host (first report, 2026-11-25) the agent setup of 0.9.5 stopped with `Program 'sc.exe' failed
+  to run: Access is denied` at the first `sc.exe` of `Register-HvPortalService`. The session was elevated, `sc.exe` was
+  the one in `System32` with the default permissions, and the same tool worked when typed in that session: Windows
+  refused to **start** it from the script, which is what security products do (antivirus / EDR behaviour rules, attack
+  surface reduction, application control). The product was not named, so the cause is inferred from that pattern;
+  reproduced here only by giving the installer a program Windows cannot start (same exception, same error id). Two
+  defects of ours made it worse: the installer ran `sc.exe` five times on every run, also on an upgrade where nothing
+  had to change, so updates from the portal (ADR-029, ADR-042) would have failed on that host too; and the failure
+  came after the service was stopped and its files replaced, with nothing that started it again.
+- **Decision**:
+  1. *Nothing is changed that is already right.* `Register-HvPortalService` reads what the Service Control Manager
+     stored for the service from its registry key (program, account, start, delayed start, service SID type, failure
+     actions, failure flag) and changes only what differs. A service registered by an earlier installer differs in
+     nothing: an upgrade — by hand, by the setup or by the updater task of the portal — starts no Windows tool.
+  2. *What the service needs is set in process.* A new service is created with its virtual account from the start
+     (`New-Service -Credential`, empty password); program, account and automatic start of an existing one go through
+     `Win32_Service.Change` (as the dedicated account already did). `sc.exe` is used only when Windows refuses those,
+     and the registration is read again afterwards: if it is still not as required the installation fails.
+  3. *What only `sc.exe` can write is recommended, not required*: delayed start, service SID type, restart after a
+     failure. When `sc.exe` cannot be started it is asked once, the settings not applied are listed in a warning with
+     the commands to type, and the installation goes on. The service runs as its own virtual account (which is its
+     service SID), so nothing it is allowed to do depends on them.
+  4. *Tools are started in one place* (`Invoke-SystemTool`): by full path in `System32`, never through `PATH`, and
+     "Windows did not start it" is told apart from "it returned an error" with a message that names the likely cause.
+     Membership of *Hyper-V Administrators* goes through the LocalAccounts cmdlets first, `net.exe` after.
+  5. *A failed upgrade is undone.* From the replacement of the files to the start of the new version, any failure
+     puts the previous files back and starts the service (`Undo-HvPortalUpgrade`); the error reported is the original
+     one. An agent that was not enrolled before is not started. A missing or empty copy is reported and the
+     installation folder is left as it is.
+- **Consequences**: an upgrade on such a host no longer needs anything the product refuses, so the updates from the
+  portal keep working there. A first installation still starts `HvPortal.Agent.exe` to enroll (and the setup starts
+  PowerShell): a product that refuses every program cannot be worked around, and should not be — the message says to
+  allow the installer. A host whose service was finished by hand as `LocalSystem` is set back to the virtual account
+  by the next installer run, or the run fails and says so; it is never left like that in silence. No Authenticode or
+  reputation claim changes: a self-signed signature still gives none (ADR-029). **Not verified here** (no elevated
+  session, no such security product): that `New-Service -Credential` accepts the virtual account, which form of
+  `Win32_Service.Change` the Service Control Manager accepts for it, and the whole behaviour on the reporter's host
+  (V95, V96). Each of those steps has the earlier one as fallback, and the result is read back.
+- **Alternatives**: calling `ChangeServiceConfig2` from PowerShell through `Add-Type` (refused: it starts the C#
+  compiler from a temporary folder, exactly what such products refuse) or through reflection-emitted P/Invoke (refused:
+  the technique of malicious scripts, more likely to be refused than `sc.exe`); writing the registry values of the
+  service directly (refused: the Service Control Manager keeps its own copy, so the effect before a restart is not
+  certain — reading them is safe, writing them is not); moving the registration into the agent and gateway executables
+  (possible later; a larger change, and the executable has to be started as well); retrying `sc.exe` (it is refused
+  every time, and every attempt is one more alert).
+
 ## ADR-050 File restore needs a Windows right, granted only on request (0.9.5)
 - **Context**: on a real host (first report, 2026-11-11) *Browse files* of a restore point failed with
   `0x80070522 A required privilege is not held by the client` at `Mount-VHD`, after the disk had been copied from the

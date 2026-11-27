@@ -619,7 +619,10 @@ Che cosa succede sull'host:
    - che il nuovo `HvPortal.Agent.exe` sia firmato con quello stesso certificato;
    - una versione non più vecchia di quella installata.
 4. Esegue l'`Install-Agent.ps1` contenuto nel pacchetto, che mantiene identità, account di servizio, cartelle di
-   storage e dati. Se la nuova versione non parte, vengono ripristinati i binari precedenti.
+   storage e dati. Se un passo fallisce dopo la sostituzione dei file, o la nuova versione non parte, i binari
+   precedenti vengono ripristinati e riavviati. Dalla 0.9.6 la registrazione del servizio viene lasciata com'è quando
+   è già corretta, quindi un aggiornamento non avvia alcuno strumento di Windows (`sc.exe`, `net.exe`): funziona anche
+   sugli host in cui un prodotto di sicurezza rifiuta i programmi avviati da uno script.
 5. L'esito viene scritto in `C:\ProgramData\HvPortal\Agent\update\last-result.json` e comunicato al gateway quando
    l'agent si ricollega.
 
@@ -676,6 +679,8 @@ I log dei setup sono in `C:\ProgramData\HvPortal\SetupLogs`. Su un host,
 | Sintomo | Che cosa controllare |
 |---|---|
 | Il setup si ferma con un errore | Le ultime righe nella finestra del setup e il log in `C:\ProgramData\HvPortal\SetupLogs` |
+| Il setup dice `Program 'sc.exe' failed to run: Access is denied` (0.9.5 e precedenti) oppure `Windows did not start sc.exe` (0.9.6) | Un prodotto di sicurezza (antivirus / EDR, controllo delle applicazioni) rifiuta gli strumenti di Windows avviati dallo script di installazione, anche in una sessione da amministratore: non manca un diritto e non dipende dai parametri. Usa il setup 0.9.6, che cambia solo ciò che non è già a posto e ha bisogno di `sc.exe` solo per tre impostazioni facoltative. Se si ferma ancora, la versione precedente è stata rimessa al suo posto ed è in esecuzione: autorizza il programma di installazione nel prodotto di sicurezza ed eseguilo di nuovo. |
+| Il setup avvisa *recommended setting(s) not applied* | L'installazione è riuscita. Digita in un prompt da amministratore i comandi elencati nell'avviso (avvio ritardato dopo l'accensione, SID del servizio, riavvio dopo un errore). |
 | "La porta 443 è già usata" | IIS o un altro listener HTTP.sys usa la 443 (compare come processo *System*). Scegli un'altra porta o fermalo. |
 | L'agent non si collega | Dall'host: `Test-NetConnection <gateway> -Port 8444`. Il nome usato deve essere tra i nomi pubblici del gateway, e l'indirizzo dell'host deve essere ammesso dalla regola firewall del gateway. |
 | "L'impronta della CA non corrisponde" | Fermati. Controlla di raggiungere il gateway giusto e confronta l'impronta mostrata nel portale attraverso un canale di cui ti fidi. |

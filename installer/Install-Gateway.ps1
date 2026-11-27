@@ -77,54 +77,63 @@ if ($upgrade) {
 }
 
 $backup = Install-ServiceBinaries -Source $Source -InstallPath $InstallPath -ServiceName $service
-Register-HvPortalService -ServiceName $service -DisplayName 'HvPortal Gateway' -Description 'HvPortal web gateway and control plane' -Exe $exe
-Set-PrivateAcl -Path $InstallPath -ExtraAccounts @("NT SERVICE\$service") -ReadOnlyForExtra
-New-Item -ItemType Directory -Force -Path $DataPath | Out-Null
-Set-PrivateAcl -Path $DataPath -ExtraAccounts @("NT SERVICE\$service")
-Register-EventSource 'HvPortal Gateway'
+# From here on the files are the new ones and the service is stopped. Whatever fails before the new version runs
+# (0.9.6: e.g. a security product that refuses a Windows tool started by this script) puts the previous version back
+# and starts it again: a failed upgrade never leaves a working gateway down. The new version has not started yet, so
+# the database is still the one of the previous version.
+try {
+    Register-HvPortalService -ServiceName $service -DisplayName 'HvPortal Gateway' -Description 'HvPortal web gateway and control plane' -Exe $exe
+    Set-PrivateAcl -Path $InstallPath -ExtraAccounts @("NT SERVICE\$service") -ReadOnlyForExtra
+    New-Item -ItemType Directory -Force -Path $DataPath | Out-Null
+    Set-PrivateAcl -Path $DataPath -ExtraAccounts @("NT SERVICE\$service")
+    Register-EventSource 'HvPortal Gateway'
 
-$serviceEnv = @{
-    HVP_DATA_DIR            = $DataPath
-    ASPNETCORE_ENVIRONMENT  = 'Production'
-    Gateway__UiPort         = "$UiPort"
-    Gateway__AgentPort      = "$AgentPort"
-    Gateway__BindAddress    = $BindAddress
-}
-for ($i = 0; $i -lt $PublicNames.Count; $i++) { $serviceEnv["Gateway__PublicNames__$i"] = $PublicNames[$i] }
-if ($UiCertificateThumbprint) {
-    $serviceEnv['Gateway__UiCertificateThumbprint'] = $UiCertificateThumbprint
-    if (-not (Grant-PrivateKeyRead -Certificate $uiCert -Account "NT SERVICE\$service")) {
-        Write-Warning "Grant NT SERVICE\$service read access to the private key of certificate $UiCertificateThumbprint (certlm.msc > Manage Private Keys)."
+    $serviceEnv = @{
+        HVP_DATA_DIR            = $DataPath
+        ASPNETCORE_ENVIRONMENT  = 'Production'
+        Gateway__UiPort         = "$UiPort"
+        Gateway__AgentPort      = "$AgentPort"
+        Gateway__BindAddress    = $BindAddress
     }
-}
-Set-ServiceEnvironment -ServiceName $service -Variables $serviceEnv
-
-# Updates from the portal (Settings > System, signed releases on GitHub): the updater task, that only the gateway service
-# account may start. It installs a setup only when it is signed by the same certificate as the installed gateway.
-if ($DisableRemoteUpdate) {
-    Unregister-GatewayUpdater
-    Write-Host 'Updates from the portal disabled (updater task removed).'
-} else {
-    $gatewaySid = (New-Object System.Security.Principal.NTAccount "NT SERVICE\$service").Translate([System.Security.Principal.SecurityIdentifier]).Value
-    Register-GatewayUpdater -SourceDirectory $PSScriptRoot -ServiceSids @($gatewaySid)
-}
-
-if ($OpenFirewall) {
-    foreach ($r in @(@{ Name = 'HvPortal Gateway UI'; Port = $UiPort; Remote = $UiRemoteAddress }, @{ Name = 'HvPortal Gateway Agents'; Port = $AgentPort; Remote = $AgentRemoteAddress })) {
-        Get-NetFirewallRule -DisplayName $r.Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-        New-NetFirewallRule -DisplayName $r.Name -Direction Inbound -Action Allow -Protocol TCP -LocalPort $r.Port `
-            -RemoteAddress $r.Remote -Program $exe -Profile Domain, Private | Out-Null
+    for ($i = 0; $i -lt $PublicNames.Count; $i++) { $serviceEnv["Gateway__PublicNames__$i"] = $PublicNames[$i] }
+    if ($UiCertificateThumbprint) {
+        $serviceEnv['Gateway__UiCertificateThumbprint'] = $UiCertificateThumbprint
+        if (-not (Grant-PrivateKeyRead -Certificate $uiCert -Account "NT SERVICE\$service")) {
+            Write-Warning "Grant NT SERVICE\$service read access to the private key of certificate $UiCertificateThumbprint (certlm.msc > Manage Private Keys)."
+        }
     }
+    Set-ServiceEnvironment -ServiceName $service -Variables $serviceEnv
+
+    # Updates from the portal (Settings > System, signed releases on GitHub): the updater task, that only the gateway service
+    # account may start. It installs a setup only when it is signed by the same certificate as the installed gateway.
+    if ($DisableRemoteUpdate) {
+        Unregister-GatewayUpdater
+        Write-Host 'Updates from the portal disabled (updater task removed).'
+    } else {
+        $gatewaySid = (New-Object System.Security.Principal.NTAccount "NT SERVICE\$service").Translate([System.Security.Principal.SecurityIdentifier]).Value
+        Register-GatewayUpdater -SourceDirectory $PSScriptRoot -ServiceSids @($gatewaySid)
+    }
+
+    if ($OpenFirewall) {
+        foreach ($r in @(@{ Name = 'HvPortal Gateway UI'; Port = $UiPort; Remote = $UiRemoteAddress }, @{ Name = 'HvPortal Gateway Agents'; Port = $AgentPort; Remote = $AgentRemoteAddress })) {
+            Get-NetFirewallRule -DisplayName $r.Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+            New-NetFirewallRule -DisplayName $r.Name -Direction Inbound -Action Allow -Protocol TCP -LocalPort $r.Port `
+                -RemoteAddress $r.Remote -Program $exe -Profile Domain, Private | Out-Null
+        }
+    }
+} catch {
+    $failure = $_
+    Undo-HvPortalUpgrade -ServiceName $service -InstallPath $InstallPath -Backup $backup
+    throw $failure
 }
 
 try {
     Wait-ServiceRunning $service
 } catch {
-    if ($backup) {
-        Write-Warning "New version failed to start: $_. Rolling back binaries."
-        Restore-HvPortalBackup -ServiceName $service -InstallPath $InstallPath -Backup $backup
-    }
-    throw
+    $failure = $_
+    if ($backup) { Write-Warning "New version failed to start: $failure. Rolling back binaries." }
+    Undo-HvPortalUpgrade -ServiceName $service -InstallPath $InstallPath -Backup $backup
+    throw $failure
 }
 
 Write-Host "HvPortal Gateway is running: https://$(if ($PublicNames) { $PublicNames[0] } else { $env:COMPUTERNAME }):$UiPort"

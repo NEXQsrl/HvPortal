@@ -127,8 +127,9 @@ within the cluster (same portal record); `Clusters` holds the clusters of the po
 
 See [decisions.md](decisions.md). Summary: .NET 10 LTS (support to Nov 2028), ASP.NET Core minimal APIs,
 EF Core 10, SignalR, built-in OpenAPI, React 19 + TypeScript + Vite, `System.Management` for WMI, BCL cryptography
-(PBKDF2, AES-GCM, HKDF, ECDSA, `CertificateRequest`, DPAPI), Windows ACLs, `sc.exe` and NetSecurity cmdlets for
-installation, the Hyper-V PowerShell module on hosts for configuration operations. Third-party runtime dependencies:
+(PBKDF2, AES-GCM, HKDF, ECDSA, `CertificateRequest`, DPAPI), Windows ACLs, WMI, NetSecurity and LocalAccounts cmdlets
+for installation (`sc.exe` only for the settings nothing else can write, ADR-051), the Hyper-V PowerShell module on
+hosts for configuration operations. Third-party runtime dependencies:
 QRCoder (MIT) in the gateway; React, React Router, SignalR client, Radix UI/shadcn, Tailwind, lucide, cmdk in the
 browser (see [licensing](licensing.md)). v0.7.0 adds none: e-mail uses the BCL `SmtpClient`, webhooks `HttpClient`,
 package signing and checks the built-in `New-FileCatalog` / `Test-FileCatalog` / Authenticode cmdlets.
